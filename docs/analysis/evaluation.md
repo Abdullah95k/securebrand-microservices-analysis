@@ -109,6 +109,8 @@ The report prints one row per configuration with every score (in %), its confide
 make eval-cost MODEL=claude-haiku-5-5
 ```
 
+It prints every mix, including `lean` (speech on a per-minute API) and `lean+whisper` (speech on an own server), and the cost by line. Send me the output together with the share of duplicate comments from `make pilot-stats`.
+
 **Calibration:** fit the confidence map that drives escalation, and copy the output into `analysis.calibration_dir`:
 ```bash
 docker run --rm -v /srv/securebrand/gold:/gold --entrypoint /usr/local/bin/sb-eval fbs:dev calibrate --gold /gold/gold.labels.jsonl --model claude-haiku-5-5 /gold/results.jsonl
@@ -129,6 +131,6 @@ The recommendation, with the measured yearly cost at 100M / 300M / 1B items, goe
 Iraqi-dialect transcription quality is unknown, so measure it before choosing:
 1. Collect 20-30 short public videos with speech.
 2. Write reference transcripts.
-3. Compare the word error rate of `gpt-4o-mini-transcribe` (OpenAI-compatible), Gemini 3.5 Transcribe, and a self-hosted Whisper large-v3 server.
+3. Compare the word error rate of `gpt-4o-mini-transcribe` (OpenAI-compatible), Gemini 3.5 Transcribe, and an own Whisper large-v3-turbo server (faster-whisper with an OpenAI-compatible API; provider `whisper` in `configs/default.yaml`).
 
-This harness does not automate it yet.
+Above ~150M text items a year the own server is the cheaper option (~$2k a year against ~$3.9k on Gemini 3.5 Transcribe at 300M items, ~$13k at 1B; design section 9). It is chosen only if its word error rate is close to the best API's. This harness does not automate the comparison yet.

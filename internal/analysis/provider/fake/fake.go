@@ -98,20 +98,21 @@ func (p *Provider) textAnswer(req provider.Request) string {
 		_ = json.Unmarshal([]byte(strings.TrimSpace(req.User[start+len("<items>"):end])), &items)
 	}
 	out := []map[string]any{}
+	kw := wantsKeywords(req.Schema)
 	for _, it := range items {
 		if p.Drop != nil && p.Drop(it.I) {
 			continue
 		}
 		norm := textnorm.Normalize(it.Text)
-		sent, score := "neutral", 0.0
+		sent, score := "neutral", 0
 		pos, neg := contains(norm, positive), contains(norm, negative)
 		switch {
 		case pos && neg:
 			sent, score = "mixed", 0
 		case pos:
-			sent, score = "positive", 0.7
+			sent, score = "positive", 70
 		case neg:
-			sent, score = "negative", -0.7
+			sent, score = "negative", -70
 		}
 		intent := "other"
 		switch {
@@ -126,18 +127,20 @@ func (p *Provider) textAnswer(req provider.Request) string {
 		for _, h := range it.Hints {
 			ents = append(ents, map[string]any{"name": h.Name, "type": "brand", "id": h.ID, "sent": sent, "score": score, "aspect": "general"})
 		}
-		lang, script := "ar", "arabic"
+		lng := "ar-iq"
 		if norm == "" {
-			lang, script = "none", "none"
+			lng = "none"
 		} else if isLatin(norm) {
-			lang, script = "en", "latin"
+			lng = "en"
 		}
-		out = append(out, map[string]any{
-			"i": it.I, "lang": lang, "dialect": "iraqi", "script": script, "cs": false,
-			"sent": sent, "score": score, "conf": 0.8, "ents": ents, "topics": []string{"other"}, "kw": []string{},
-			"intent": intent, "emotion": "none", "tox": "none", "hate": false, "threat": false, "harass": false,
-			"spam": false, "sarcasm": false, "urgent": false, "ppl": 0,
-		})
+		ans := map[string]any{
+			"i": it.I, "lng": lng, "sent": sent, "score": score, "conf": 80, "ents": ents, "topics": []string{"other"},
+			"intent": intent, "emotion": "none", "tox": "none", "flags": []string{}, "ppl": 0,
+		}
+		if kw {
+			ans["kw"] = []string{"fake"}
+		}
+		out = append(out, ans)
 	}
 	b, _ := json.Marshal(map[string]any{"items": out})
 	return string(b)
@@ -146,9 +149,16 @@ func (p *Provider) textAnswer(req provider.Request) string {
 func mediaAnswer(req provider.Request) string {
 	b, _ := json.Marshal(map[string]any{
 		"logos": []any{}, "ocr": "", "desc": fmt.Sprintf("An image (%d attached).", len(req.Images)), "labels": []string{"image"},
-		"people": 0, "sent": "neutral", "score": 0, "conf": 0.5, "ents": []any{}, "topics": []string{"other"},
+		"people": 0, "sent": "neutral", "score": 0, "conf": 50, "ents": []any{}, "topics": []string{"other"},
 	})
 	return string(b)
+}
+
+// wantsKeywords reports whether the request's schema asks for "kw" (the
+// post route).
+func wantsKeywords(schema map[string]any) bool {
+	b, _ := json.Marshal(schema)
+	return strings.Contains(string(b), `"kw":`)
 }
 
 func contains(norm string, words []string) bool {

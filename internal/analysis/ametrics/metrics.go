@@ -17,6 +17,7 @@ var (
 	Repairs       = metrics.AnalysisRepairs
 	Refusals      = metrics.AnalysisRefusals
 	FollowUps     = metrics.AnalysisFollowUps
+	Deduplicated  = metrics.AnalysisDeduplicated
 	DeadLetters   = metrics.AnalysisDeadLetters
 	QueueDepth    = metrics.AnalysisQueueDepth
 	QueueAge      = metrics.AnalysisQueueAge

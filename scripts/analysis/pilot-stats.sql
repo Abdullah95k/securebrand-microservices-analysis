@@ -40,6 +40,12 @@ SELECT n AS copies, count(*) AS texts_with_that_many_copies
 FROM (SELECT count(*) n FROM comments WHERE text IS NOT NULL AND btrim(text) <> '' GROUP BY md5(lower(btrim(text)))) t
 GROUP BY n ORDER BY n DESC LIMIT 15;
 
+\echo '== comments: duplicates the analysis sends once (same post, same parent, same text)'
+SELECT count(*) AS non_empty,
+       count(*) - count(DISTINCT (post_id, coalesce(parent_comment_id, 0), md5(regexp_replace(btrim(text), '\s+', ' ', 'g'))))
+           AS answered_by_a_duplicate
+FROM comments WHERE text IS NOT NULL AND btrim(text) <> '';
+
 \echo '== comments per post (percentiles) and per page per week'
 SELECT percentile_cont(ARRAY[0.5, 0.9, 0.99]) WITHIN GROUP (ORDER BY n) AS comments_per_post_p50_90_99, max(n) AS max_per_post
 FROM (SELECT post_id, count(*) n FROM comments GROUP BY post_id) t;

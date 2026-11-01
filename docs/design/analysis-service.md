@@ -1,6 +1,6 @@
 # SecureBrand content analysis service (`sb-analysis`)
 
-Status: proposed, first version built (see "What is built" at the end). Written 2026-11-01.
+Status: proposed, first version built (see "What is built" at the end). Written 2026-11-01; cost revision the same day (section 16.1).
 Decisions: [ADR 0004](../adr/0004-analysis-service.md) (one service, canonical contract, Postgres work queue),
 [ADR 0005](../adr/0005-llm-provider-strategy.md) (models and providers),
 [ADR 0006](../adr/0006-analysis-storage.md) (storage, analytics store, agent access).
@@ -10,12 +10,13 @@ Owner-facing summary: [docs/owner/analysis-decisions.md](../owner/analysis-decis
 
 - **One analysis service**, platform-neutral. It reads a small canonical contract (`securebrand.content.v1`). A built-in Facebook adapter reads today's `fb.*` topics, so it runs now without new collectors.
 - **One LLM call per group of items returns every field** (language, sentiment, per-entity sentiment, topics, entities, intent, emotion, toxicity, spam, sarcasm). Comments are grouped by post, with the post as context: one request carries one post and up to 40 of its comments.
-- **Models are chosen per content type and set in config.** The starting point is Claude Haiku 5.5 through the Batch API for comments and posts, with a stronger model only where the evaluation shows Haiku fails. Two further uses of a stronger model: escalation of low-confidence items that mention a client's tracked brand, and a 0.1% audit sample for drift monitoring.
+- **Models are chosen per content type and set in config.** The starting point is Claude Haiku 5.5 through the Batch API for comments and posts, with a stronger model only where the evaluation shows Haiku fails. Two further uses of a stronger model: escalation of low-confidence items that mention a client's tracked brand, and a 0.02% audit sample for drift monitoring.
+- **What is not paid for:** answers use a compact format (most of the cost is the model's output), identical comments of a thread are sent once, and the script and comment keywords are computed locally (section 16.1).
 - **Postgres is the work queue and the system of record.** Text, analyses, entity mentions and daily rollups live there, partitioned by month. Results are also published on `analysis.result.v1`, so ClickHouse can be added for the future chat/analytics agent without changing the service.
-- **Expected cost at 300M text items a year** (list prices of 2026-11-01, token counts estimated until the evaluation measures them):
-  - **lean mix:** about **$15k/year** (Haiku 5.5 everywhere, Sonnet 5.5 for escalations);
-  - **heavier mix:** about **$48k/year** (Sonnet 5.5 for posts, images and videos).
-  - The evaluation decides between them, route by route.
+- **Expected cost** (list prices of 2026-11-01; token counts and the duplicate share are estimates until the evaluation and `make pilot-stats` measure them):
+  - **lean mix** (Haiku 5.5 everywhere, Sonnet 5.5 for escalations): about **$3.7k/year at 100M** text items, **$9.2k at 300M** and **$26k at 1B**. Above ~150M items a year, speech-to-text runs on an own Whisper server instead of a per-minute API (if it passes the dialect test).
+  - **heavier mix** (Sonnet 5.5 for posts, images and videos): about $42k/year at 300M. It is needed only if the evaluation shows Haiku failing on those routes.
+  - The first estimate was $15.1k (lean) and $48.5k (heavier) at 300M; section 16.1 explains the difference.
 
 ## 2. Critique of the brief
 
@@ -23,18 +24,18 @@ The brief's direction is right. These points change the design or the numbers.
 
 | # | Brief says | Finding | Consequence |
 |---|---|---|---|
-| 1 | ~80 input + ~40 output tokens per comment | Output tokens are underestimated, and input is wrong in both directions. A one-call result with every field is ~60-90 output tokens in compact JSON, not 40. Per-comment input is lower than 80 *only if* the 2-3k-token instruction prefix is shared by many comments (grouping) and cached; sent per comment, the prefix alone is ~2,500 tokens, which costs 30x the comment. Arabic also tokenizes worse than English, and Haiku 5.5's tokenizer produces ~30% more tokens than Haiku 4.5's. | Group 30-40 comments per request and cache the prefix. The cost model uses 60 uncached + 85 cached input and 70 output tokens per comment. The harness measures the real numbers. |
-| 2 | Haiku 5.5 batch ~$14 per 1M comments | Haiku 5.5 **thinks by default** (adaptive thinking, effort `medium`), and thinking tokens are billed as output. Left on, a classification costs 3-10x the estimate. Gemini 3.x Flash models also bill "response and reasoning" output. | Thinking is **off** for comment routes (allowed on Haiku 5.5 at effort `low`-`high`), and set explicitly per route in config. With realistic tokens, Haiku 5.5 batch is ~$21 per 1M comments. |
+| 1 | ~80 input + ~40 output tokens per comment | Output tokens are underestimated, and input is wrong in both directions. A one-call result with every field is ~60-90 output tokens in compact JSON, not 40. Per-comment input is lower than 80 *only if* the 2-3k-token instruction prefix is shared by many comments (grouping) and cached; sent per comment, the prefix alone is ~2,500 tokens, which costs 30x the comment. Arabic also tokenizes worse than English, and Haiku 5.5's tokenizer produces ~30% more tokens than Haiku 4.5's. | Group 30-40 comments per request and cache the prefix. A compact answer format (section 7.3) brings output to ~45 tokens. The cost model uses 60 uncached + 85 cached input and 45 output tokens per comment; the harness measures the real numbers. |
+| 2 | Haiku 5.5 batch ~$14 per 1M comments | Haiku 5.5 **thinks by default** (adaptive thinking, effort `medium`), and thinking tokens are billed as output. Left on, a classification costs 3-10x the estimate. Gemini 3.x Flash models also bill "response and reasoning" output. | Thinking is **off** for comment routes (allowed on Haiku 5.5 at effort `low`-`high`), and set explicitly per route in config. With realistic tokens and the compact format, Haiku 5.5 batch is ~$15 per 1M comments. |
 | 3 | Gemini 3.5 Flash-Lite / Flash are the Gemini candidates | Google's pricing page (2026-11-01) already lists **Gemini 3.6, 3.7 and 3.8 Flash** and **Gemini 4 Argon**. Gemini 3.1 Flash-Lite ($0.25/$1.50) is cheaper than 3.5 Flash-Lite ($0.30/$2.50). | The evaluation includes Gemini 3.1 and 3.5 Flash-Lite plus the newest Flash. The provider is configurable, so newer models are a config change. |
 | 4 | Gemma 4 31B via Google API ~$27 | Gemma 4 **26B** is on Vertex at $0.15/$0.60 (official page). The 31B price ($0.14/$0.40) only appears on third-party trackers; ai.google.dev could not be reached from this session. The Gemini *API* free tier may use prompts to improve Google's products. | Use paid tiers only (Vertex or the paid Gemini API). The figure is marked unverified. |
 | 5 | GPT-5.4 nano batch ~$33 | $0.20/$1.25 standard and $0.10/$0.625 batch per search results of OpenAI's model pages. openai.com could not be reached from this session, so the figure is unverified. One tracker marks GPT-5.4 nano as "deprecating". | Kept as a candidate. Verify on the pricing page before choosing it. |
 | 6 | Escalate low-confidence comments to the strong model | LLM self-reported confidence is poorly calibrated, so escalating "everything below 0.6" escalates a random-looking set. Also, most of the money's value is in a small subset: comments that mention a **client's tracked brand**. | Escalate only when an item mentions a tracked entity (found by a free alias matcher before the LLM call) **and** its *calibrated* confidence is low, or it is sarcastic or mixed. Calibration maps are fitted on the gold set per model. |
-| 7 | Prior estimate $30-55k/year for the mix | It holds only if posts, images and videos go to Sonnet. Those are ~3% of items but ~70% of the bill in that mix. Haiku for everything plus Sonnet escalation is ~$15k/year. | Start lean and promote a route to a stronger model only when the evaluation shows a measured gap on that route. |
-| 8 | Self-hosting pays off at 1.5-3B items/year | Confirmed. Haiku 5.5 batch costs ~$21 per 1M comments, while 2x H100 cost ~$44k/year before staff. Break-even is ~2B comments/year. Self-hosting is also the answer if privacy rules forbid third-party processors. | Keep an OpenAI-compatible provider so a self-hosted vLLM (Gemma, or a distilled model) is a config change. |
+| 7 | Prior estimate $30-55k/year for the mix | It holds only if posts, images and videos go to Sonnet. Those are ~3% of items but ~70% of the bill in that mix. Haiku for everything plus Sonnet escalation is ~$9-11k/year at 300M. | Start lean and promote a route to a stronger model only when the evaluation shows a measured gap on that route. |
+| 8 | Self-hosting pays off at 1.5-3B items/year | Confirmed. Haiku 5.5 batch costs ~$15 per 1M comments, while 2x H100 cost ~$44k/year before staff. Break-even is ~3B comments/year. Self-hosting is also the answer if privacy rules forbid third-party processors. | Keep an OpenAI-compatible provider so a self-hosted vLLM (Gemma, or a distilled model) is a config change. |
 | 9 | One call returns all fields; separate models per task multiply cost | Agreed for the LLM. Two **non-LLM** steps cost nothing and help: (a) skip items with no analyzable text (tags of friends only, sticker-only, empty), and (b) an alias matcher that finds tracked brands in the text. The alias matcher routes urgent items to the real-time lane and gives the LLM entity candidates, which improves linking and shortens output. | Both are built (`internal/analysis/content`, `internal/analysis/entities`). |
 | 10 | Batch for bulk, real time for urgent | Agreed. "Urgent" needs a definition that works before analysis. | Urgent = matches a tracked-brand alias, or comes from a source marked priority. Everything else goes to the batch lane. |
 | 11 | Fine-tuned Arabic encoder reaches ~83-84% macro-F1 (2026 shared task) | Not verified here, and sentiment-only. Aspect sentiment, linking and topics need a generative model or several encoders. Some Arabic encoders' licences are research-only. | Later option, trained on audited labels from the service. Check licences first. |
-| 12 | Model retirements can create fake trends | Agreed, and the stored text makes it fixable. Every result records model, prompt, taxonomy and schema versions. A switch is gated on the gold set plus an overlap sample, and history can be re-analysed with the new model at batch prices (~$21 per 1M comments on Haiku 5.5). | See section 7.6. |
+| 12 | Model retirements can create fake trends | Agreed, and the stored text makes it fixable. Every result records model, prompt, taxonomy and schema versions. A switch is gated on the gold set plus an overlap sample, and history can be re-analysed with the new model at batch prices (~$15 per 1M comments on Haiku 5.5). | See section 7.6. |
 | 13 | Comments are personal data | Also *special-category* data. Sentiment toward politicians tied to a pseudonymous author is processing of political opinions (GDPR Art. 9 where GDPR applies). Pseudonymous data is still personal data. | Flagged for legal review (section 12). Author identity is never sent to LLMs. Phone numbers and e-mail addresses are masked before sending. Private persons are not stored as entities. |
 | 14 | Keep text indefinitely | Done as decided. The pilot keeps comments in fbs's `comments` table, and the analysis store keeps its own copy. That makes **two indefinite copies** of every comment. | Flagged: keep one copy long term (recommend the analysis store). This is the owner's decision. |
 
@@ -144,14 +145,14 @@ When a Facebook normaliser exists, it publishes `content.item.v1`, and the adapt
 
 ## 6. What is extracted
 
-One JSON object per item, enforced by JSON-schema structured output (`internal/analysis/prompt/schema.go`), then validated in code.
+One result per item. The model answers in a compact JSON format enforced by JSON-schema structured output (`internal/analysis/prompt/schema.go`, schema `s2`); code validates it and expands it into the stored fields below. The model writes one language code (`ar-iq`, `ar-msa`, `ckb`, ...) for language and dialect, the yes/no signals as a list of `flags` (usually empty), and scores as whole numbers (−100..100, 0..100). The script and comment keywords are computed from the text, not asked of the model.
 
 | Field | Values |
 |---|---|
-| `lang`, `dialect`, `script` | `ar`, `ckb` (Sorani), `kmr` (Kurmanji), `en`, `tr`, `fa`, `other`, `none`; dialect `iraqi`, `gulf`, `levantine`, `egyptian`, `msa`, `other`; script `arabic`, `latin` (Arabizi or English), `mixed`, `none`; plus `code_switch` (bool). |
+| `lang`, `dialect`, `script` | `ar`, `ckb` (Sorani), `kmr` (Kurmanji), `en`, `tr`, `fa`, `other`, `none`; dialect `iraqi`, `gulf`, `levantine`, `egyptian`, `msa`, `other`; script `arabic`, `latin` (Arabizi or English), `mixed`, `none` (computed from the letters: deterministic and free); plus `code_switch` (bool). |
 | `sentiment` | label `positive`/`negative`/`neutral`/`mixed`, `score` −1..1, `confidence` 0..1 (raw; a calibrated value is stored next to it). |
 | `entities[]` | `name` as written, `type` (`brand`, `product`, `organization`, `person_public`, `person_private`, `place`, `event`, `media_outlet`, `other`), `id` (a registry id from the hints, or empty), `sentiment` + `score` toward that entity (aspect-based), `aspect` (what about it: `price`, `network`, `customer_service`, ...). `person_private` entities are dropped before storage; only a count is kept. |
-| `topics[]` | Ids from the versioned taxonomy (`configs/analysis/taxonomy.v1.yaml`), at most 3. Also `keywords[]` (free, at most 5). |
+| `topics[]` | Ids from the versioned taxonomy (`configs/analysis/taxonomy.v1.yaml`), at most 3. Also `keywords[]` (at most 5): the model's for long posts; for comments, their content words (function words, links, digits and masked contact details removed). A comment's keywords are its content words, and asking the model for them cost about a fifth of its answer. |
 | `intent` | `complaint`, `praise`, `question`, `request`, `suggestion`, `purchase_intent`, `churn_threat`, `recommendation`, `information`, `giveaway_entry`, `greeting_religious`, `tagging`, `spam_ad`, `other`. |
 | `emotion` | `anger`, `joy`, `sadness`, `fear`, `surprise`, `disgust`, `trust`, `anticipation`, `none`. |
 | `toxicity` | `none`/`mild`/`severe`, plus flags `hate`, `threat`, `harassment`. |
@@ -186,11 +187,11 @@ The taxonomy is versioned. A change bumps `taxonomy_version` and makes items eli
 | Route | Default model | Lane | Thinking | Why |
 |---|---|---|---|---|
 | `comment` (comments and replies; posts under 280 characters) | `claude-haiku-5-5` | batch; real time if urgent | off | 95% of volume; cheapest at list price. |
-| `post` | `claude-haiku-5-5` | batch; real time if urgent | off | Promote to `claude-sonnet-5-5` if the evaluation shows a gap on long MSA news posts (+~$8k/yr at 300M). |
-| `image` | `claude-haiku-5-5` | real time | off | Promote to Sonnet if logo recall is short (+~$17k/yr real time, ~$9k with a batch media lane). |
+| `post` | `claude-haiku-5-5` | batch; real time if urgent | off | Promote to `claude-sonnet-5-5` if the evaluation shows a gap on long MSA news posts (+~$7k/yr at 300M). |
+| `image` | `claude-haiku-5-5` | real time | off | Promote to Sonnet if logo recall is short (+~$16k/yr real time, ~$8k with a batch media lane). |
 | `video` | `claude-haiku-5-5` + STT | real time | off | Key frames + transcript. |
 | `escalation` | `claude-sonnet-5-5` | batch | off | Tracked-entity items with low calibrated confidence, or sarcastic/mixed. Expected ≤2% of comments. |
-| `audit` | `claude-opus-5-5` | batch | adaptive | 0.1% deterministic sample, stored with `purpose=audit`, never shown. It measures agreement and drift. |
+| `audit` | `claude-opus-5-5` | batch | adaptive | 0.02% deterministic sample (~165 a day at 300M items a year), stored with `purpose=audit`, never shown. It measures agreement and drift. |
 
 **Fallback per route** (`fallback:`): another provider, e.g. Gemini 3.1 Flash-Lite through the OpenAI-compatible endpoint. It is used only by the real-time lane:
 - when the primary's circuit breaker is open;
@@ -202,6 +203,7 @@ The batch lane keeps retrying the primary's batch API (every submission round, w
 
 - **Grouping:** a request = one thread context (the post text, truncated to 1,500 characters) + up to `grouping.max_items` (40) items of that thread, capped by an estimated token size. Items carry an index; the response is an array keyed by index. Kafka keys comments by post, so a thread's comments arrive together. The real-time lane waits `grouping.realtime_wait` (20 s) for siblings, and the batch lane groups within each 10-minute window.
 - **Static prefix** (system prompt: instructions, taxonomy, output rules; ~2.5k tokens) is byte-identical across requests and marked `cache_control`. Cache reads cost 0.1x on Haiku 5.5 and 0.05x on Sonnet/Opus 5.5, and stack with the batch discount. In the Batch API, cache hits are best-effort. The minimum cacheable prefix on the 5.5 models is 512 tokens.
+- **Identical items are sent once** (`internal/analysis/pipeline/dedup.go`). Contest posts ("علق تم للمشاركة"), condolence and prayer threads collect hundreds of identical comments. Within a claim, items of one thread with the same parent and the same input hash (text, kind, media) collapse onto the first: it alone is shown to the model, and the others ride in the same request as followers. They get its answer and their share of the cost, and they fail and retry with it. The model's input for them would be identical, so its answer would be too. Followers count toward neither group limit, so a thread of 3,000 "تم" costs one prompt slot per claim. The batch lane recomputes the mapping from the request's stored input hashes when results arrive. Posts and audits are never collapsed. `fbs_analysis_items_deduplicated_total` counts followers, and `make pilot-stats` measures the share (assumed 10%).
 - **Entity hints:** per item, the alias matcher's candidates (`id`, canonical name). They are not the whole brand list (hundreds of brands × aliases would bloat every prompt).
 - **PII masking:** phone numbers (Western and Arabic-Indic digits) and e-mail addresses are replaced with `[phone]` / `[email]` before the text leaves the service.
 
@@ -209,6 +211,8 @@ The batch lane keeps retrying the primary's batch API (every submission round, w
 
 - **Anthropic:** `output_config.format` with a JSON schema (constrained decoding) is used; forced tool use is not, because forced `tool_choice` is rejected on several current models.
 - **OpenAI-compatible providers:** `response_format: json_schema, strict: true`.
+- **Compact answers.** Output tokens are ~75% of a comment's cost, so the answer format is short. One language code replaces language and dialect, a list of `flags` (usually `[]`) replaces seven booleans, scores are whole numbers, and the script and comment keywords are computed locally. This is ~45 output tokens per comment instead of ~70-100, with the same information.
+- **Field order is kept** in the schema sent to providers (Go maps would sort the keys alphabetically). Models write fields in schema order, so `i` comes first and every label before its score and confidence.
 
 Code then validates every item:
 - the index is in range and unique;
@@ -231,7 +235,7 @@ The batch lane submits every `batch.submit_every` (10 min), with at most `batch.
 
 - **Calibration:** the evaluation harness fits a per-model, per-route isotonic map from raw confidence to observed accuracy on the gold set. It writes the map to `configs/analysis/calibration/<model>.yaml`, the service applies it, and both values are stored.
 - **Escalation rule:** `tracked_entity_hit && (calibrated_conf < 0.6 || sarcasm || sentiment == mixed)`. The escalated result becomes current; both are kept.
-- **Audit:** a deterministic hash of the content id selects 0.1% of items for Opus 5.5. A daily job computes agreement (sentiment label, top entity sentiment, topics Jaccard) per route and model, and alerts when it drops below the baseline measured at launch.
+- **Audit:** a deterministic hash of the content id selects 0.02% of items for Opus 5.5 (~1,600 a month even at 100M items a year, enough to see a drift of a few points month by month). A daily job computes agreement (sentiment label, top entity sentiment, topics Jaccard) per route and model, and alerts when it drops below the baseline measured at launch.
 
 ### 7.6 Consistency over five years
 
@@ -241,7 +245,7 @@ The batch lane submits every `batch.submit_every` (10 min), with at most `batch.
    - run on an *overlap sample* (20k recent items, stratified by source and platform) next to the current model.
    The harness reports the per-label shift, e.g. "negative +3.1 points".
 3. **Mark series breaks.** Each switch writes a row in `model_changes`. Dashboards draw it, and the agent's tools return it with any time series that crosses it.
-4. **Re-analyse when it matters.** Text is kept, so history can be re-run on the new model (selective and budgeted, section 10), e.g. the last 12 months of a client's tracked entities. Re-running all of 1.5B items on Haiku 5.5 batch would cost ~$31k.
+4. **Re-analyse when it matters.** Text is kept, so history can be re-run on the new model (selective and budgeted, section 10), e.g. the last 12 months of a client's tracked entities. Re-running all of 1.5B items on Haiku 5.5 batch would cost ~$22k.
 5. **Anchor set.** The gold set plus a frozen 5k sample is re-run monthly on the production config. Rising disagreement with the stored labels means provider-side drift even without a model change.
 
 ## 8. Pipeline and reliability
@@ -298,20 +302,25 @@ Ingest scales on Kafka lag (KEDA). Pipeline workers are I/O-bound: one or two re
 - **Video:** download to a temporary file and run ffmpeg:
   - key frames: scene-change selection, at most 8, 512 px;
   - audio: 16 kHz mono.
-  Speech-to-text runs through the provider's transcription endpoint (OpenAI-compatible `/audio/transcriptions`: OpenAI `gpt-4o-mini-transcribe`, or a self-hosted Whisper server speaking the same API), then one vision call with frames + transcript. The temporary files are deleted in all cases.
+  Speech-to-text runs through the provider's transcription endpoint (OpenAI-compatible `/audio/transcriptions`: OpenAI `gpt-4o-mini-transcribe`, or an own Whisper server speaking the same API, provider `whisper` in the config), then one vision call with frames + transcript. The temporary files are deleted in all cases.
+- **Speech costs count toward the budget.** The budget is checked (vision estimate + audio minutes × the transcription model's `per_minute` price) before transcribing, and each transcription is logged as a request of its own, so the day's spend includes it.
 - **Deadlines:** jobs are processed nearest `delete_after` first. The `TTL-at-risk` gauge counts jobs within 6h of `delete_after`.
 - **Ack:** written to the outbox in the same transaction as the analysis: `PROCESSED`, `FAILED_PERMANENT` (undecodable, too large, policy) or `FAILED_RETRYABLE` (transient; fbs re-announces). Acks therefore survive crashes, and the janitor deletes the file.
 
-**STT options for Iraqi Arabic speech**, per audio minute:
+**STT options for Iraqi Arabic speech:**
 
 | Option | Cost |
 |---|---|
-| Gemini 3.5 Transcribe (Vertex) | **$0.0051** (official) |
-| OpenAI `gpt-4o-mini-transcribe` | ~$0.003 (third-party figure, unverified) |
-| `gpt-4o-transcribe` | ~$0.006 (unverified) |
-| Self-hosted Whisper large-v3 (faster-whisper on one L4 GPU, ~30x real time) | ~$0.0004 of GPU time, but the GPU is idle most of the time at this volume, plus operations |
+| Gemini 3.5 Transcribe (Vertex) | **$0.0051** a minute (official) |
+| OpenAI `gpt-4o-mini-transcribe` | ~$0.003 a minute (third-party figure, unverified) |
+| `gpt-4o-transcribe` | ~$0.006 a minute (unverified) |
+| Own Whisper large-v3-turbo server (faster-whisper, int8, OpenAI-compatible API, e.g. [`deepdml/faster-whisper-large-v3-turbo-ct2`](https://hf.co/deepdml/faster-whisper-large-v3-turbo-ct2)) on one 8-CPU machine | a fixed ~$2k a year (estimate) |
 
-At 1M videos × 45 s a year, API STT costs ~$2-4k. Self-hosting is not worth it below ~10M minutes/year. Whisper-class models are weak on Iraqi dialect, so the evaluation includes 20-30 clips with reference transcripts (word error rate) before choosing.
+- **Volume:** at 300M items a year there are ~1M videos and ~770k audio minutes. That is ~$3.9k a year on Gemini 3.5 Transcribe, and ~$13k at 1B items.
+- **Own server:** faster-whisper runs large-v2 at ~7-8x real time with int8 on 8 CPU threads (its published benchmark). The turbo model has 4 decoder layers instead of 32 and is faster still. One 8-CPU machine should therefore keep up with the ~43k audio hours a year of 1B items; this is an estimate, and a load test confirms it before use.
+- **Break-even:** ~400k audio minutes a year, i.e. ~150M text items. Below that the API is cheaper and needs no server.
+- **Dialect quality is unknown for both,** and Whisper-class models are weaker on dialects. The evaluation therefore transcribes 20-30 clips with reference transcripts (word error rate) before choosing. Public Iraqi fine-tunes of Whisper exist on Hugging Face but are unproven (a handful of downloads).
+- **If the transcriber fails,** the video job is retried (up to `media.max_tries`, then acknowledged `FAILED_RETRYABLE` so the producer re-announces the file). An outage of the own server therefore delays videos within the file's lifetime; it does not lose them.
 
 ## 10. Re-analysis (selective, budgeted)
 
@@ -505,6 +514,7 @@ Metrics (`fbs_analysis_*`, Prometheus):
 - tokens (input, output, cache read, cache write) and **cost in USD**, by model and route;
 - spend today vs budget, and `budget_paused`;
 - fallback share; invalid outputs, refusals, missing items and dead letters;
+- items answered by an identical item (`items_deduplicated_total`);
 - batch age;
 - media processed and acked by status, and **TTL at risk**;
 - erasures processed;
@@ -521,7 +531,7 @@ Alerts:
 - audit agreement below baseline − 5 points.
 
 **Quality drift:**
-- **audit sample:** Opus 5.5 on 0.1% of items, agreement tracked daily;
+- **audit sample:** Opus 5.5 on 0.02% of items, agreement tracked daily;
 - **label distribution shift:** PSI per route per week;
 - **human check:** the anchor set, re-labelled quarterly by the labeller (~200 items).
 
@@ -545,61 +555,90 @@ The harness is `cmd/sb-eval`, with guide [docs/analysis/evaluation.md](../analys
 
 ## 16. Cost model
 
-**Assumptions** (replace with measured numbers from `sb-eval run`):
+**Assumptions** (replace with measured numbers from `sb-eval run` and `make pilot-stats`):
 - **Volume:** posts = items / 58.3 (pilot ratio); media = 1 per post, 80% images and 20% videos of 45 s.
-- **Tokens per unit** (uncached in / cached in / out): comment 60 / 85 / 70; post 700 / 500 / 180; image 1,100 / 500 / 200; video 3,250 / 500 / 250 + STT at $0.0051/min.
-- **Other shares:** 2% escalation of comments to Sonnet 5.5 batch; 0.1% audit on Opus 5.5.
+- **Tokens per unit** (uncached in / cached in / out), compact format: comment 60 / 85 / 45; post 700 / 500 / 140; image 1,100 / 500 / 170; video 3,250 / 500 / 210.
+- **Duplicates:** 10% of comments share an identical comment's answer (same thread, parent and text); `make pilot-stats` measures it.
+- **Other shares:** 2% of analysed comments escalated to Sonnet 5.5 batch; 0.02% audit on Opus 5.5.
+- **Speech-to-text:** Gemini 3.5 Transcribe at $0.0051/min, or an own Whisper server at a fixed ~$2k/year (mix `lean+whisper`).
 - **Prices:** list prices of 2026-11-01. Batch is 50% off where offered. Media uses the real-time lane.
 
-`sb-eval cost --items 300000000 --mix lean` prints these tables from code (`internal/analysis/cost`).
+`sb-eval cost` (`make eval-cost`) prints these tables from code (`internal/analysis/eval/cost.go`); `--measured results.jsonl` replaces the token assumptions with measured ones.
 
 **Per 1M comments:**
 
 | Model | Batch | Real time |
 |---|---|---|
-| Claude Haiku 5.5 | **$21** | $42 |
-| GPT-5.4 nano (unverified) | $51 | $101 |
-| Gemma 4 26B (Vertex, no batch) | $52 | $52 |
-| Gemini 3.1 Flash-Lite | $61 | $122 |
-| Gemini 3.5 Flash-Lite | $98 | $196 |
-| GPT-5.4 mini (unverified) | $183 | $366 |
-| Gemini 3.5 Flash | $366 | $733 |
-| Claude Sonnet 5.5 | $414 | $829 |
-| Claude Opus 5.5 | $829 | $1,657 |
+| Claude Haiku 5.5 | **$15** | $29 |
+| GPT-5.4 nano (unverified) | $35 | $70 |
+| Gemma 4 26B (Vertex, no batch) | $37 | $37 |
+| Gemini 3.1 Flash-Lite | $42 | $85 |
+| Gemini 3.5 Flash-Lite | $67 | $133 |
+| GPT-5.4 mini (unverified) | $127 | $254 |
+| Gemini 3.5 Flash | $254 | $508 |
+| Claude Sonnet 5.5 | $289 | $579 |
+| Claude Opus 5.5 | $579 | $1,157 |
 
 **Yearly, by mix:**
 
 | Mix | 100M items | 300M items | 1B items |
 |---|---|---|---|
-| **Lean** (Haiku 5.5 everywhere + Sonnet escalation + audit) | **$5.0k** | **$15.1k** | **$50.2k** |
-| Heavier (Haiku comments; Sonnet posts, images, videos) | $16.2k | $48.5k | $162k |
-| All Sonnet 5.5 | $54k | $162k | $540k |
-| All Gemini 3.5 Flash-Lite (+ Sonnet escalation) | $14.3k | $42.8k | $143k |
-| All GPT-5.4 nano (+ Sonnet escalation; unverified) | $8.7k | $26.0k | $86.6k |
+| **Lean** (Haiku 5.5 everywhere + Sonnet escalation + audit; speech on Gemini 3.5 Transcribe) | **$3.7k** | $11.1k | $37.0k |
+| **Lean + own Whisper** (the same; speech on an own server) | $4.4k | **$9.2k** | **$25.9k** |
+| Heavier (Haiku comments; Sonnet posts, images, videos) | $14.0k | $42.0k | $140k |
+| All Sonnet 5.5 | $37.8k | $113k | $378k |
+| All Gemini 3.5 Flash-Lite (+ Sonnet escalation) | $9.8k | $29.4k | $98.1k |
+| All GPT-5.4 nano (+ Sonnet escalation; unverified) | $6.2k | $18.5k | $61.5k |
 
-**Lean mix at 300M, by line:**
+**By line** (lean | lean + own Whisper, where they differ):
 
-| Line | Yearly cost |
-|---|---|
-| Comments | $6.2k |
-| Escalation | $2.4k |
-| Posts | $0.4k |
-| Images | $0.9k |
-| Videos (STT is ~90%) | $4.4k |
-| Audit | $0.7k |
+| Line | 100M | 300M | 1B |
+|---|---|---|---|
+| Comments | $1.3k | $3.9k | $13.0k |
+| Escalation | $0.5k | $1.5k | $5.1k |
+| Posts | $0.1k | $0.4k | $1.2k |
+| Images | $0.3k | $0.8k | $2.7k |
+| Videos (vision) | $0.1k | $0.4k | $1.5k |
+| Speech-to-text | $1.3k \| $2.0k | $3.9k \| $2.0k | $13.1k \| $2.0k |
+| Audit | $35 | $0.1k | $0.3k |
 
-**Infrastructure** (not in the model): Postgres storage ~330 GB/year at 300M items; ClickHouse later ~$150-300/month; one small node for workers.
+**Infrastructure** (not in the model): Postgres storage ~330 GB/year at 300M items; ClickHouse later ~$150-300/month; one small node for workers; the Whisper server above, if chosen.
 
 **What could break the model:**
 - thinking left on (×3-10);
 - groups of 1 (×2-3 on input);
-- Haiku failing the bar on comments (then GPT-5.4 nano or Gemini 3.1 Flash-Lite at ~3x Haiku, or Sonnet at 20x);
+- Haiku failing the bar on comments (then GPT-5.4 nano or Gemini 3.1 Flash-Lite at ~2.5-3x Haiku, or Sonnet at 20x);
 - real-time lane overuse (×2);
+- fewer duplicates than assumed (at 0%, comments cost 11% more);
 - prompts over 100k tokens on Haiku 5.5, which double the price (impossible with these group sizes).
+
+### 16.1 Cost revision: what changed and why (2026-11-01)
+
+The first estimate (lean $5.0k / $15.1k / $50.2k at 100M / 300M / 1B items; heavier $16.2k / $48.5k / $162k) was too high for the owner. Every saving below keeps accuracy, speed and reliability; the levers that would cost accuracy were rejected or left to the owner.
+
+| Change | Saving | Effect on accuracy, speed, reliability |
+|---|---|---|
+| **Compact answers** (prompt `p2`, schema `s2`; section 7.3): one language code, a `flags` list, whole-number scores, schema field order kept. ~45 output tokens per comment instead of ~70. | ~−30% on every model call (output is ~75% of a comment's cost) | Same information. The schema now puts the label before its confidence, which can only help. The gold-set run measures it, with the same code. |
+| **Script and comment keywords computed locally** (`textnorm.Script`, `textnorm.Keywords`) | part of the above (~a fifth of a comment's answer) | Script detection is deterministic and exact. A comment's keywords are its content words; posts keep the model's keywords. |
+| **Identical comments of a thread sent once** (section 7.2) | −10% of comment and escalation calls (assumed; contest threads can be far higher) | No change: the model's input would be identical. Failures and retries stay grouped. |
+| **Audit sample 0.1% → 0.02%** | −80% of the audit line | ~165 audits a day at 300M items, ~1,600 a month at 100M: still enough for monthly drift tracking. Statistical power depends on the count, not the share. |
+| **Own Whisper server for speech above ~150M items** (optional, `lean+whisper`) | speech $13.1k → ~$2k at 1B | Only if it passes the word-error-rate test on Iraqi clips; otherwise the API stays. One more service to run; an outage delays videos, it does not lose them. |
+| **Speech cost counted in the budget** | none (a fix) | The daily cap now really caps spending: speech-to-text was not counted before. |
+
+Result: lean **$3.7k / $9.2k / $25.9k** at 100M / 300M / 1B (taking the cheaper speech option at each volume), **−26% / −39% / −48%**. The heavier mix falls to $14.0k / $42.0k / $140k.
+
+**Considered and not done** (each would save money but risk accuracy, or needs the owner):
+- **A positional answer format** (one string of codes per item, ~25 tokens): another ~−30% on comments. Models make more field-position errors in such formats; worth a gold-set comparison, not a blind switch.
+- **Smaller images** (1024 → 768 px, ~−25% of the image line, ~$0.7k at 1B): small Arabic text in images (OCR) suffers. Measure on the gold images first.
+- **A batch lane for media** (−50% of images and video vision): the file's `delete_after` deadline and batch latency (up to 24h) conflict. It needs a deadline guard; worth it only if images move to Sonnet.
+- **Haiku with thinking instead of Sonnet for escalations** (~−70% of the escalation line, estimated with ~300 thinking tokens): unknown accuracy on exactly the items that matter most (unsure mentions of client brands). The evaluation can compare them (`--thinking adaptive`).
+- **Sampling very large threads** (analyse every brand mention, and a share of the rest, weighted in the rollups): large savings on viral posts, but per-item completeness is lost. A product decision for the owner, not taken.
+- **A cheaper model:** none is cheaper than Haiku 5.5 at these prices (GPT-5.4 nano is ~2.4x, Gemini 3.1 Flash-Lite ~2.9x per comment).
+- **Self-hosting or distillation** (section 17): pays only above ~3B comments a year, or if processors are forbidden.
 
 ## 17. Self-hosting and distillation
 
-- **Break-even:** 2x H100 cost ~$44k/year on demand, before an engineer's time. Against Haiku 5.5 batch (~$21 per 1M comments) that is ~2B comments/year; against Sonnet-tier it is ~100M/year.
+- **Break-even:** 2x H100 cost ~$44k/year on demand, before an engineer's time. Against Haiku 5.5 batch (~$15 per 1M comments) that is ~3B comments/year; against Sonnet-tier it is ~150M/year.
 - **When it pays:** at 300M/year, APIs win unless a privacy decision forbids processors.
 - **Path when it pays:**
   1. collect API labels with provenance and the audit agreement;
@@ -620,11 +659,11 @@ The harness is `cmd/sb-eval`, with guide [docs/analysis/evaluation.md](../analys
 - **Contracts:** `securebrand.content.v1` (`ContentItem`, `MediaReady`/`MediaProcessed`, `Erasure`) and `securebrand.analysis.v1` (`ItemAnalysis`, `MediaAnalysis`), with topics, the Schema Registry mapping and `buf lint`/`buf breaking` clean. Documented in [content-v1.md](../contracts/content-v1.md).
 - **`cmd/sb-analysis`** (roles `ingest`, `pipeline`, `media`, `relay`, `rollup`):
   - **inputs:** the Facebook adapter and the canonical input, skip rules, PII masking, and the alias matcher with clitic handling;
-  - **pipeline:** the Postgres work queue with leases, backoff and dead letters; real-time and Message Batches lanes;
+  - **pipeline:** the Postgres work queue with leases, backoff and dead letters; real-time and Message Batches lanes; identical items of a thread sent once; the compact answer format;
   - **providers:** Anthropic on the official Go SDK v2 (structured output, cached system prompt, per-model thinking control, batches); OpenAI-compatible (chat with strict JSON schema, transcription); a deterministic fake;
   - **reliability:** circuit breakers and rate limits, fallback, refusal isolation, budget caps, escalation and audit sampling, calibration maps;
   - **output:** the transactional outbox and relay;
-  - **media:** images resized; videos as ffmpeg key frames plus speech-to-text; acks through the outbox;
+  - **media:** images resized; videos as ffmpeg key frames plus speech-to-text (its cost logged and budgeted); acks through the outbox;
   - **data management:** erasure with suppression; the entity registry with review, merge and tracking; daily rollups;
   - **agent access:** views with per-client scoping, and read-only agent roles with limits;
   - **search and metrics:** Arabic full-text search; Prometheus metrics and alert rules ([runbook](../runbooks/analysis.md));
@@ -638,8 +677,8 @@ The harness is `cmd/sb-eval`, with guide [docs/analysis/evaluation.md](../analys
   - unit tests;
   - integration tests against Postgres and Redpanda: store, agent scoping, pipeline lanes and failure modes, media with real ffmpeg, Facebook topics to `analysis.result.v1` end to end, the sampler;
   - the existing fbs suites still pass;
-  - a mutation check of the new tests: 16 of 16 deliberate faults caught.
+  - a mutation check of the new tests: 16 of 16 deliberate faults caught, and 11 of 11 for the cost revision (compact format, local script and keywords, duplicate collapsing).
 
-**Not built:** ClickHouse, embeddings and `sb-eval retrieval`, the agent itself, and the speech-to-text evaluation.
+**Not built:** ClickHouse, embeddings and `sb-eval retrieval`, the agent itself, the speech-to-text evaluation, and the own Whisper server's deployment (added only if it passes that evaluation).
 
 **Not measured yet:** accuracy and real token counts. They need the owner's gold set and API keys (section 15).

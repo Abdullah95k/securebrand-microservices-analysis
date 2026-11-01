@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/core"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/entities"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/taxonomy"
 )
@@ -23,25 +24,75 @@ func reg() *entities.Registry {
 		[]entities.Alias{{Alias: "asia cell", EntityID: "asiacell"}, {Alias: "آسيا سيل", EntityID: "asiacell"}}, nil)
 }
 
-func TestSchemaIsStrict(t *testing.T) {
-	s := TextSchema(tax(t))
-	item := s["properties"].(map[string]any)["items"].(map[string]any)["items"].(map[string]any)
-	props := item["properties"].(map[string]any)
-	req := item["required"].([]string)
-	if len(props) != len(req) || item["additionalProperties"] != false {
-		t.Fatalf("every property must be required and no others allowed: %d props, %d required", len(props), len(req))
+// decode returns a schema as the providers receive it (JSON).
+func decode(t *testing.T, s map[string]any) (map[string]any, string) {
+	t.Helper()
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, k := range req {
-		if _, ok := props[k]; !ok {
-			t.Fatalf("required %s missing from properties", k)
+	var out map[string]any
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out, string(b)
+}
+
+func TestSchemaIsStrict(t *testing.T) {
+	for _, kw := range []bool{false, true} {
+		s, raw := decode(t, TextSchema(tax(t), kw))
+		item := s["properties"].(map[string]any)["items"].(map[string]any)["items"].(map[string]any)
+		props := item["properties"].(map[string]any)
+		req := item["required"].([]any)
+		if len(props) != len(req) || item["additionalProperties"] != false {
+			t.Fatalf("every property must be required and no others allowed: %d props, %d required", len(props), len(req))
+		}
+		for _, k := range req {
+			if _, ok := props[k.(string)]; !ok {
+				t.Fatalf("required %s missing from properties", k)
+			}
+		}
+		if _, ok := props["kw"]; ok != kw {
+			t.Fatalf("kw in schema = %v, want %v", ok, kw)
+		}
+		topics := props["topics"].(map[string]any)["items"].(map[string]any)["enum"].([]any)
+		if len(topics) != tax(t).Len() {
+			t.Fatal("topic enum must list the taxonomy")
+		}
+		// Fields keep the declared order: the index first, every label
+		// before its score and confidence.
+		order := []string{"i", "lng", "sent", "score", "conf", "ents", "topics", "intent", "emotion", "tox", "flags", "ppl"}
+		for k := 1; k < len(order); k++ {
+			if strings.Index(raw, `"`+order[k-1]+`":{`) > strings.Index(raw, `"`+order[k]+`":{`) {
+				t.Fatalf("schema properties out of order (%s after %s): %s", order[k-1], order[k], raw)
+			}
 		}
 	}
-	topics := props["topics"].(map[string]any)["items"].(map[string]any)["enum"].([]string)
-	if len(topics) != tax(t).Len() {
-		t.Fatal("topic enum must list the taxonomy")
+	if _, raw := decode(t, MediaSchema(tax(t))); !strings.Contains(raw, `"properties":{"logos":`) {
+		t.Fatalf("media schema order: %s", raw)
 	}
-	if _, err := json.Marshal(MediaSchema(tax(t))); err != nil {
-		t.Fatal(err)
+}
+
+func TestLangOf(t *testing.T) {
+	for _, c := range LangCodes {
+		lang, dialect, ok := LangOf(c)
+		if !ok || !oneOf(lang, Langs) || !oneOf(dialect, Dialects) {
+			t.Fatalf("%s -> %s/%s/%v", c, lang, dialect, ok)
+		}
+	}
+	if l, d, _ := LangOf("ar-iq"); l != "ar" || d != "iraqi" {
+		t.Fatal("ar-iq")
+	}
+	if l, d, ok := LangOf("xx"); ok || l != "other" || d != "none" {
+		t.Fatal("unknown code")
+	}
+}
+
+func TestPercent(t *testing.T) {
+	for in, want := range map[float64]float64{-80: -0.8, 100: 1, 1: 0.01, 0: 0, 0.85: 0.85, -0.5: -0.5, 250: 2.5} {
+		if got := percent(in); got != want {
+			t.Errorf("percent(%v) = %v, want %v", in, got, want)
+		}
 	}
 }
 
@@ -72,19 +123,18 @@ func TestTextUser(t *testing.T) {
 }
 
 const good = `{"items":[
- {"i":0,"lang":"ar","dialect":"iraqi","script":"arabic","cs":false,"sent":"negative","score":-0.8,"conf":0.9,
-  "ents":[{"name":"اسيا سيل","type":"brand","id":"","sent":"negative","score":-0.9,"aspect":"network"},
+ {"i":0,"lng":"ar-iq","sent":"negative","score":-80,"conf":90,
+  "ents":[{"name":"اسيا سيل","type":"brand","id":"","sent":"negative","score":-90,"aspect":"network"},
           {"name":"Ali","type":"person_private","id":"","sent":"neutral","score":0,"aspect":"general"},
-          {"name":"Asiacell","type":"brand","id":"asiacell","sent":"negative","score":-0.9,"aspect":"network"}],
+          {"name":"Asiacell","type":"brand","id":"asiacell","sent":"negative","score":-90,"aspect":"network"}],
   "topics":["telecom.network","made.up","telecom.network","telecom.outage","telecom.pricing","other"],
-  "kw":["نت","","a","b","c","d","e"],"intent":"complaint","emotion":"anger","tox":"none","hate":false,"threat":false,
-  "harass":false,"spam":false,"sarcasm":true,"urgent":true,"ppl":1},
- {"i":1,"lang":"klingon","dialect":"x","script":"arabic","cs":false,"sent":"positive","score":3,"conf":-1,"ents":[],
-  "topics":[],"kw":[],"intent":"praise","emotion":"joy","tox":"none","hate":false,"threat":false,"harass":false,
-  "spam":false,"sarcasm":false,"urgent":false,"ppl":-2},
- {"i":1,"lang":"ar","sent":"neutral"},
- {"i":7,"lang":"ar","sent":"neutral"},
- {"i":2,"lang":"ar","sent":"angry"}
+  "kw":["نت","","a","b","c","d","e"],"intent":"complaint","emotion":"anger","tox":"none",
+  "flags":["sarcasm","urgent","cs","bogus"],"ppl":1},
+ {"i":1,"lng":"klingon","sent":"positive","score":300,"conf":-1,"ents":[],
+  "topics":[],"intent":"praise","emotion":"joy","tox":"none","flags":["spam","hate","threat","harass"],"ppl":-2},
+ {"i":1,"lng":"ar","sent":"neutral"},
+ {"i":7,"lng":"ar","sent":"neutral"},
+ {"i":2,"lng":"ar","sent":"angry"}
 ]}`
 
 func TestParseText(t *testing.T) {
@@ -96,11 +146,13 @@ func TestParseText(t *testing.T) {
 		t.Fatalf("got %d, missing %v", len(got), missing)
 	}
 	r := got[0]
-	if r.Sentiment != "negative" || !r.Sarcasm || !r.Urgent || r.Intent != "complaint" {
+	if r.Sentiment != "negative" || !r.Sarcasm || !r.Urgent || !r.CodeSwitch || r.Spam || r.Intent != "complaint" ||
+		r.Lang != "ar" || r.Dialect != "iraqi" || r.Score != -0.8 || r.Confidence != 0.9 || r.Entities == nil {
 		t.Fatalf("result %+v", r)
 	}
 	// The surface form and the id resolve to the same entity: one mention.
-	if len(r.Entities) != 1 || r.Entities[0].ID != "asiacell" || r.Entities[0].Name != "Asiacell" || r.Entities[0].Aspect != "network" {
+	if len(r.Entities) != 1 || r.Entities[0].ID != "asiacell" || r.Entities[0].Name != "Asiacell" || r.Entities[0].Aspect != "network" ||
+		r.Entities[0].Score != -0.9 {
 		t.Fatalf("entities %+v", r.Entities)
 	}
 	if r.PrivatePersonMentions != 2 || p.PrivatePersons != 1 {
@@ -113,7 +165,8 @@ func TestParseText(t *testing.T) {
 		t.Fatalf("keywords %v", r.Keywords)
 	}
 	r1 := got[1]
-	if r1.Lang != "other" || r1.Dialect != "none" || r1.Score != 1 || r1.Confidence != 0 || r1.PrivatePersonMentions != 0 {
+	if r1.Lang != "other" || r1.Dialect != "none" || r1.Score != 1 || r1.Confidence != 0 || r1.PrivatePersonMentions != 0 ||
+		!r1.Spam || !r1.Hate || !r1.Threat || !r1.Harassment || r1.Sarcasm || len(r1.Keywords) != 0 {
 		t.Fatalf("repairs %+v", r1)
 	}
 	if p.DuplicateItems != 1 || p.UnexpectedItems != 1 || p.FixedValues < 4 {
@@ -121,6 +174,24 @@ func TestParseText(t *testing.T) {
 	}
 	if r.CalibratedConfidence != r.Confidence {
 		t.Fatal("calibrated defaults to raw")
+	}
+}
+
+func TestFinish(t *testing.T) {
+	r := core.Result{Keywords: []string{"نت"}}
+	Finish(&r, "النت bad")
+	if r.Script != "mixed" || len(r.Keywords) != 1 {
+		t.Fatalf("model keywords are kept: %+v", r)
+	}
+	r = core.Result{}
+	Finish(&r, "الشبكة ضعيفة اتصل [phone]")
+	if r.Script != "arabic" || strings.Join(r.Keywords, " ") != "الشبكة ضعيفة اتصل" {
+		t.Fatalf("local keywords: %+v", r)
+	}
+	r = core.Result{Refused: true}
+	Finish(&r, "نص طويل هنا")
+	if len(r.Keywords) != 0 {
+		t.Fatal("no keywords for a refused item")
 	}
 }
 
@@ -138,9 +209,9 @@ func TestParseTextInvalid(t *testing.T) {
 }
 
 func TestParseMedia(t *testing.T) {
-	raw := `{"logos":[{"name":"آسياسيل","id":"","conf":0.9},{"name":"Asiacell","id":"asiacell","conf":2},{"name":"","id":"","conf":1},{"name":"Pepsi","id":"","conf":0.5}],
+	raw := `{"logos":[{"name":"آسياسيل","id":"","conf":90},{"name":"Asiacell","id":"asiacell","conf":200},{"name":"","id":"","conf":100},{"name":"Pepsi","id":"","conf":50}],
 		"ocr":"` + strings.Repeat("ا", 700) + `","desc":"A billboard.","labels":["sign","street","a","b","c","d","e","f","g"],
-		"people":-1,"sent":"bogus","score":0.2,"conf":0.7,"ents":[{"name":"Ali","type":"person_private","id":"","sent":"neutral","score":0,"aspect":"general"}],"topics":["telecom.pricing"]}`
+		"people":-1,"sent":"bogus","score":20,"conf":70,"ents":[{"name":"Ali","type":"person_private","id":"","sent":"neutral","score":0,"aspect":"general"}],"topics":["telecom.pricing"]}`
 	m, _, err := ParseMedia(raw, tax(t), reg())
 	if err != nil {
 		t.Fatal(err)
@@ -148,7 +219,8 @@ func TestParseMedia(t *testing.T) {
 	if len(m.Logos) != 2 || m.Logos[0].ID != "asiacell" || m.Logos[1].Name != "Pepsi" || m.Logos[1].ID != "" {
 		t.Fatalf("logos %+v", m.Logos)
 	}
-	if len([]rune(m.TextInImage)) != 500 || len(m.Labels) != 8 || m.PeopleCount != 0 || m.Sentiment != "neutral" || len(m.Entities) != 0 {
+	if len([]rune(m.TextInImage)) != 500 || len(m.Labels) != 8 || m.PeopleCount != 0 || m.Sentiment != "neutral" || len(m.Entities) != 0 ||
+		m.Score != 0.2 || m.Confidence != 0.7 || m.Logos[0].Confidence != 0.9 || m.Logos[1].Confidence != 0.5 {
 		t.Fatalf("media %+v", m)
 	}
 	if _, _, err := ParseMedia("nope", tax(t), reg()); err == nil {

@@ -19,6 +19,7 @@ import (
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/provider/fake"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/provider/registry"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/taxonomy"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/textnorm"
 	"github.com/abdullah95k/securebrand-microservices/internal/config"
 )
 
@@ -180,6 +181,18 @@ func TestRunAndReportOnSyntheticGold(t *testing.T) {
 			t.Fatalf("scores %+v", s)
 		}
 	}
+	// The script is computed from the text.
+	text := map[string]string{}
+	for _, it := range items {
+		text[it.ID] = it.Text
+	}
+	for _, rq := range reqs {
+		for _, pr := range rq.Items {
+			if pr.Result != nil && pr.Result.Script != textnorm.Script(text[pr.ID]) {
+				t.Fatalf("%s: script %q", pr.ID, pr.Result.Script)
+			}
+		}
+	}
 	// The fake links Asiacell through the alias hint: entity scoring sees it.
 	if scores[0].Entities.Entities.TP == 0 {
 		t.Fatalf("entities %+v", scores[0].Entities)
@@ -266,21 +279,39 @@ func TestLabelServerSaves(t *testing.T) {
 func TestCostModel(t *testing.T) {
 	full, _ := config.Load("")
 	p := provider.Pricing(full.Analysis.Pricing)
-	lean := Yearly(p, DefaultAssumptions, Mixes[0], 300e6)
-	if lean.Total < 14000 || lean.Total > 16500 {
-		t.Fatalf("lean mix at 300M: $%.0f (design says ~$15.1k)", lean.Total)
+	lean, _ := MixByName("lean")
+	whisper, _ := MixByName("lean+whisper")
+	heavy, _ := MixByName("heavier")
+	within := func(name string, got, lo, hi float64) {
+		t.Helper()
+		if got < lo || got > hi {
+			t.Fatalf("%s: $%.0f, want %.0f..%.0f", name, got, lo, hi)
+		}
 	}
-	heavy := Yearly(p, DefaultAssumptions, Mixes[1], 300e6)
-	if heavy.Total < 45000 || heavy.Total > 52000 {
-		t.Fatalf("heavier mix at 300M: $%.0f (design says ~$48.5k)", heavy.Total)
+	// The first design's figures are reproduced with its assumptions.
+	within("previous lean at 300M", Yearly(p, PreviousAssumptions, lean, 300e6).Total, 14800, 15400)
+	within("previous heavier at 300M", Yearly(p, PreviousAssumptions, heavy, 300e6).Total, 47500, 49500)
+	// Current defaults (design section 16).
+	within("lean at 300M", Yearly(p, DefaultAssumptions, lean, 300e6).Total, 10800, 11400)
+	within("lean+whisper at 300M", Yearly(p, DefaultAssumptions, whisper, 300e6).Total, 9000, 9400)
+	within("lean+whisper at 1B", Yearly(p, DefaultAssumptions, whisper, 1e9).Total, 25500, 26300)
+	b := Yearly(p, DefaultAssumptions, whisper, 1e9)
+	if b.Lines["speech"] != 2000 {
+		t.Fatalf("own Whisper is a fixed cost: %v", b.Lines["speech"])
 	}
-	if got := 1e6 * Unit(p, Choice{"claude-haiku-5-5", true}, DefaultAssumptions.Comment); got < 20 || got > 22 {
-		t.Fatalf("haiku per 1M comments $%.1f", got)
+	// Duplicates are not sent: comments cost 10% less than without.
+	noDup := DefaultAssumptions
+	noDup.DuplicateShare = 0
+	if r := Yearly(p, DefaultAssumptions, lean, 1e9).Lines["comments"] / Yearly(p, noDup, lean, 1e9).Lines["comments"]; r < 0.899 || r > 0.901 {
+		t.Fatalf("duplicate share not applied: ratio %v", r)
 	}
-	var b bytes.Buffer
-	WriteCostReport(&b, p, DefaultAssumptions, []float64{1e8, 3e8, 1e9})
-	if !strings.Contains(b.String(), "| lean | $5.0k | $15.1k | $50.2k |") {
-		t.Fatalf("cost report:\n%s", b.String())
+	within("haiku per 1M comments (batch)", 1e6*Unit(p, Choice{"claude-haiku-5-5", true}, DefaultAssumptions.Comment), 14, 15.5)
+	var out bytes.Buffer
+	WriteCostReport(&out, p, DefaultAssumptions, []float64{1e8, 3e8, 1e9})
+	for _, want := range []string{"| lean | $3.7k | $11.1k | $37.0k |", "| lean+whisper | $4.4k | $9.2k | $25.9k |", "| speech | $1.3k \\| $2.0k |"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("cost report lacks %q:\n%s", want, out.String())
+		}
 	}
 }
 

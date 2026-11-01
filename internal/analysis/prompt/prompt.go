@@ -13,8 +13,8 @@ import (
 // Versions recorded with every result. Bump PromptVersion on any change to
 // the instructions and SchemaVersion on any change to the output schema.
 const (
-	PromptVersion = "p1"
-	SchemaVersion = "s1"
+	PromptVersion = "p2"
+	SchemaVersion = "s2"
 )
 
 // Allowed values of the output schema.
@@ -27,37 +27,65 @@ var (
 	Intents     = []string{"complaint", "praise", "question", "request", "suggestion", "purchase_intent", "churn_threat", "recommendation", "information", "giveaway_entry", "greeting_religious", "tagging", "spam_ad", "other"}
 	Emotions    = []string{"anger", "joy", "sadness", "fear", "surprise", "disgust", "trust", "anticipation", "none"}
 	Toxicities  = []string{"none", "mild", "severe"}
-	Aspects     = []string{"price", "quality", "network", "internet", "customer_service", "delivery", "billing", "app", "staff", "availability", "offers", "reliability", "safety", "management", "general", "other"}
+	// LangCodes is the model's one-field answer for language and dialect;
+	// LangOf maps it back.
+	LangCodes = []string{"ar-iq", "ar-gulf", "ar-lev", "ar-eg", "ar-msa", "ar-other", "ar", "ckb", "kmr", "en", "tr", "fa", "other", "none"}
+	// Flags are the yes/no signals, listed only when true.
+	Flags   = []string{"cs", "sarcasm", "spam", "hate", "threat", "harass", "urgent"}
+	Aspects = []string{"price", "quality", "network", "internet", "customer_service", "delivery", "billing", "app", "staff", "availability", "offers", "reliability", "safety", "management", "general", "other"}
 )
+
+// LangOf maps a language code to the stored language and dialect.
+func LangOf(code string) (lang, dialect string, ok bool) {
+	switch code {
+	case "ar-iq":
+		return "ar", "iraqi", true
+	case "ar-gulf":
+		return "ar", "gulf", true
+	case "ar-lev":
+		return "ar", "levantine", true
+	case "ar-eg":
+		return "ar", "egyptian", true
+	case "ar-msa":
+		return "ar", "msa", true
+	case "ar-other":
+		return "ar", "other", true
+	case "ar", "ckb", "kmr", "en", "tr", "fa", "other", "none":
+		return code, "none", true
+	}
+	return "other", "none", false
+}
 
 const textInstructions = `You analyse Iraqi social media content for brand and media monitoring. Each request holds an optional thread context (the post that comments reply to, and the page that published it) and a list of items. Analyse every item and return exactly one result per item, with the same "i". The context only explains the items: do not analyse it unless it is itself listed as an item.
 
 LANGUAGE
 - Content is mostly Iraqi Arabic dialect (comments) and Modern Standard Arabic (news posts), also Arabizi (Arabic written in Latin letters and digits such as 3, 7, 5, 2), English, Kurdish and mixtures.
-- lang: ar (any Arabic, including Arabizi), ckb (Kurdish Sorani, Arabic script with letters like ڕ ڵ ۆ ێ ە), kmr (Kurdish Kurmanji, Latin script), en, tr, fa, other; none when there are no words (emoji only).
-- dialect (for ar): iraqi, gulf, levantine, egyptian, msa, other; none when not Arabic or too short to tell.
-- script: arabic, latin, mixed, none. code_switch: true when the item mixes languages.
+- lng, one code for language and dialect. Arabic, including Arabizi: ar-iq (Iraqi), ar-gulf, ar-lev (Levantine), ar-eg (Egyptian), ar-msa (Modern Standard), ar-other, or ar when too short to tell the dialect. Otherwise: ckb (Kurdish Sorani, Arabic script with letters like ڕ ڵ ۆ ێ ە), kmr (Kurdish Kurmanji, Latin script), en, tr, fa, other; none when there are no words (emoji only).
 
 SENTIMENT
 - The author's own evaluative stance, read in the context of the thread, not the tone of the news being commented on.
 - positive, negative, neutral, or mixed (clear positive and clear negative parts). Thanks and blessings addressed to the page or brand ("الله يحفظكم", "عاشت ايدكم") are positive. Condolence and prayer formulas ("الله يرحمه", "انا لله") are neutral, with emotion sadness. Plain questions and tags are neutral.
-- Sarcasm is common ("خوش شبكة 👏😂" under an outage post): label the intended meaning and set sarcasm true.
-- score: -1 (very negative) to 1 (very positive). confidence: 0 to 1, how sure you are of the label.
+- Sarcasm is common ("خوش شبكة 👏😂" under an outage post): label the intended meaning and add the sarcasm flag.
+- score: a whole number from -100 (very negative) to 100 (very positive). conf: a whole number from 0 to 100, how sure you are of the label.
 
 ENTITIES
 - List brands, products, organisations, public persons (politicians, officials, clerics, celebrities, journalists, athletes), places, events and media outlets that the item names or clearly refers to. On a brand's page, "your network", "شبكتكم", "انتم" refer to the page's brand.
-- For each: name as written (or the canonical name from a hint), type, id, sentiment toward that entity with score, and aspect (what the sentiment is about).
+- For each: name as written (or the canonical name from a hint), type, id, sentiment toward that entity with its score (-100 to 100), and aspect (what the sentiment is about).
 - Hints list registry entities found in the text or the page name: when an entity is a hinted one, copy its id exactly; otherwise id is "".
 - Private persons (friends tagged, ordinary people named): never list them. Count them in ppl.
 - Do not identify people from images or guess identities.
 
 TOPICS AND SIGNALS
-- topics: up to 3 ids from the taxonomy below, most specific first; "other" if none fits. keywords: up to 5 short keywords in the item's language.
+- topics: up to 3 ids from the taxonomy below, most specific first; "other" if none fits. kw (only when the schema asks for it): up to 5 short keywords in the item's language.
 - intent: complaint, praise, question, request, suggestion, purchase_intent, churn_threat (says they will leave), recommendation, information (states facts or news), giveaway_entry (enters a contest), greeting_religious, tagging (only tags people), spam_ad, other.
 - emotion: anger, joy, sadness, fear, surprise, disgust, trust, anticipation, none.
-- tox: none, mild (insults, vulgarity), severe (hate speech, threats, incitement); hate, threat, harass flags.
-- spam: advertising, scams, unrelated promotions, selling numbers or followers.
-- urgent: the item alleges danger, an outage affecting many, fraud, a health or food-safety problem, or an accident: something a brand or authority must see quickly.
+- tox: none, mild (insults, vulgarity), severe (hate speech, threats, incitement).
+- flags: list only the signals that apply, usually none ([]):
+  - cs: the item mixes languages (code switching);
+  - sarcasm: the intended meaning is the opposite of the literal one;
+  - spam: advertising, scams, unrelated promotions, selling numbers or followers;
+  - hate, threat, harass: hate speech, a threat, harassment of a person;
+  - urgent: the item alleges danger, an outage affecting many, fraud, a health or food-safety problem, or an accident: something a brand or authority must see quickly.
 
 OUTPUT
 Answer only with the JSON object the schema requires. Never translate, quote or explain the items.
@@ -67,11 +95,11 @@ TAXONOMY (id: English / Arabic)
 
 const mediaInstructions = `You analyse images (or key frames of a video, in order, with its speech transcript) published on Iraqi social media, for brand and media monitoring. The post text, when given, is context.
 
-- logos: brands visible as logos, signs or product packaging; name, id (copy a hint's id when it matches, else ""), confidence 0 to 1.
+- logos: brands visible as logos, signs or product packaging; name, id (copy a hint's id when it matches, else ""), conf (0 to 100).
 - ocr: text visible in the image, verbatim in its original language, at most 500 characters ("" if none).
 - desc: one English sentence describing what is shown. labels: up to 8 English nouns for objects and scene.
 - people: how many people are visible. Never identify anyone from their face; name a person only if the name is written in the image or spoken in the transcript.
-- sent, score, conf: the sentiment of the message the image or video conveys (positive, negative, neutral, mixed; -1 to 1; 0 to 1).
+- sent, score, conf: the sentiment of the message the image or video conveys (positive, negative, neutral, mixed; a whole number from -100 to 100; a whole number from 0 to 100).
 - ents: brands, organisations, public persons, places and events shown, written or spoken, with sentiment toward each (same rules as for text; never private persons). topics: up to 3 taxonomy ids.
 
 Answer only with the JSON object the schema requires.

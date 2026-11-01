@@ -67,7 +67,7 @@ A 401 in the logs means the key is missing or revoked.
 
 ## Budget
 
-`analysis.budget.daily_usd` caps spend per Iraq day; `analysis.routes.<route>.daily_usd` caps one route. Spend is measured from real token usage at list prices (`analysis.pricing`).
+`analysis.budget.daily_usd` caps spend per Iraq day; `analysis.routes.<route>.daily_usd` caps one route. Spend is measured from real token usage at list prices (`analysis.pricing`), plus speech-to-text minutes at the transcription model's `per_minute` price (logged as `video` requests of that model; an own Whisper server is priced 0).
 - **At the cap:** batch and re-analysis work pause (items wait); urgent real-time items continue if `analysis.budget.urgent_exempt`.
 - **To look:** `fbs_analysis_spent_today_usd`, `fbs_analysis_cost_usd_total` by model and route, or `make pilot-analysis-status`.
 - **To change:** set the budget in the config and restart the analysis containers. A new day starts at 00:00 Iraq time.
@@ -144,6 +144,7 @@ The password file is created by the operator. Never pass passwords on the comman
 | `fbs_analysis_items_ingested_total{outcome}` | new, edited, unchanged, skipped, deleted, redacted, suppressed |
 | `fbs_analysis_items_analyzed_total{route,model,outcome}` | written, stale (edited meanwhile), duplicate |
 | `fbs_analysis_items_failed_total{route,reason}` | missing, invalid, truncated, refused, error |
+| `fbs_analysis_items_deduplicated_total{route}` | items that shared the answer of an identical item of the same thread and parent (not sent to the model) |
 | `fbs_analysis_tokens_total`, `fbs_analysis_cost_usd_total` | token usage and spend by model and route |
 | `fbs_analysis_queue_depth`, `fbs_analysis_queue_oldest_seconds` | queue by lane and route |
 | `fbs_analysis_spent_today_usd`, `fbs_analysis_budget_paused` | budget |

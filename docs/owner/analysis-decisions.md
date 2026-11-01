@@ -21,11 +21,21 @@ It runs on Claude (Anthropic's AI). Most comments are sent in bulk at half price
 
 At list prices, checked 1 November 2026. Estimates until the test with your labeller measures the real numbers.
 
-| Text items per year | Cheapest setup (Haiku everywhere) | Stronger setup (Sonnet for posts, images, videos) |
+| Text items per year | Recommended setup | First estimate |
 |---|---|---|
-| 100 million | about $5,000 | about $16,000 |
-| 300 million | about $15,000 | about $48,000 |
-| 1 billion | about $50,000 | about $160,000 |
+| 100 million | about **$3,700** | $5,000 |
+| 300 million | about **$9,200** | $15,000 |
+| 1 billion | about **$26,000** | $50,000 |
+
+**How it became cheaper, without losing quality or speed:**
+- **Shorter AI answers.** We pay mostly for what the AI writes back. It now writes short codes instead of words, and only the warnings that apply. Same information, about 30% cheaper.
+- **Free work is done by our own code.** Which alphabet a comment uses, and a comment's keywords, are worked out by our code, not paid for.
+- **Identical comments are analysed once.** Contest entries ("تم") and prayers under the same post get one analysis, copied to all of them.
+- **Fewer quality checks by the most expensive AI:** 1 in 5,000 items instead of 1 in 1,000. That is still about 165 checks a day, enough to notice if quality drops.
+- **Speech in videos:** above about 150 million items a year, our own speech-to-text server (about $2,000 a year) is cheaper than paying per minute. We use it only if the test shows it understands Iraqi dialect well enough.
+- **The daily spending limit now includes speech-to-text,** so the limit really holds.
+
+The "stronger setup" (a more expensive AI, Sonnet, for posts, images and videos) would now cost about $42,000 a year at 300 million. It is used only if the test shows the cheaper AI is not good enough there.
 
 Server and storage costs come on top: roughly 330 GB of database storage a year at 300 million items.
 
@@ -60,6 +70,9 @@ Each has a default. If you do not answer, I continue with the default.
 10. **Backup AI company.**
     - *Default:* none until you add a second key.
     - *I recommend* adding Google (Gemini) or OpenAI, so analysis continues if Anthropic has an outage.
+11. **Very large posts (optional saving).**
+    - *Default:* every comment is analysed.
+    - *Option (not built):* on posts with thousands of comments, analyse every comment that mentions a brand and only a sample of the others, and scale the counts up. This saves a lot on viral posts, but you can no longer see the analysis of every single comment. Tell me if you want it.
 
 ## For your lawyer (I flag these, I do not decide them)
 

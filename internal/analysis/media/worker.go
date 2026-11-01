@@ -189,7 +189,7 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 		ownerAt = time.Now().UTC()
 	}
 	var images []provider.Image
-	var transcript string
+	var audio []byte
 	if j.IsVideo() {
 		f, err := w.video(ctx, j, data)
 		if err != nil {
@@ -199,21 +199,43 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 		for _, img := range f.Images {
 			images = append(images, provider.Image{MediaType: "image/jpeg", Data: img})
 		}
-		if len(f.Audio) > 0 && w.Cfg.Video.STTProvider != "" {
-			if t, ok := w.P.Providers.Transcriber(w.Cfg.Video.STTProvider); ok {
-				text, err := t.Transcribe(ctx, f.Audio, "audio.mp3", w.Cfg.Video.STTLanguage)
-				if err != nil {
-					return nil, fmt.Errorf("transcribe: %w", err)
-				}
-				transcript = textnorm.Truncate(text, 20000)
-			}
-		}
+		audio = f.Audio
 	} else {
 		img, err := Resize(data, w.Cfg.ImageMaxSide)
 		if err != nil {
 			return nil, err
 		}
 		images = append(images, provider.Image{MediaType: "image/jpeg", Data: img})
+	}
+	// Speech-to-text is paid per minute: it counts toward the budget, so
+	// the check comes before transcribing.
+	stt, sttModel := w.transcriber(audio)
+	minutes := AudioMinutes(audio)
+	speechCost := 0.0
+	if stt != nil {
+		speechCost = minutes * w.P.Pricing.Price(sttModel).PerMinute
+	}
+	system, schema := w.prompts()
+	est := w.P.Pricing.Estimate(rc.Model, len(system), len(postText)+int(minutes*900), len(images), 250, false) + speechCost
+	if ok, err := w.P.Budget.Allow(ctx, route, est, false); err != nil || !ok {
+		if err == nil {
+			err = errBudget
+		}
+		return nil, err
+	}
+	var transcript string
+	if stt != nil {
+		start := time.Now()
+		text, err := stt.Transcribe(ctx, audio, "audio.mp3", w.Cfg.Video.STTLanguage)
+		if err != nil {
+			return nil, fmt.Errorf("transcribe: %w", err)
+		}
+		transcript = textnorm.Truncate(text, 20000)
+		// Logged as a request of its own, so the day's spend (read back
+		// from the request log) includes it.
+		w.P.Budget.Add(route, speechCost)
+		w.record(ctx, uuid.NewString(), route, w.Cfg.Video.STTProvider, sttModel, false, j.MediaID,
+			&provider.Response{Latency: time.Since(start)}, speechCost)
 	}
 	mask := func(s string) string {
 		if w.P.Cfg.Privacy.MaskPII {
@@ -227,7 +249,6 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	for _, m := range reg.Find(hintText) {
 		hints = append(hints, prompt.Hint{ID: m.EntityID, Name: m.Name})
 	}
-	system, schema := w.prompts()
 	req := provider.Request{
 		ID:         uuid.NewString(),
 		Model:      rc.Model,
@@ -239,13 +260,6 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 		MaxTokens:  rc.MaxTokens,
 		Effort:     rc.Effort,
 		Thinking:   rc.Thinking,
-	}
-	est := w.P.Pricing.Estimate(rc.Model, len(req.System), len(req.User), len(images), 250, false)
-	if ok, err := w.P.Budget.Allow(ctx, route, est, false); err != nil || !ok {
-		if err == nil {
-			err = errBudget
-		}
-		return nil, err
 	}
 	resp, prov, model, fallback, err := w.call(ctx, route, rc, req)
 	if err != nil {
@@ -262,13 +276,31 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 		return nil, err
 	}
 	mr.Transcript = transcript
-	return &store.MediaResult{Job: j, Result: mr, OwnerTime: ownerAt, Consumer: w.Cfg.Consumer, CostUSD: cost,
+	return &store.MediaResult{Job: j, Result: mr, OwnerTime: ownerAt, Consumer: w.Cfg.Consumer, CostUSD: cost + speechCost,
 		Prov: core.Provenance{Provider: prov, Model: model, PromptVersion: prompt.PromptVersion, TaxonomyVersion: w.P.Tax.Version,
 			SchemaVersion: prompt.SchemaVersion, Route: route, Lane: core.LaneRealtime, Fallback: fallback, AnalyzedAt: time.Now().UTC(),
 			RequestID: req.ID}}, nil
 }
 
 var errBudget = errors.New("media: daily budget reached")
+
+// transcriber returns the configured speech-to-text and its model, or nil
+// when there is no audio or none is configured.
+func (w *Worker) transcriber(audio []byte) (provider.Transcriber, string) {
+	name := w.Cfg.Video.STTProvider
+	if len(audio) == 0 || name == "" {
+		return nil, ""
+	}
+	t, ok := w.P.Providers.Transcriber(name)
+	if !ok {
+		return nil, ""
+	}
+	return t, w.P.Cfg.Providers[name].TranscribeModel
+}
+
+// AudioMinutes is the length of the extracted audio (32 kbit/s MP3, see
+// ExtractFrames), which speech-to-text APIs bill.
+func AudioMinutes(mp3 []byte) float64 { return float64(len(mp3)) * 8 / 32000 / 60 }
 
 func (w *Worker) video(ctx context.Context, j core.MediaJob, data []byte) (*Frames, error) {
 	tmp, err := os.CreateTemp(w.Cfg.Video.TempDir, "sb-media-*")

@@ -48,7 +48,8 @@ type Pipeline struct {
 	down   map[string]time.Time
 
 	textSystem string
-	textSchema map[string]any
+	textSchema map[string]any // comment, escalation and audit routes
+	postSchema map[string]any // post route: with keywords
 	urgentSrc  map[string]bool
 	now        func() time.Time
 }
@@ -56,7 +57,8 @@ type Pipeline struct {
 // New builds a pipeline.
 func New(st *store.Store, providers *registry.Registry, tax *taxonomy.Taxonomy, cfg config.Analysis, calib map[string]*Calibration) *Pipeline {
 	p := &Pipeline{Store: st, Providers: providers, Tax: tax, Cfg: cfg, Pricing: provider.Pricing(cfg.Pricing), Calib: calib,
-		textSystem: prompt.TextSystem(tax), textSchema: prompt.TextSchema(tax), urgentSrc: map[string]bool{}, now: time.Now,
+		textSystem: prompt.TextSystem(tax), textSchema: prompt.TextSchema(tax, false), postSchema: prompt.TextSchema(tax, true),
+		urgentSrc: map[string]bool{}, now: time.Now,
 		down: map[string]time.Time{}}
 	for _, s := range cfg.Urgent.Sources {
 		p.urgentSrc[s] = true
@@ -110,7 +112,9 @@ type group struct {
 
 // Groups packs claimed items into requests: a thread's items together (up
 // to grouping.max_items and max_chars), items retried after a failure
-// alone, so one bad item cannot sink a group twice.
+// alone, so one bad item cannot sink a group twice. An item identical to
+// one already packed for its thread joins that request as a follower
+// (dedup.go) and counts toward neither limit.
 func (p *Pipeline) Groups(route string, cs []store.Claimed) []group {
 	maxItems, maxChars := p.Cfg.Grouping.MaxItems, p.Cfg.Grouping.MaxChars
 	byThread := map[string][]store.Claimed{}
@@ -122,8 +126,11 @@ func (p *Pipeline) Groups(route string, cs []store.Claimed) []group {
 			continue
 		}
 		key := c.Item.ThreadID
-		if key == "" || route == core.RoutePost {
-			key = "" // posts and orphan items pack together
+		switch {
+		case route == core.RoutePost:
+			key = "" // long posts pack together, each with its page
+		case c.Item.Kind == core.KindPost:
+			key = "\x00post:" + c.Item.SourceID // short or escalated posts: by page, for the page context
 		}
 		if _, ok := byThread[key]; !ok {
 			order = append(order, key)
@@ -133,19 +140,48 @@ func (p *Pipeline) Groups(route string, cs []store.Claimed) []group {
 	for _, key := range order {
 		var g group
 		chars := 0
+		// Where each leader of this thread went: the index in out, or -1
+		// while its group is still being filled.
+		leader := map[string]int{}
+		var open []string
+		flush := func() {
+			out = append(out, g)
+			for _, k := range open {
+				leader[k] = len(out) - 1
+			}
+			g, chars, open = group{}, 0, nil
+		}
 		for _, c := range byThread[key] {
+			urgent := c.Priority == core.PriorityUrgent
+			k := ""
+			if dedupRoute(route) && c.Item.Kind != core.KindPost {
+				k = dupKey(&c.Item, c.Item.InputHash())
+				if at, ok := leader[k]; ok {
+					if at < 0 {
+						g.items = append(g.items, c.Item)
+						g.urgent = g.urgent || urgent
+					} else {
+						out[at].items = append(out[at].items, c.Item)
+						out[at].urgent = out[at].urgent || urgent
+					}
+					continue
+				}
+			}
 			n := len([]rune(c.Item.Text))
-			if len(g.items) > 0 && (len(g.items) >= maxItems || chars+n > maxChars) {
-				out = append(out, g)
-				g, chars = group{}, 0
+			if len(g.items) > 0 && (len(open) >= maxItems || chars+n > maxChars) {
+				flush()
 			}
 			g.route = route
 			g.items = append(g.items, c.Item)
-			g.urgent = g.urgent || c.Priority == core.PriorityUrgent
+			g.urgent = g.urgent || urgent
 			chars += n
+			if k != "" && c.Item.Kind != core.KindPost {
+				leader[k] = -1
+			}
+			open = append(open, k)
 		}
 		if len(g.items) > 0 {
-			out = append(out, g)
+			flush()
 		}
 	}
 	return out
@@ -156,6 +192,8 @@ type built struct {
 	req    provider.Request
 	items  []core.Item
 	hashes [][]byte
+	// prompted counts the items shown to the model (the leaders).
+	prompted int
 }
 
 func (p *Pipeline) mask(s string) string {
@@ -179,11 +217,16 @@ func hints(ms []entities.Match) []prompt.Hint {
 func (p *Pipeline) build(ctx context.Context, g group, model string) (built, error) {
 	reg := p.Entities()
 	b := built{items: g.items}
+	for _, it := range g.items {
+		b.hashes = append(b.hashes, it.InputHash())
+	}
+	lead := leaders(g.route, g.items, b.hashes)
 	var c prompt.Context
 	inGroup := map[string]int{}
 	for i, it := range g.items {
-		inGroup[it.ContentID] = i
+		inGroup[it.ContentID] = lead[i]
 	}
+	var inputs []prompt.ItemInput
 	if g.route != core.RoutePost {
 		var need []string
 		threads := map[string]bool{}
@@ -208,11 +251,16 @@ func (p *Pipeline) build(ctx context.Context, g group, model string) (built, err
 				c.Page = post.SourceName
 			}
 		}
+		if c.Page == "" && len(g.items) > 0 && g.items[0].Kind == core.KindPost {
+			c.Page = g.items[0].SourceName // posts are grouped by page
+		}
 		if c.Page != "" {
 			c.PageHints = hints(reg.Find(c.Page))
 		}
-		inputs := make([]prompt.ItemInput, len(g.items))
 		for i, it := range g.items {
+			if lead[i] != i {
+				continue // a follower: gets its leader's answer
+			}
 			in := prompt.ItemInput{I: i, Kind: it.Kind, Text: p.mask(it.Text), ReplyTo: -1, Hints: hints(reg.Find(it.Text))}
 			if it.Kind == core.KindReply {
 				if j, ok := inGroup[it.ParentID]; ok {
@@ -221,27 +269,30 @@ func (p *Pipeline) build(ctx context.Context, g group, model string) (built, err
 					in.ParentText = p.mask(textnorm.Truncate(par.Text, 300))
 				}
 			}
-			inputs[i] = in
+			inputs = append(inputs, in)
 		}
 		b.req.User = prompt.TextUser(c, inputs)
+		b.req.Schema = p.textSchema
+		if allPosts(g.items) && g.route != core.RouteComment {
+			b.req.Schema = p.postSchema // escalated or audited long posts keep the model's keywords
+		}
 	} else {
-		inputs := make([]prompt.ItemInput, len(g.items))
 		for i, it := range g.items {
-			inputs[i] = prompt.ItemInput{I: i, Kind: it.Kind, Text: p.mask(it.Text), ReplyTo: -1, Hints: hints(reg.Find(it.Text))}
+			if lead[i] == i {
+				inputs = append(inputs, prompt.ItemInput{I: i, Kind: it.Kind, Text: p.mask(it.Text), ReplyTo: -1, Hints: hints(reg.Find(it.Text))})
+			}
 		}
 		page := ""
 		if len(g.items) > 0 {
 			page = g.items[0].SourceName
 		}
 		b.req.User = prompt.TextUser(prompt.Context{Page: page}, inputs)
+		b.req.Schema = p.postSchema
 	}
-	for _, it := range g.items {
-		b.hashes = append(b.hashes, it.InputHash())
-	}
+	b.prompted = len(inputs)
 	rc := p.Cfg.Routes[g.route]
 	b.req.Model = model
 	b.req.System = p.textSystem
-	b.req.Schema = p.textSchema
 	b.req.SchemaName = "items"
 	b.req.MaxTokens = rc.MaxTokens
 	b.req.Effort = rc.Effort
@@ -249,9 +300,18 @@ func (p *Pipeline) build(ctx context.Context, g group, model string) (built, err
 	return b, nil
 }
 
+func allPosts(items []core.Item) bool {
+	for _, it := range items {
+		if it.Kind != core.KindPost {
+			return false
+		}
+	}
+	return len(items) > 0
+}
+
 // estimate is the expected cost of a built request.
 func (p *Pipeline) estimate(b built, batch bool) float64 {
-	return p.Pricing.Estimate(b.req.Model, len(b.req.System), len(b.req.User), len(b.req.Images), 80*len(b.items), batch)
+	return p.Pricing.Estimate(b.req.Model, len(b.req.System), len(b.req.User), len(b.req.Images), 60*b.prompted, batch)
 }
 
 // sent identifies a request being answered.
@@ -276,24 +336,31 @@ func (p *Pipeline) handle(ctx context.Context, s sent, items []core.Item, hashes
 	out := store.RequestOutcome{ID: s.id, Provider: s.provider, Model: s.model, Fallback: s.fallback,
 		Usage:   [4]int{resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.CacheReadTokens, resp.Usage.CacheWriteTokens},
 		CostUSD: cost, LatencyMS: int(resp.Latency.Milliseconds()), MaxAttempts: p.Cfg.Limits.MaxAttempts}
-	want := make([]int, len(items))
+	// Followers share their leader's answer (dedup.go).
+	lead := leaders(s.route, items, hashes)
+	var want []int
 	for i := range items {
-		want[i] = i
+		if lead[i] == i {
+			want = append(want, i)
+		}
 	}
 	var results []store.ItemResult
 	switch {
-	case resp.Refused && len(items) == 1:
+	case resp.Refused && len(want) == 1:
 		ametrics.Refusals.WithLabelValues(s.route, s.model).Inc()
 		if fb, ok := p.fallbackFor(s); ok {
-			// One refused item: the fallback provider gets one chance.
+			// One refused input: the fallback provider gets one chance.
 			resp2, err := p.Providers.Complete(ctx, fb.provider, p.rebuildFor(ctx, s, items, fb.model))
 			if err == nil && !resp2.Refused {
 				fb.id = s.id
 				return p.handle(ctx, fb, items, hashes, resp2)
 			}
 		}
-		results = append(results, p.result(s, items[0], hashes[0], core.Result{Refused: true, Sentiment: core.SentimentNeutral,
-			Lang: "other", Dialect: "none", Script: "none", Intent: "other", Emotion: "none", Toxicity: "none"}, cost))
+		per := cost / float64(len(items))
+		for i := range items {
+			results = append(results, p.result(s, items[i], hashes[i], core.Result{Refused: true, Sentiment: core.SentimentNeutral,
+				Lang: "other", Dialect: "none", Script: "none", Intent: "other", Emotion: "none", Toxicity: "none"}, per))
+		}
 		out.Reason = "refused"
 	case resp.Refused:
 		ametrics.Refusals.WithLabelValues(s.route, s.model).Inc()
@@ -311,16 +378,32 @@ func (p *Pipeline) handle(ctx context.Context, s sent, items []core.Item, hashes
 			out.Failed, out.Reason = ids(items), reason+": "+err.Error()
 			break
 		}
-		for _, i := range missing {
-			out.Failed = append(out.Failed, items[i].ContentID)
+		failed := 0
+		answered := 0
+		for i := range items {
+			if _, ok := got[lead[i]]; ok {
+				answered++
+			} else {
+				out.Failed = append(out.Failed, items[i].ContentID)
+				failed++
+			}
 		}
 		if len(missing) > 0 {
-			ametrics.ItemsFailed.WithLabelValues(s.route, "missing").Add(float64(len(missing)))
-			out.Reason = fmt.Sprintf("%d item(s) missing from the answer", len(missing))
+			ametrics.ItemsFailed.WithLabelValues(s.route, "missing").Add(float64(failed))
+			out.Reason = fmt.Sprintf("%d item(s) missing from the answer", failed)
 		}
-		per := cost / float64(max(len(got), 1))
-		for i, r := range got {
+		per := cost / float64(max(answered, 1))
+		for i := range items {
+			r, ok := got[lead[i]]
+			if !ok {
+				continue
+			}
+			r.Entities = append([]core.Entity(nil), r.Entities...)
+			prompt.Finish(&r, p.mask(items[i].Text))
 			results = append(results, p.result(s, items[i], hashes[i], r, per))
+			if lead[i] != i {
+				ametrics.Deduplicated.WithLabelValues(s.route).Inc()
+			}
 		}
 	}
 	st, err := p.Store.WriteResults(ctx, results, out)

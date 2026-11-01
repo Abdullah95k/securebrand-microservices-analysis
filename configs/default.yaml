@@ -363,7 +363,9 @@ analysis:
     image:      {provider: anthropic, model: claude-haiku-5-5,  lane: realtime, thinking: "off", effort: low, max_tokens: 1500}
     video:      {provider: anthropic, model: claude-haiku-5-5,  lane: realtime, thinking: "off", effort: low, max_tokens: 2000}
     escalation: {provider: anthropic, model: claude-sonnet-5-5, lane: batch,    thinking: "off", effort: low, max_tokens: 4000, min_confidence: 0.6}
-    audit:      {provider: anthropic, model: claude-opus-5-5,   lane: batch,    thinking: adaptive, effort: medium, max_tokens: 16000, sample_rate: 0.001}
+    # 0.02% of items: ~165 a day at 300M items a year, enough to track
+    # quality month by month.
+    audit:      {provider: anthropic, model: claude-opus-5-5,   lane: batch,    thinking: adaptive, effort: medium, max_tokens: 16000, sample_rate: 0.0002}
   urgent:
     tracked_entities: true # alias of a tracked entity in the text -> real time
     sources: []            # e.g. ["fb:page:123"]
@@ -394,6 +396,18 @@ analysis:
       timeout: 120s
       max_retries: 2
       rps: 5
+    # An own speech-to-text server with an OpenAI-compatible API (for
+    # example faster-whisper with Whisper large-v3-turbo). Cheaper than a
+    # per-minute API above ~150M items a year (design section 16); used
+    # only if it passes the Iraqi-dialect transcription test.
+    whisper:
+      kind: openai_compat
+      base_url: "http://whisper:8000/v1"
+      api_key: ""
+      timeout: 300s
+      max_retries: 1
+      rps: 4
+      transcribe_model: deepdml/faster-whisper-large-v3-turbo-ct2
     fake:
       kind: fake
   # USD per million tokens, list prices checked 2026-11-01 (Anthropic and
@@ -409,6 +423,7 @@ analysis:
     gpt-5.4-nano:          {input: 0.20, output: 1.25, cache_read: 0.02,  batch_discount: 0.5}
     gpt-5.4-mini:          {input: 0.75, output: 4.50, cache_read: 0.075, batch_discount: 0.5}
     gpt-4o-mini-transcribe: {per_minute: 0.003}
+    deepdml/faster-whisper-large-v3-turbo-ct2: {per_minute: 0} # own server: a fixed cost
     fake:                  {input: 0, output: 0}
   budget:
     daily_usd: 0           # 0 = unlimited; set one in production
@@ -430,7 +445,7 @@ analysis:
       max_frames: 8
       frame_side: 512
       max_seconds: 600
-      stt_provider: ""     # e.g. openai; "" = no transcript
+      stt_provider: ""     # e.g. openai or whisper; "" = no transcript
       stt_language: ar
       timeout: 5m
       temp_dir: ""

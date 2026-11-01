@@ -92,7 +92,8 @@ func (r *Runner) groups(items []Item, cfg RunConfig) []group {
 		}
 		byCtx[k] = append(byCtx[k], it)
 	}
-	sys, schema := prompt.TextSystem(r.Tax), prompt.TextSchema(r.Tax)
+	sys := prompt.TextSystem(r.Tax)
+	commentSchema, postSchema := prompt.TextSchema(r.Tax, false), prompt.TextSchema(r.Tax, true)
 	mask := func(s string) string {
 		if cfg.MaskPII {
 			return textnorm.MaskPII(s)
@@ -106,8 +107,10 @@ func (r *Runner) groups(items []Item, cfg RunConfig) []group {
 		for start := 0; start < len(list); start += size {
 			chunk := list[start:min(start+size, len(list))]
 			c := prompt.Context{Page: chunk[0].Page}
+			schema := postSchema
 			if chunk[0].Kind != core.KindPost {
 				c.Post = mask(textnorm.Truncate(chunk[0].Post, 1500))
+				schema = commentSchema
 			}
 			for _, h := range r.Entities.Find(c.Page) {
 				c.PageHints = append(c.PageHints, prompt.Hint{ID: h.EntityID, Name: h.Name})
@@ -233,6 +236,11 @@ func (r *Runner) record(g group, cfg RunConfig, resp *provider.Response, err err
 		p := Prediction{ID: it.ID}
 		if res, ok := got[i]; ok {
 			res := res
+			text := it.Text
+			if cfg.MaskPII {
+				text = textnorm.MaskPII(text)
+			}
+			prompt.Finish(&res, text)
 			p.Result = &res
 		} else {
 			p.Missing = true

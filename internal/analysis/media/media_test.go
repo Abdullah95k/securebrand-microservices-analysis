@@ -130,6 +130,11 @@ func (o objects) Get(_ context.Context, bucket, key string, max int64) ([]byte, 
 
 func setup(t *testing.T) (*store.Store, *media.Worker, *fake.Provider, objects) {
 	t.Helper()
+	return setupWith(t, nil)
+}
+
+func setupWith(t *testing.T, edit func(*config.Analysis)) (*store.Store, *media.Worker, *fake.Provider, objects) {
+	t.Helper()
 	db := testenv.Postgres(t)
 	ctx := context.Background()
 	if err := store.Migrate(ctx, db); err != nil {
@@ -146,6 +151,9 @@ func setup(t *testing.T) (*store.Store, *media.Worker, *fake.Provider, objects) 
 	}
 	cfg.Media.Video.STTProvider = "fake"
 	cfg.Media.Video.MaxFrames = 3
+	if edit != nil {
+		edit(&cfg)
+	}
 	loc, _ := time.LoadLocation(cfg.Timezone)
 	st := store.New(db, loc)
 	tax, _ := taxonomy.Load("")
@@ -285,5 +293,63 @@ func TestWorkerVideo(t *testing.T) {
 	}
 	if fp.Calls() != 1 {
 		t.Fatalf("vision calls %d", fp.Calls())
+	}
+}
+
+// Speech-to-text is paid per minute: its cost is logged and counts toward
+// the daily budget, which is checked before transcribing.
+func TestWorkerVideoSpeechCost(t *testing.T) {
+	video := testVideo(t)
+	b, err := os.ReadFile(video)
+	if err != nil {
+		t.Fatal(err)
+	}
+	price := func(c *config.Analysis) {
+		pv := c.Providers["fake"]
+		pv.TranscribeModel = "stt-test"
+		c.Providers["fake"] = pv
+		c.Pricing["stt-test"] = config.ModelPrice{PerMinute: 60} // $1 a second
+	}
+	st, w, _, objs := setupWith(t, price)
+	ctx := context.Background()
+	objs["b/vid"] = b
+	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{job("vid", "video")}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var cost float64
+	if err := st.DB.QueryRow(ctx, `SELECT coalesce(sum(cost_usd), 0)::float8 FROM analysis.provider_requests WHERE model = 'stt-test' AND route = 'video'`).Scan(&cost); err != nil {
+		t.Fatal(err)
+	}
+	if cost < 1 {
+		t.Fatalf("speech cost %v, want the audio's seconds in dollars", cost)
+	}
+
+	// A budget smaller than the speech cost: nothing is transcribed or sent.
+	st2, w2, fp2, objs2 := setupWith(t, func(c *config.Analysis) {
+		price(c)
+		c.Budget.DailyUSD = 0.5
+	})
+	objs2["b/vid"] = b
+	if _, err := st2.InsertMediaJobs(ctx, []*core.MediaJob{job("vid", "video")}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w2.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := st2.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.provider_requests`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 || fp2.Calls() != 0 {
+		t.Fatalf("over budget: %d requests logged, %d calls", n, fp2.Calls())
+	}
+}
+
+func TestAudioMinutes(t *testing.T) {
+	if got := media.AudioMinutes(make([]byte, 240000)); got != 1 {
+		t.Fatalf("240 kB of 32 kbit/s audio = %v minutes, want 1", got)
 	}
 }

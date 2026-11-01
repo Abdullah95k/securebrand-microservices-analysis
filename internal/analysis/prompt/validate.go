@@ -40,10 +40,7 @@ type entityOut struct {
 
 type itemOut struct {
 	I       *int        `json:"i"`
-	Lang    string      `json:"lang"`
-	Dialect string      `json:"dialect"`
-	Script  string      `json:"script"`
-	CS      bool        `json:"cs"`
+	Lng     string      `json:"lng"`
 	Sent    string      `json:"sent"`
 	Score   float64     `json:"score"`
 	Conf    float64     `json:"conf"`
@@ -53,12 +50,7 @@ type itemOut struct {
 	Intent  string      `json:"intent"`
 	Emotion string      `json:"emotion"`
 	Tox     string      `json:"tox"`
-	Hate    bool        `json:"hate"`
-	Threat  bool        `json:"threat"`
-	Harass  bool        `json:"harass"`
-	Spam    bool        `json:"spam"`
-	Sarcasm bool        `json:"sarcasm"`
-	Urgent  bool        `json:"urgent"`
+	Flags   []string    `json:"flags"`
 	PPL     int         `json:"ppl"`
 }
 
@@ -126,23 +118,40 @@ func ParseText(raw string, want []int, tax *taxonomy.Taxonomy, reg *entities.Reg
 }
 
 func toResult(o itemOut, tax *taxonomy.Taxonomy, reg *entities.Registry, p *Problems) core.Result {
+	lang, dialect, ok := LangOf(o.Lng)
+	if !ok {
+		p.FixedValues++
+	}
 	r := core.Result{
-		Lang:       pick(o.Lang, Langs, "other", p),
-		Dialect:    pick(o.Dialect, Dialects, "none", p),
-		Script:     pick(o.Script, Scripts, "none", p),
-		CodeSwitch: o.CS,
+		Lang:       lang,
+		Dialect:    dialect,
+		Script:     "none", // set from the text by Finish
 		Sentiment:  o.Sent,
-		Score:      clamp(o.Score, -1, 1, p),
-		Confidence: clamp(o.Conf, 0, 1, p),
+		Score:      clamp(percent(o.Score), -1, 1, p),
+		Confidence: clamp(percent(o.Conf), 0, 1, p),
 		Intent:     pick(o.Intent, Intents, "other", p),
 		Emotion:    pick(o.Emotion, Emotions, "none", p),
 		Toxicity:   pick(o.Tox, Toxicities, "none", p),
-		Hate:       o.Hate,
-		Threat:     o.Threat,
-		Harassment: o.Harass,
-		Spam:       o.Spam,
-		Sarcasm:    o.Sarcasm,
-		Urgent:     o.Urgent,
+	}
+	for _, f := range o.Flags {
+		switch f {
+		case "cs":
+			r.CodeSwitch = true
+		case "sarcasm":
+			r.Sarcasm = true
+		case "spam":
+			r.Spam = true
+		case "hate":
+			r.Hate = true
+		case "threat":
+			r.Threat = true
+		case "harass":
+			r.Harassment = true
+		case "urgent":
+			r.Urgent = true
+		default:
+			p.FixedValues++
+		}
 	}
 	r.CalibratedConfidence = r.Confidence
 	r.PrivatePersonMentions = max(o.PPL, 0)
@@ -156,6 +165,27 @@ func toResult(o itemOut, tax *taxonomy.Taxonomy, reg *entities.Registry, p *Prob
 	}
 	r.Entities, r.PrivatePersonMentions = Entities(o.Ents, reg, r.PrivatePersonMentions, p)
 	return r
+}
+
+// percent turns a whole-number score (-100..100) or confidence (0..100)
+// into the stored -1..1 / 0..1 scale. A fraction with a decimal part is
+// taken as already scaled (a server that ignores the schema may answer
+// 0.8); whole numbers, including 1, are percentages.
+func percent(v float64) float64 {
+	if v != math.Trunc(v) && math.Abs(v) <= 1 {
+		return v
+	}
+	return v / 100
+}
+
+// Finish completes a text result with what the service computes itself
+// from the item's text (the text as sent, contact details masked): the
+// script, and keywords when the route does not ask the model for them.
+func Finish(r *core.Result, text string) {
+	r.Script = textnorm.Script(text)
+	if len(r.Keywords) == 0 && !r.Refused {
+		r.Keywords = textnorm.Keywords(text, MaxKeywords)
+	}
 }
 
 // Topics keeps valid taxonomy ids, without duplicates, at most MaxTopics.
@@ -224,7 +254,7 @@ func Entities(in []entityOut, reg *entities.Registry, ppl int, p *Problems) ([]c
 			aspect = "other"
 		}
 		out = append(out, core.Entity{ID: id, Name: cut(name, maxNameRunes), Type: typ, Sentiment: sent,
-			Score: clamp(e.Score, -1, 1, p), Aspect: aspect, Origin: "text"})
+			Score: clamp(percent(e.Score), -1, 1, p), Aspect: aspect, Origin: "text"})
 	}
 	return out, ppl
 }
@@ -260,8 +290,8 @@ func ParseMedia(raw string, tax *taxonomy.Taxonomy, reg *entities.Registry) (cor
 		Description: cut(strings.TrimSpace(o.Desc), maxDescRunes),
 		PeopleCount: max(o.People, 0),
 		Sentiment:   pick(o.Sent, Sentiments, core.SentimentNeutral, &p),
-		Score:       clamp(o.Score, -1, 1, &p),
-		Confidence:  clamp(o.Conf, 0, 1, &p),
+		Score:       clamp(percent(o.Score), -1, 1, &p),
+		Confidence:  clamp(percent(o.Conf), 0, 1, &p),
 		Topics:      Topics(o.Topics, tax, &p),
 	}
 	for _, l := range o.Labels {
@@ -289,7 +319,7 @@ func ParseMedia(raw string, tax *taxonomy.Taxonomy, reg *entities.Registry) (cor
 			continue
 		}
 		seen[key] = true
-		r.Logos = append(r.Logos, core.Logo{ID: id, Name: cut(name, maxNameRunes), Confidence: clamp(l.Conf, 0, 1, &p)})
+		r.Logos = append(r.Logos, core.Logo{ID: id, Name: cut(name, maxNameRunes), Confidence: clamp(percent(l.Conf), 0, 1, &p)})
 	}
 	r.Entities, _ = Entities(o.Ents, reg, 0, &p)
 	return r, p, nil

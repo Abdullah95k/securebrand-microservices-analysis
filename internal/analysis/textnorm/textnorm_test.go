@@ -2,6 +2,7 @@ package textnorm
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -114,5 +115,46 @@ func TestTruncate(t *testing.T) {
 	}
 	if len([]rune(Truncate("كلمة كلمة كلمة كلمة", 9))) > 12 {
 		t.Fatal("truncate too long")
+	}
+}
+
+func TestScript(t *testing.T) {
+	cases := map[string]string{
+		"النت ضعيف":           "arabic",
+		"شلونكم ڕۆژباش":       "arabic",
+		"shlonak 7abibi":      "latin",
+		"النت bad اليوم":      "mixed",
+		"النت ضعيف جدا ok":    "arabic",
+		"😂😂 123":              "none",
+		"":                    "none",
+		"Asiacell الشبكة زين": "mixed",
+		"الشبكة [phone] https://example.com/abc": "arabic",
+	}
+	for in, want := range cases {
+		if got := Script(in); got != want {
+			t.Errorf("Script(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestKeywords(t *testing.T) {
+	cases := []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"والله الشبكة ضعيفة اليوم، والشبكة تقطع", 5, "الشبكة ضعيفة اليوم تقطع"},
+		{"النتتتت غاااالي كلش 😡 https://x.com/a اتصل 07701234567", 5, "النت غالي اتصل"},
+		{"اللهم صل على محمد وال محمد", 5, ""},
+		{"تم", 5, ""},
+		{"Asiacell internet is VERY slow!!", 5, "asiacell internet slow"},
+		{"a b c ابو", 5, "ابو"},
+		{"مشكلة كبيرة جديدة قديمة صعبة سهلة", 3, "مشكلة كبيرة جديدة"},
+		{"عرض 2026 رصيد", 0, ""},
+	}
+	for _, c := range cases {
+		if got := strings.Join(Keywords(c.in, c.n), " "); got != c.want {
+			t.Errorf("Keywords(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }

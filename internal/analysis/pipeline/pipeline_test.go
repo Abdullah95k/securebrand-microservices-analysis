@@ -2,6 +2,7 @@ package pipeline_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,6 +143,123 @@ func TestBatchLaneEndToEnd(t *testing.T) {
 	}
 }
 
+// Identical comments of a thread are sent once and all get the answer;
+// a different parent, a different text or another lane's claim are not
+// merged.
+func TestDuplicatesAnalysedOnce(t *testing.T) {
+	e := setup(t, nil)
+	ctx := context.Background()
+	var users []string
+	e.primary.Fail = func(req provider.Request) error {
+		users = append(users, req.User)
+		return nil
+	}
+	reply := comment(5, "تم")
+	reply.Kind, reply.ParentID = core.KindReply, "fb:comment:1"
+	e.ingest(t, comment(1, "تم"), comment(2, "تم"), comment(3, " تم "), comment(4, "سيء"), reply, comment(6, "سيء"))
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE is_current`); n != 6 {
+		t.Fatalf("analyses %d, want 6", n)
+	}
+	if len(users) != 1 {
+		t.Fatalf("requests %d, want 1", len(users))
+	}
+	// Prompted: comment 1 ("تم"), comment 4 ("سيء"), the reply (another
+	// parent).
+	if n := strings.Count(users[0], `"text":`); n != 3 {
+		t.Fatalf("items shown to the model %d, want 3:\n%s", n, users[0])
+	}
+	if n := e.count(t, `SELECT count(DISTINCT request_id) FROM analysis.analyses WHERE content_id IN ('fb:comment:1','fb:comment:2','fb:comment:3')`); n != 1 {
+		t.Fatal("followers must carry the leader's request")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE content_id IN ('fb:comment:4','fb:comment:6') AND sentiment = 'negative'`); n != 2 {
+		t.Fatal("follower without its leader's answer")
+	}
+	// Script and keywords come from the text, not the model.
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE content_id = 'fb:comment:6' AND script = 'arabic' AND keywords = ARRAY['سيء']`); n != 1 {
+		t.Fatal("script and keywords not computed from the text")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue`); n != 0 {
+		t.Fatal("items left queued")
+	}
+	var cost2, cost4 float64
+	if err := e.s.DB.QueryRow(ctx, `SELECT (SELECT cost_usd FROM analysis.analyses WHERE content_id = 'fb:comment:2'),
+		(SELECT cost_usd FROM analysis.analyses WHERE content_id = 'fb:comment:4')`).Scan(&cost2, &cost4); err != nil {
+		t.Fatal(err)
+	}
+	if cost2 != cost4 {
+		t.Fatalf("the request's cost is split over every answered item: %v vs %v", cost2, cost4)
+	}
+}
+
+// Short posts use the comment route: identical ones of two pages are not
+// merged, and each is sent with its own page as context.
+func TestShortPostsKeepTheirPage(t *testing.T) {
+	e := setup(t, nil)
+	ctx := context.Background()
+	var users []string
+	e.primary.Fail = func(req provider.Request) error {
+		users = append(users, req.User)
+		return nil
+	}
+	a, b := post(), post()
+	a.Text, b.Text = "شبكتنا الأقوى", "شبكتنا الأقوى"
+	b.ContentID, b.SourceID, b.SourceName = "fb:post:2", "fb:page:2", "Zain Iraq"
+	e.ingest(t, a, b)
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(DISTINCT request_id) FROM analysis.analyses WHERE is_current`); n != 2 {
+		t.Fatalf("requests %d, want one per page", n)
+	}
+	joined := strings.Join(users, "\n")
+	if !strings.Contains(joined, "page: Asiacell Iraq") || !strings.Contains(joined, "page: Zain Iraq") {
+		t.Fatalf("posts sent without their page:\n%s", joined)
+	}
+}
+
+// A leader the model leaves out fails with its followers; they are retried
+// together and analysed.
+func TestDuplicatesFailWithTheirLeader(t *testing.T) {
+	e := setup(t, nil)
+	ctx := context.Background()
+	e.primary.Drop = func(i int) bool { return i == 0 }
+	e.ingest(t, comment(1, "تم"), comment(2, "تم"), comment(3, "حلو"))
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses`); n != 1 {
+		t.Fatalf("analyses %d, want 1", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE attempts = 1 AND last_error LIKE '2 item(s) missing%'`); n != 2 {
+		t.Fatal("leader and follower must both be released for a retry")
+	}
+	e.primary.Drop = nil
+	if _, err := e.s.DB.Exec(ctx, `UPDATE analysis.analysis_queue SET not_before = now() - interval '1s'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses`); n != 3 {
+		t.Fatalf("analyses %d after the retry, want 3", n)
+	}
+}
+
 func TestUrgentItemsGoRealtimeWithContext(t *testing.T) {
 	e := setup(t, nil)
 	ctx := context.Background()
@@ -250,12 +368,13 @@ func TestRefusedEverywhereIsStoredAsRefused(t *testing.T) {
 		c.Routes[core.RouteComment] = r
 	})
 	e.primary.Refuse = func(provider.Request) bool { return true }
-	e.ingest(t, comment(1, "نص"))
+	// Two identical comments: one input, refused; both are stored as refused.
+	e.ingest(t, comment(1, "نص"), comment(2, "نص"))
 	if _, err := e.p.RealtimeOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE refused AND sentiment = 'neutral'`); n != 1 {
-		t.Fatal("refused item not stored as refused")
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE refused AND sentiment = 'neutral' AND keywords IS NULL`); n != 2 {
+		t.Fatal("refused items not stored as refused")
 	}
 	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue`); n != 0 {
 		t.Fatal("refused item still queued")
