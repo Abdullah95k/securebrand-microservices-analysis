@@ -60,7 +60,7 @@ func ExtractFrames(ctx context.Context, ffmpeg, video, tempDir string, durationM
 	// #nosec G204 -- ffmpeg path from config, arguments built here
 	if out, err := exec.CommandContext(ctx, ffmpeg, frameArgs...).CombinedOutput(); err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("ffmpeg frames: %v: %s", err, lastLine(out))
+		return nil, fmt.Errorf("ffmpeg frames: %w: %s", err, lastLine(out))
 	}
 	files, _ := filepath.Glob(filepath.Join(dir, "f*.jpg"))
 	sort.Strings(files)

@@ -204,9 +204,9 @@ func entitiesCmd(args []string) error {
 				return err
 			}
 			w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "SEEN\tTYPE\tNORM\tAS WRITTEN\tLAST SEEN (Iraq time)")
+			_, _ = fmt.Fprintln(w, "SEEN\tTYPE\tNORM\tAS WRITTEN\tLAST SEEN (Iraq time)")
 			for _, r := range rows {
-				fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", r.Seen, r.Type, r.Norm, r.Surface, r.LastSeen.In(a.Store.Loc).Format("2006-01-02 15:04"))
+				_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", r.Seen, r.Type, r.Norm, r.Surface, r.LastSeen.In(a.Store.Loc).Format("2006-01-02 15:04"))
 			}
 			return w.Flush()
 		case "resolve":

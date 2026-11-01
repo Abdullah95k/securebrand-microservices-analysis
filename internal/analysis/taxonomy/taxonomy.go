@@ -60,7 +60,7 @@ func Parse(b []byte) (*Taxonomy, error) {
 		}
 		for _, c := range top.Children {
 			if !strings.HasPrefix(c.ID, top.ID+".") {
-				return nil, fmt.Errorf("taxonomy: %s must start with %s.", c.ID, top.ID)
+				return nil, fmt.Errorf("taxonomy: %s must start with %s and a dot", c.ID, top.ID)
 			}
 			if err := t.add(c.ID); err != nil {
 				return nil, err

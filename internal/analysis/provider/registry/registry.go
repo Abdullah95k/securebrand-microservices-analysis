@@ -4,6 +4,7 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -122,5 +123,5 @@ func (r *Registry) Observe(name string, err error) {
 }
 
 func ctxErr(err error) bool {
-	return err == context.Canceled || err == context.DeadlineExceeded
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }

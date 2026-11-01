@@ -13,7 +13,9 @@ import (
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/entities"
 )
 
-func plan(it *core.Item) Plan { return Plan{Route: core.RouteComment, Lane: core.LaneBatch, Priority: core.PriorityNormal} }
+func plan(it *core.Item) Plan {
+	return Plan{Route: core.RouteComment, Lane: core.LaneBatch, Priority: core.PriorityNormal}
+}
 
 func comment(id, text string, at time.Time, author string) *core.Item {
 	return &core.Item{ContentID: id, Platform: "facebook", Kind: core.KindComment, SourceID: "fb:page:1", ThreadID: "fb:post:1",

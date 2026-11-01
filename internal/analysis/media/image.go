@@ -27,7 +27,7 @@ var ErrUndecodable = errors.New("media: undecodable image")
 func Resize(data []byte, maxSide int) ([]byte, error) {
 	src, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUndecodable, err)
+		return nil, fmt.Errorf("%w: %w", ErrUndecodable, err)
 	}
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()

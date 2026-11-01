@@ -35,3 +35,9 @@ registry_sync:
   # Discovers rotated doc_ids on these pages; set by `make pilot-up` from the
   # first pages of phase0/pages.csv (pilot-run.yaml).
   interval: 30m
+# Content analysis (started only with `make pilot-analysis-up`). Claude
+# Haiku 5.5 through the Batch API, a hard daily budget, no media (the pilot
+# downloads none). The API key is in deploy/compose/analysis.env.
+analysis:
+  budget: {daily_usd: 5}
+  media: {enabled: false}

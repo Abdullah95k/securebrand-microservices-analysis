@@ -53,6 +53,10 @@ func (s *Store) RecomputeDay(ctx context.Context, day time.Time) error {
 	const sentimentCounts = `count(*) FILTER (WHERE sentiment = 'positive'), count(*) FILTER (WHERE sentiment = 'negative'),
 		count(*) FILTER (WHERE sentiment = 'neutral'), count(*) FILTER (WHERE sentiment = 'mixed')`
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		// Replicas may rebuild the same day at once: one at a time.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(4200102, $1)`, int32(d.Unix()/86400)); err != nil {
+			return err
+		}
 		for _, q := range []string{
 			`DELETE FROM analysis.rollup_entity_daily WHERE day = $1`,
 			`DELETE FROM analysis.rollup_entity_topic_daily WHERE day = $1`,

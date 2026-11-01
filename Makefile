@@ -5,7 +5,7 @@ PG_DSN ?= postgres://fbs:fbs@localhost:5432/fbs?sslmode=disable
 TEST_ENV = FBS_TEST_PG_DSN="$(PG_DSN)" FBS_TEST_REDIS_ADDR=localhost:6379 FBS_TEST_KAFKA_BROKERS=localhost:19092 FBS_TEST_SCHEMA_REGISTRY=http://localhost:18081
 COMPOSE = docker compose -f deploy/compose/docker-compose.yml
 
-.PHONY: all build test lint vet generate golden fixtures infra-up infra-down test-integration e2e loadtest soak docker docker-prebuilt compose-up compose-down spike-report phase0 phase0-dryrun phase0-trim phase0-rate pilot-up pilot-register pilot-registry pilot-report pilot-down pilot-clean spike-bin chart-check chart-smoke clean
+.PHONY: all build test lint vet generate golden fixtures infra-up infra-down test-integration e2e loadtest soak docker docker-prebuilt compose-up compose-down spike-report phase0 phase0-dryrun phase0-trim phase0-rate pilot-up pilot-register pilot-registry pilot-report pilot-down pilot-clean pilot-stats pilot-analysis-up pilot-analysis-down pilot-analysis-status docker-analysis-media spike-bin chart-check chart-smoke clean
 
 all: generate build test
 
@@ -45,7 +45,7 @@ infra-down:
 
 ## Integration tests against real Postgres/Redpanda/Valkey (make infra-up first).
 test-integration:
-	$(TEST_ENV) $(GO) test -count=1 ./internal/persist/... ./internal/e2e/... ./internal/spike/... ./internal/registrysync/... ./internal/platform/schemareg/...
+	$(TEST_ENV) $(GO) test -count=1 ./internal/persist/... ./internal/e2e/... ./internal/spike/... ./internal/registrysync/... ./internal/platform/schemareg/... ./internal/analysis/...
 
 ## Load tests against fakefb (opt-in; prints a report). Size with
 ## FBS_LOADTEST_PAGES, _POSTS, _COMMENTS, _ROWS, _LATENCY; FBS_LOADTEST_OUT=file.
@@ -197,9 +197,36 @@ pilot-report:
 
 ## Stops the pilot and keeps its database; pilot-clean also deletes it.
 pilot-down:
-	$(PILOT_COMPOSE) down
+	$(PILOT_COMPOSE) --profile analysis down
 pilot-clean:
-	$(PILOT_COMPOSE) down -v
+	$(PILOT_COMPOSE) --profile analysis down -v
+
+## Pilot data shape for the analysis design: counts and lengths only, no content.
+pilot-stats:
+	$(PILOT_COMPOSE) exec -T postgres psql -U fbs -d fbs -f - < scripts/analysis/pilot-stats.sql
+
+## Starts the analysis service on the pilot (sends comments to the LLM provider:
+## only after the owner's decision, docs/owner/analysis-decisions.md).
+pilot-analysis-up:
+	$(PILOT_RUN)
+	@test -f deploy/compose/analysis.env || { echo "missing deploy/compose/analysis.env (the API key): docs/owner/analysis-decisions.md, step 3"; exit 2; }
+	@test "$$(stat -c %a deploy/compose/analysis.env)" = 600 || { echo "deploy/compose/analysis.env must be mode 600: chmod 600 deploy/compose/analysis.env"; exit 2; }
+	$(PILOT_COMPOSE) --profile analysis up -d analysis
+	@echo "analysis running; follow it with: make pilot-analysis-status"
+
+pilot-analysis-down:
+	$(PILOT_COMPOSE) --profile analysis stop analysis
+
+## Analysis progress and spend (counts only).
+pilot-analysis-status:
+	@$(PILOT_COMPOSE) exec -T postgres psql -U fbs -d fbs -c "SELECT state, count(*) FROM analysis.content_index GROUP BY state ORDER BY 1" \
+	  -c "SELECT route, lane, count(*) AS queued FROM analysis.analysis_queue GROUP BY 1, 2" \
+	  -c "SELECT (created_at AT TIME ZONE 'Asia/Baghdad')::date AS day_iraq, model, count(*) AS requests, sum(items) AS items, \
+	      round(sum(coalesce(cost_usd, est_cost_usd))::numeric, 2) AS usd FROM analysis.provider_requests GROUP BY 1, 2 ORDER BY 1 DESC, 2 LIMIT 20"
+
+## Image with ffmpeg for the analysis media workers.
+docker-analysis-media:
+	docker build -f deploy/docker/Dockerfile --target analysis-media -t fbs:analysis-media .
 
 ## Rehearse Phase 0 against a local fakefb (no proxies, no Facebook, about a minute).
 phase0-dryrun:

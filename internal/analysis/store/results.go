@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -115,7 +116,7 @@ func (s *Store) writeOne(ctx context.Context, tx pgx.Tx, r *ItemResult, req uuid
 	)
 	err = tx.QueryRow(ctx, `SELECT text_hash, analyzed_hash, analyzed_route, analysis_version FROM analysis.content_index
 		WHERE content_id = $1 FOR UPDATE`, it.ContentID).Scan(&textHash, &analyzedHash, &analyzedRoute, &version)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return false, false, s.dequeue(ctx, tx, it.ContentID, r.Route, req)
 	}
 	if err != nil {

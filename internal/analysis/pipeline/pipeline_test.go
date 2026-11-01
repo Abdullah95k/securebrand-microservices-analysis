@@ -361,8 +361,11 @@ func TestSampled(t *testing.T) {
 	if pipeline.Sampled("x", 0) || !pipeline.Sampled("x", 1) {
 		t.Fatal("bounds")
 	}
-	if pipeline.Sampled("fb:comment:42", 0.5) != pipeline.Sampled("fb:comment:42", 0.5) {
-		t.Fatal("not deterministic")
+	first := pipeline.Sampled("fb:comment:42", 0.5)
+	for i := 0; i < 3; i++ {
+		if pipeline.Sampled("fb:comment:42", 0.5) != first {
+			t.Fatal("not deterministic")
+		}
 	}
 }
 

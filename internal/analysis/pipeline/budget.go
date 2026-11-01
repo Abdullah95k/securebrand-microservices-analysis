@@ -60,11 +60,8 @@ func (b *Budget) Allow(ctx context.Context, route string, est float64, urgent bo
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	ok := true
-	if b.DailyUSD > 0 && b.spent+est > b.DailyUSD {
-		ok = false
-	}
-	if cap := b.RouteUSD[route]; cap > 0 && b.route[route]+est > cap {
+	ok := b.DailyUSD <= 0 || b.spent+est <= b.DailyUSD
+	if limit := b.RouteUSD[route]; limit > 0 && b.route[route]+est > limit {
 		ok = false
 	}
 	if ok {

@@ -95,7 +95,7 @@ func ParseText(raw string, want []int, tax *taxonomy.Taxonomy, reg *entities.Reg
 		Items []itemOut `json:"items"`
 	}
 	if err := json.Unmarshal([]byte(js), &doc); err != nil {
-		return nil, want, p, fmt.Errorf("%w: %v", ErrInvalidJSON, err)
+		return nil, want, p, fmt.Errorf("%w: %w", ErrInvalidJSON, err)
 	}
 	wanted := map[int]bool{}
 	for _, i := range want {
@@ -253,7 +253,7 @@ func ParseMedia(raw string, tax *taxonomy.Taxonomy, reg *entities.Registry) (cor
 		Topics []string    `json:"topics"`
 	}
 	if err := json.Unmarshal([]byte(js), &o); err != nil {
-		return core.MediaResult{}, p, fmt.Errorf("%w: %v", ErrInvalidJSON, err)
+		return core.MediaResult{}, p, fmt.Errorf("%w: %w", ErrInvalidJSON, err)
 	}
 	r := core.MediaResult{
 		TextInImage: cut(strings.TrimSpace(o.OCR), maxOCRRunes),

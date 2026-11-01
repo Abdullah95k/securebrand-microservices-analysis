@@ -3,6 +3,7 @@ name: release
 # Pushing a tag vX.Y.Z publishes the images and the Helm chart to GHCR:
 #   ghcr.io/<owner>/fbs:X.Y.Z           static binaries (distroless)
 #   ghcr.io/<owner>/fbs:X.Y.Z-browser   the same with Chromium (fb.browser)
+#   ghcr.io/<owner>/fbs:X.Y.Z-media     the same with ffmpeg (sb-analysis media workers)
 #   oci://ghcr.io/<owner>/charts/fbs    chart X.Y.Z, appVersion X.Y.Z
 on:
   push:
@@ -46,6 +47,15 @@ jobs:
           target: browser
           build-args: VERSION=${{ steps.names.outputs.version }}
           tags: ${{ steps.names.outputs.image }}:${{ steps.names.outputs.version }}-browser
+          push: true
+      - name: Analysis media image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: analysis-media
+          build-args: VERSION=${{ steps.names.outputs.version }}
+          tags: ${{ steps.names.outputs.image }}:${{ steps.names.outputs.version }}-media
           push: true
       - uses: azure/setup-helm@v4
       - name: Chart

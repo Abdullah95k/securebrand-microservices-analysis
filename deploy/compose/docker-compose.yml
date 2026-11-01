@@ -116,5 +116,14 @@ services:
     <<: *fbs
     entrypoint: ["/usr/local/bin/fbs-registry-sync"]
 
+  # Content analysis (docs/design/analysis-service.md). Locally it uses the
+  # deterministic fake provider (local.yaml): no API keys, no data leaves.
+  # Video analysis needs ffmpeg: `make docker-analysis-media` and set
+  # FBS_ANALYSIS_IMAGE=fbs:analysis-media.
+  analysis:
+    <<: *fbs
+    image: ${FBS_ANALYSIS_IMAGE:-${FBS_IMAGE:-fbs:dev}}
+    entrypoint: ["/usr/local/bin/sb-analysis", "run"]
+
 volumes:
   pgdata: {}

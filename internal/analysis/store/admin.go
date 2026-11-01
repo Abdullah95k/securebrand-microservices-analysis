@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -178,7 +179,7 @@ func (s *Store) RecordModelChange(ctx context.Context, route, model, prompt, tax
 	var lastModel, lastPrompt, lastTax string
 	err := s.DB.QueryRow(ctx, `SELECT to_model, to_prompt, taxonomy FROM analysis.model_changes WHERE route = $1
 		ORDER BY id DESC LIMIT 1`, route).Scan(&lastModel, &lastPrompt, &lastTax)
-	if err != nil && err != pgx.ErrNoRows {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return false, err
 	}
 	if err == nil && lastModel == model && lastPrompt == prompt && lastTax == taxonomy {

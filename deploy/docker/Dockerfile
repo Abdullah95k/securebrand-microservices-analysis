@@ -25,6 +25,19 @@ EXPOSE 8080 9090
 # shares the pod's process namespace instead (its command bypasses this).
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/fbs-crawler"]
 
+# `--target analysis-media`: the same binaries with ffmpeg, for sb-analysis
+# media workers (video key frames and audio for speech-to-text).
+FROM debian:12-slim AS analysis-media
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg ca-certificates tini \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --uid 65532 --create-home --home-dir /home/nonroot nonroot
+COPY --from=build /out/ /usr/local/bin/
+ENV HOME=/tmp
+USER 65532:65532
+EXPOSE 9090
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/sb-analysis"]
+
 # The default image: static binaries only.
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/ /usr/local/bin/
