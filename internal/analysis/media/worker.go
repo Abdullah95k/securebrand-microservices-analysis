@@ -64,18 +64,12 @@ type Worker struct {
 	Cfg     config.AnalysisMedia
 	kinds   map[string]bool
 	once    sync.Once
-
-	promptOnce sync.Once
-	system     string
-	schema     map[string]any
 }
 
-// prompts builds the static media prompt and schema once.
+// prompts returns the media prompt and schema of the topic list in use.
 func (w *Worker) prompts() (string, map[string]any) {
-	w.promptOnce.Do(func() {
-		w.system, w.schema = prompt.MediaSystem(w.P.Tax), prompt.MediaSchema(w.P.Tax)
-	})
-	return w.system, w.schema
+	sys, schema, _ := w.P.MediaPrompt()
+	return sys, schema
 }
 
 func (w *Worker) analysed(kind string) bool {
@@ -271,18 +265,35 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	if resp.Refused {
 		return &store.MediaResult{Job: j, Consumer: w.Cfg.Consumer, SkipReason: "refused by " + model}, nil
 	}
-	mr, _, err := prompt.ParseMedia(resp.Text, w.P.Tax, reg)
+	tax := w.P.Taxonomy()
+	mr, _, err := prompt.ParseMedia(resp.Text, tax, reg)
 	if err != nil {
 		return nil, err
 	}
 	mr.Transcript = transcript
+	mr.Topics = pipelineTopics(mr.Topics, mr.Entities)
 	return &store.MediaResult{Job: j, Result: mr, OwnerTime: ownerAt, Consumer: w.Cfg.Consumer, CostUSD: cost + speechCost,
-		Prov: core.Provenance{Provider: prov, Model: model, PromptVersion: prompt.PromptVersion, TaxonomyVersion: w.P.Tax.Version,
+		Prov: core.Provenance{Provider: prov, Model: model, PromptVersion: prompt.PromptVersion, TaxonomyVersion: tax.Version,
 			SchemaVersion: prompt.SchemaVersion, Route: route, Lane: core.LaneRealtime, Fallback: fallback, AnalyzedAt: time.Now().UTC(),
 			RequestID: req.ID}}, nil
 }
 
 var errBudget = errors.New("media: daily budget reached")
+
+// pipelineTopics adds the "@<entity>" topics of the media's linked
+// entities, as for text.
+func pipelineTopics(topics []string, ents []core.Entity) []string {
+	for _, t := range pipeline.EntityTopics(ents) {
+		dup := false
+		for _, x := range topics {
+			dup = dup || x == t
+		}
+		if !dup {
+			topics = append(topics, t)
+		}
+	}
+	return topics
+}
 
 // transcriber returns the configured speech-to-text and its model, or nil
 // when there is no audio or none is configured.

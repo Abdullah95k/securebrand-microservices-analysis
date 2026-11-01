@@ -6,6 +6,7 @@ No model is chosen without measurement. `sb-eval` runs any configured provider a
   - aspect sentiment (overall and on tracked brands);
   - entities and linking to the registry;
   - topics; intent, emotion, toxicity, spam, sarcasm, urgency; language and dialect;
+  - ads (is it an ad, and which type) and possible legal or policy breaches (any, and by category);
 - **measured cost** per 1,000 items from real token counts (Arabic tokenizes differently from English);
 - **latency, refusals and errors.**
 

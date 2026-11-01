@@ -40,6 +40,39 @@ type Analysis struct {
 	Privacy   AnalysisPrivacy       `koanf:"privacy"`
 	Rollups   Rollups               `koanf:"rollups"`
 	Limits    AnalysisLimits        `koanf:"limits"`
+	Topics    AnalysisTopics        `koanf:"topics"`
+	Bots      AnalysisBots          `koanf:"bots"`
+}
+
+// AnalysisTopics configures the dynamic topic list: the model proposes
+// topics missing from the list; they are deduplicated, kept as candidates
+// and join the list once used by ApproveMinItems items and checked by the
+// curation model (duplicates merged, names of people or companies
+// rejected).
+type AnalysisTopics struct {
+	// Dynamic: false keeps the taxonomy file as a fixed list.
+	Dynamic         bool          `koanf:"dynamic"`
+	ApproveMinItems int           `koanf:"approve_min_items"`
+	CurateEvery     time.Duration `koanf:"curate_every"`
+	// Curation: provider and model of the daily check ("" provider =
+	// approve candidates on the count alone).
+	Curation Route `koanf:"curation"`
+}
+
+// AnalysisBots configures bot detection from behaviour.
+type AnalysisBots struct {
+	Enabled bool          `koanf:"enabled"`
+	Every   time.Duration `koanf:"every"`
+	// Window of activity scored; authors with fewer than MinItems items in
+	// it are not scored.
+	Window   time.Duration `koanf:"window"`
+	MinItems int           `koanf:"min_items"`
+	// Score thresholds of the levels (0-100).
+	SuspectedScore int `koanf:"suspected_score"`
+	LikelyScore    int `koanf:"likely_score"`
+	// CoordinationAuthors: the same substantial text from this many
+	// authors counts as coordinated.
+	CoordinationAuthors int `koanf:"coordination_authors"`
 }
 
 // Grouping packs a thread's items into one request.
@@ -278,6 +311,27 @@ func (a *Analysis) Validate() error {
 	}
 	if a.Limits.MaxAttempts <= 0 {
 		errs = append(errs, errors.New("analysis.limits.max_attempts must be > 0"))
+	}
+	if a.Topics.Dynamic {
+		if a.Topics.ApproveMinItems <= 0 {
+			errs = append(errs, errors.New("analysis.topics.approve_min_items must be > 0"))
+		}
+		if c := a.Topics.Curation; c.Provider != "" {
+			if _, ok := a.Providers[c.Provider]; !ok {
+				errs = append(errs, fmt.Errorf("analysis.topics.curation.provider %q is not in analysis.providers", c.Provider))
+			}
+			if c.Model == "" {
+				errs = append(errs, errors.New("analysis.topics.curation.model is empty"))
+			}
+		}
+	}
+	if b := a.Bots; b.Enabled {
+		if b.Window <= 0 || b.MinItems <= 0 || b.CoordinationAuthors < 2 {
+			errs = append(errs, errors.New("analysis.bots: window and min_items must be > 0, coordination_authors >= 2"))
+		}
+		if b.SuspectedScore <= 0 || b.LikelyScore < b.SuspectedScore || b.LikelyScore > 100 {
+			errs = append(errs, errors.New("analysis.bots: need 0 < suspected_score <= likely_score <= 100"))
+		}
 	}
 	return errors.Join(errs...)
 }

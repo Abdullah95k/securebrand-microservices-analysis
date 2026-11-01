@@ -61,7 +61,7 @@ func TestSchemaIsStrict(t *testing.T) {
 		}
 		// Fields keep the declared order: the index first, every label
 		// before its score and confidence.
-		order := []string{"i", "lng", "sent", "score", "conf", "ents", "topics", "intent", "emotion", "tox", "flags", "ppl"}
+		order := []string{"i", "lng", "sent", "score", "conf", "ents", "topics", "new_topics", "intent", "emotion", "tox", "flags", "ppl"}
 		for k := 1; k < len(order); k++ {
 			if strings.Index(raw, `"`+order[k-1]+`":{`) > strings.Index(raw, `"`+order[k]+`":{`) {
 				t.Fatalf("schema properties out of order (%s after %s): %s", order[k-1], order[k], raw)
@@ -128,8 +128,10 @@ const good = `{"items":[
           {"name":"Ali","type":"person_private","id":"","sent":"neutral","score":0,"aspect":"general"},
           {"name":"Asiacell","type":"brand","id":"asiacell","sent":"negative","score":-90,"aspect":"network"}],
   "topics":["telecom.network","made.up","telecom.network","telecom.outage","telecom.pricing","other"],
+  "new_topics":[{"en":" Water shortage ","ar":"شح المياه","parent":"services"},{"en":"","ar":"","parent":"services"},
+    {"en":"Fuel queues","ar":"","parent":"made.up"},{"en":"c","ar":"","parent":"other"},{"en":"d","ar":"","parent":"other"}],
   "kw":["نت","","a","b","c","d","e"],"intent":"complaint","emotion":"anger","tox":"none",
-  "flags":["sarcasm","urgent","cs","bogus"],"ppl":1},
+  "flags":["sarcasm","urgent","cs","bogus","ad_own","ad_hidden","ad_sale","fraud_scam","incitement","fraud_scam"],"ppl":1},
  {"i":1,"lng":"klingon","sent":"positive","score":300,"conf":-1,"ents":[],
   "topics":[],"intent":"praise","emotion":"joy","tox":"none","flags":["spam","hate","threat","harass"],"ppl":-2},
  {"i":1,"lng":"ar","sent":"neutral"},
@@ -158,15 +160,26 @@ func TestParseText(t *testing.T) {
 	if r.PrivatePersonMentions != 2 || p.PrivatePersons != 1 {
 		t.Fatalf("private persons %d / %d", r.PrivatePersonMentions, p.PrivatePersons)
 	}
-	if strings.Join(r.Topics, ",") != "telecom.network,telecom.outage,telecom.pricing" || p.InvalidTopics != 1 {
+	if strings.Join(r.Topics, ",") != "telecom.network,telecom.outage,telecom.pricing,other" || p.InvalidTopics != 1 {
 		t.Fatalf("topics %v (invalid %d)", r.Topics, p.InvalidTopics)
 	}
 	if len(r.Keywords) != MaxKeywords || r.Keywords[0] != "نت" {
 		t.Fatalf("keywords %v", r.Keywords)
 	}
+	// The most specific ad type wins; breaches listed once each.
+	if r.AdType != "hidden" || strings.Join(r.Legal, ",") != "fraud_scam,incitement" {
+		t.Fatalf("ad %q legal %v", r.AdType, r.Legal)
+	}
+	// Proposals: trimmed, empty ones dropped, unknown parent -> other, at
+	// most MaxNewTopics.
+	if len(r.NewTopics) != MaxNewTopics || r.NewTopics[0].EN != "Water shortage" || r.NewTopics[0].Parent != "services" ||
+		r.NewTopics[1].Parent != "other" {
+		t.Fatalf("new topics %+v", r.NewTopics)
+	}
 	r1 := got[1]
 	if r1.Lang != "other" || r1.Dialect != "none" || r1.Score != 1 || r1.Confidence != 0 || r1.PrivatePersonMentions != 0 ||
-		!r1.Spam || !r1.Hate || !r1.Threat || !r1.Harassment || r1.Sarcasm || len(r1.Keywords) != 0 {
+		!r1.Spam || !r1.Hate || !r1.Threat || !r1.Harassment || r1.Sarcasm || len(r1.Keywords) != 0 || r1.AdType != "" ||
+		r1.Legal != nil || r1.NewTopics != nil {
 		t.Fatalf("repairs %+v", r1)
 	}
 	if p.DuplicateItems != 1 || p.UnexpectedItems != 1 || p.FixedValues < 4 {
@@ -211,7 +224,7 @@ func TestParseTextInvalid(t *testing.T) {
 func TestParseMedia(t *testing.T) {
 	raw := `{"logos":[{"name":"آسياسيل","id":"","conf":90},{"name":"Asiacell","id":"asiacell","conf":200},{"name":"","id":"","conf":100},{"name":"Pepsi","id":"","conf":50}],
 		"ocr":"` + strings.Repeat("ا", 700) + `","desc":"A billboard.","labels":["sign","street","a","b","c","d","e","f","g"],
-		"people":-1,"sent":"bogus","score":20,"conf":70,"ents":[{"name":"Ali","type":"person_private","id":"","sent":"neutral","score":0,"aspect":"general"}],"topics":["telecom.pricing"]}`
+		"people":-1,"sent":"bogus","score":20,"conf":70,"flags":["ad_paid","weapons","cs"],"ents":[{"name":"Ali","type":"person_private","id":"","sent":"neutral","score":0,"aspect":"general"}],"topics":["telecom.pricing"]}`
 	m, _, err := ParseMedia(raw, tax(t), reg())
 	if err != nil {
 		t.Fatal(err)
@@ -220,10 +233,35 @@ func TestParseMedia(t *testing.T) {
 		t.Fatalf("logos %+v", m.Logos)
 	}
 	if len([]rune(m.TextInImage)) != 500 || len(m.Labels) != 8 || m.PeopleCount != 0 || m.Sentiment != "neutral" || len(m.Entities) != 0 ||
-		m.Score != 0.2 || m.Confidence != 0.7 || m.Logos[0].Confidence != 0.9 || m.Logos[1].Confidence != 0.5 {
+		m.Score != 0.2 || m.Confidence != 0.7 || m.Logos[0].Confidence != 0.9 || m.Logos[1].Confidence != 0.5 ||
+		m.AdType != "paid" || strings.Join(m.Legal, ",") != "weapons" {
 		t.Fatalf("media %+v", m)
 	}
 	if _, _, err := ParseMedia("nope", tax(t), reg()); err == nil {
 		t.Fatal("invalid media answer accepted")
+	}
+}
+
+func TestParseCuration(t *testing.T) {
+	cands := []CurationCandidate{{ID: "services.water_shortage"}, {ID: "services.power_cuts"}, {ID: "other.asiacell"}, {ID: "x.y"}}
+	raw := `{"decisions":[
+	 {"id":"services.water_shortage","action":"approve","into":"","en":" Water shortage ","ar":"شح المياه","parent":"services"},
+	 {"id":"services.power_cuts","action":"merge","into":"services.electricity","en":"","ar":"","parent":"services"},
+	 {"id":"other.asiacell","action":"reject","into":"","en":"","ar":"","parent":"other"},
+	 {"id":"x.y","action":"merge","into":"made.up","en":"","ar":"","parent":"other"},
+	 {"id":"unknown.topic","action":"approve","into":"","en":"X","ar":"","parent":"other"},
+	 {"id":"services.water_shortage","action":"reject","into":"","en":"","ar":"","parent":"other"}]}`
+	ds, err := ParseCuration(raw, tax(t), cands)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ds) != 3 || ds[0].EN != "Water shortage" || ds[1].Into != "services.electricity" || ds[2].Action != "reject" {
+		t.Fatalf("decisions %+v", ds)
+	}
+	if !strings.Contains(CurationUser(tax(t), cands), "services.power_cuts") {
+		t.Fatal("candidates missing from the request")
+	}
+	if _, err := json.Marshal(CurationSchema(tax(t))); err != nil {
+		t.Fatal(err)
 	}
 }

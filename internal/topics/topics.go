@@ -28,6 +28,8 @@ const (
 	ContentErasure        = "content.erasure.v1"
 	AnalysisResult        = "analysis.result.v1"
 	AnalysisMedia         = "analysis.media.v1"
+	AnalysisAuthor        = "analysis.author.v1"
+	AnalysisTopic         = "analysis.topic.v1"
 
 	TaskMedia = "fbs.task.media"
 	Retry30s  = "fbs.task.retry.30s"

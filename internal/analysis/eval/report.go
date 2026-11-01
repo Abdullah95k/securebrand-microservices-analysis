@@ -56,9 +56,15 @@ type Scores struct {
 	Sarcasm     PRF
 	Spam        PRF
 	Urgent      PRF
-	Images      int
-	LogoF1      PRF
-	OCRRecall   float64
+	// Ad: is an ad (binary); AdTypeAcc: the type, on items both call ads.
+	Ad        PRF
+	AdTypeAcc float64
+	// Legal: any possible breach (binary); LegalCat: categories, micro.
+	Legal     PRF
+	LegalCat  PRF
+	Images    int
+	LogoF1    PRF
+	OCRRecall float64
 	// Measured cost and tokens per text item, and latency per request.
 	USDPer1K        float64
 	TokensIn        float64
@@ -104,6 +110,9 @@ func scoreConfig(name string, reqs []Request, gold map[string]Item) Scores {
 		gd, pd                     []string
 		tox, toxP, sar, sarP       []bool
 		spam, spamP, urg, urgP     []bool
+		ad, adP, leg, legP         []bool
+		adT, adTP                  []string
+		legCat                     [3]int
 		lat                        []int64
 		textCost, imgCost          float64
 		textItems, imgItems        int
@@ -174,6 +183,12 @@ func scoreConfig(name string, reqs []Request, gold map[string]Item) Scores {
 			sar, sarP = append(sar, l.Sarcasm), append(sarP, res.Sarcasm)
 			spam, spamP = append(spam, l.Spam), append(spamP, res.Spam)
 			urg, urgP = append(urg, l.Urgent), append(urgP, res.Urgent)
+			ad, adP = append(ad, l.Ad != ""), append(adP, res.AdType != "")
+			if l.Ad != "" && res.AdType != "" {
+				adT, adTP = append(adT, l.Ad), append(adTP, res.AdType)
+			}
+			leg, legP = append(leg, len(l.Legal) > 0), append(legP, len(res.Legal) > 0)
+			setCounts(l.Legal, res.Legal, &legCat)
 		}
 	}
 	s.Items = predSlot
@@ -195,6 +210,9 @@ func scoreConfig(name string, reqs []Request, gold map[string]Item) Scores {
 		s.LangAcc = Accuracy(gla, pla)
 		s.DialectAcc = Accuracy(gd, pd)
 		s.Toxic, s.Sarcasm, s.Spam, s.Urgent = BinaryF1(tox, toxP), BinaryF1(sar, sarP), BinaryF1(spam, spamP), BinaryF1(urg, urgP)
+		s.Ad, s.Legal = BinaryF1(ad, adP), BinaryF1(leg, legP)
+		s.AdTypeAcc = Accuracy(adT, adTP)
+		s.LegalCat = prf(legCat[0], legCat[1], legCat[2])
 	}
 	s.LogoF1 = prf(logo[0], logo[1], logo[2])
 	if ocrWant > 0 {
@@ -254,6 +272,31 @@ func scoreImage(l *Label, m *core.MediaResult, logo *[3]int, want, got *int) {
 	}
 }
 
+// setCounts adds a set comparison to TP/FP/FN counts.
+func setCounts(gold, pred []string, c *[3]int) {
+	g := map[string]bool{}
+	for _, x := range gold {
+		g[x] = true
+	}
+	p := map[string]bool{}
+	for _, x := range pred {
+		if p[x] {
+			continue
+		}
+		p[x] = true
+		if g[x] {
+			c[0]++
+		} else {
+			c[1]++
+		}
+	}
+	for x := range g {
+		if !p[x] {
+			c[2]++
+		}
+	}
+}
+
 // WriteReport prints the comparison as Markdown tables.
 func WriteReport(w io.Writer, scores []Scores) {
 	pct := func(x float64) string { return fmt.Sprintf("%.1f", 100*x) }
@@ -269,14 +312,15 @@ func WriteReport(w io.Writer, scores []Scores) {
 			pct(s.LangAcc), pct(s.DialectAcc))
 	}
 	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, "| Configuration | Toxic F1 | Sarcasm F1 | Spam F1 | Urgent F1 | Emotion % | USD / 1k items | Tokens in / cached / out per item | Latency p50 / p95 ms | Refusals % | Errors % |")
-	_, _ = fmt.Fprintln(w, "|---|---|---|---|---|---|---|---|---|---|---|")
+	_, _ = fmt.Fprintln(w, "| Configuration | Toxic F1 | Sarcasm F1 | Spam F1 | Urgent F1 | Ad F1 | Ad type % | Legal F1 (any) | Legal category F1 | Emotion % | USD / 1k items | Tokens in / cached / out per item | Latency p50 / p95 ms | Refusals % | Errors % |")
+	_, _ = fmt.Fprintln(w, "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
 	for _, s := range scores {
 		if s.Items == 0 {
 			continue
 		}
-		_, _ = fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s | $%.4f | %.0f / %.0f / %.0f | %d / %d | %s | %s |\n", s.Config,
-			pct(s.Toxic.F1), pct(s.Sarcasm.F1), pct(s.Spam.F1), pct(s.Urgent.F1), pct(s.EmotionAcc), s.USDPer1K,
+		_, _ = fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | $%.4f | %.0f / %.0f / %.0f | %d / %d | %s | %s |\n", s.Config,
+			pct(s.Toxic.F1), pct(s.Sarcasm.F1), pct(s.Spam.F1), pct(s.Urgent.F1), pct(s.Ad.F1), pct(s.AdTypeAcc), pct(s.Legal.F1),
+			pct(s.LegalCat.F1), pct(s.EmotionAcc), s.USDPer1K,
 			s.TokensIn, s.TokensCached, s.TokensOut, s.LatencyP50MS, s.LatencyP95MS, pct(s.RefusalRate), pct(s.ErrorRate))
 	}
 	images := false

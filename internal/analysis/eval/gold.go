@@ -51,6 +51,10 @@ type Label struct {
 	Toxicity  string   `json:"toxicity"`
 	Spam      bool     `json:"spam"`
 	Urgent    bool     `json:"urgent"`
+	// Ad: own | paid | hidden | sale, "" when not an ad. Legal: possible
+	// breaches (prompt.LegalFlags).
+	Ad    string   `json:"ad,omitempty"`
+	Legal []string `json:"legal,omitempty"`
 	// Images: logos seen (registry ids or names) and words that must appear
 	// in the text read from the image.
 	Logos       []string `json:"logos,omitempty"`

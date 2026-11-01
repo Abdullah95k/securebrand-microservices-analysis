@@ -13,8 +13,8 @@ import (
 // Versions recorded with every result. Bump PromptVersion on any change to
 // the instructions and SchemaVersion on any change to the output schema.
 const (
-	PromptVersion = "p2"
-	SchemaVersion = "s2"
+	PromptVersion = "p3"
+	SchemaVersion = "s3"
 )
 
 // Allowed values of the output schema.
@@ -23,17 +23,38 @@ var (
 	Dialects    = []string{"iraqi", "gulf", "levantine", "egyptian", "msa", "other", "none"}
 	Scripts     = []string{"arabic", "latin", "mixed", "none"}
 	Sentiments  = []string{"positive", "negative", "neutral", "mixed"}
-	EntityTypes = []string{"brand", "product", "organization", "person_public", "person_private", "place", "event", "media_outlet", "other"}
+	EntityTypes = []string{"brand", "product", "organization", "person_public", "person_private", "position", "place", "event", "media_outlet", "other"}
 	Intents     = []string{"complaint", "praise", "question", "request", "suggestion", "purchase_intent", "churn_threat", "recommendation", "information", "giveaway_entry", "greeting_religious", "tagging", "spam_ad", "other"}
 	Emotions    = []string{"anger", "joy", "sadness", "fear", "surprise", "disgust", "trust", "anticipation", "none"}
 	Toxicities  = []string{"none", "mild", "severe"}
 	// LangCodes is the model's one-field answer for language and dialect;
 	// LangOf maps it back.
 	LangCodes = []string{"ar-iq", "ar-gulf", "ar-lev", "ar-eg", "ar-msa", "ar-other", "ar", "ckb", "kmr", "en", "tr", "fa", "other", "none"}
-	// Flags are the yes/no signals, listed only when true.
-	Flags   = []string{"cs", "sarcasm", "spam", "hate", "threat", "harass", "urgent"}
-	Aspects = []string{"price", "quality", "network", "internet", "customer_service", "delivery", "billing", "app", "staff", "availability", "offers", "reliability", "safety", "management", "general", "other"}
+	// SignalFlags, AdFlags and LegalFlags are the yes/no signals the model
+	// lists only when they apply (usually none, so they cost nothing).
+	SignalFlags = []string{"cs", "sarcasm", "spam", "hate", "threat", "harass", "urgent"}
+	// AdFlags: a brand or business promoting itself, paid promotion of
+	// another brand (disclosed), promotion that looks paid but is not
+	// disclosed, and private sales (classifieds).
+	AdFlags = []string{"ad_own", "ad_paid", "ad_hidden", "ad_sale"}
+	// LegalFlags are possible legal or platform-policy breaches, flagged for
+	// human review (never a legal finding).
+	LegalFlags = []string{"incitement", "terrorism", "child_safety", "sexual_content", "graphic_violence", "self_harm", "drugs",
+		"weapons", "gambling", "regulated_goods", "fraud_scam", "unlicensed_finance", "counterfeit", "privacy", "defamation"}
+	// Flags is every flag of the text routes; MediaFlags those of images
+	// and videos.
+	Flags      = concat(SignalFlags, AdFlags, LegalFlags)
+	MediaFlags = concat(AdFlags, LegalFlags)
+	Aspects    = []string{"price", "quality", "network", "internet", "customer_service", "delivery", "billing", "app", "staff", "availability", "offers", "reliability", "safety", "management", "general", "other"}
 )
+
+func concat(lists ...[]string) []string {
+	var out []string
+	for _, l := range lists {
+		out = append(out, l...)
+	}
+	return out
+}
 
 // LangOf maps a language code to the stored language and dialect.
 func LangOf(code string) (lang, dialect string, ok bool) {
@@ -69,23 +90,48 @@ SENTIMENT
 - score: a whole number from -100 (very negative) to 100 (very positive). conf: a whole number from 0 to 100, how sure you are of the label.
 
 ENTITIES
-- List brands, products, organisations, public persons (politicians, officials, clerics, celebrities, journalists, athletes), places, events and media outlets that the item names or clearly refers to. On a brand's page, "your network", "شبكتكم", "انتم" refer to the page's brand.
+- List brands, products, organisations, public persons (politicians, officials, clerics, celebrities, journalists, athletes), positions, places, events and media outlets that the item names or clearly refers to. On a brand's page, "your network", "شبكتكم", "انتم" refer to the page's brand.
+- Positions are offices, independent of who holds them: "رئيس الوزراء", "رئيس الحكومة" and "the PM" are the position "Prime Minister of Iraq"; also ministers ("وزير الكهرباء"), governors, the Speaker, the President, heads of bodies. Type position, name in English as "<office> of <country or body>". When the item also names or clearly means the person holding the office, list the person too.
 - For each: name as written (or the canonical name from a hint), type, id, sentiment toward that entity with its score (-100 to 100), and aspect (what the sentiment is about).
 - Hints list registry entities found in the text or the page name: when an entity is a hinted one, copy its id exactly; otherwise id is "".
 - Private persons (friends tagged, ordinary people named): never list them. Count them in ppl.
 - Do not identify people from images or guess identities.
 
 TOPICS AND SIGNALS
-- topics: up to 3 ids from the taxonomy below, most specific first; "other" if none fits. kw (only when the schema asks for it): up to 5 short keywords in the item's language.
+- topics: every taxonomy id below that applies (most items have one to three; at most 10), most specific first; "other" only if nothing fits and nothing is proposed. kw (only when the schema asks for it): up to 5 short keywords in the item's language.
+- new_topics: only when the item is clearly about a theme that no listed topic covers: en (2 to 4 English words), ar (Arabic), parent (the top-level id it belongs under). Usually []. Never propose a synonym, translation, narrower or broader wording of a listed topic: use the listed one. Never propose names of people, companies, positions or places: list those as entities (they become topics automatically).
 - intent: complaint, praise, question, request, suggestion, purchase_intent, churn_threat (says they will leave), recommendation, information (states facts or news), giveaway_entry (enters a contest), greeting_religious, tagging (only tags people), spam_ad, other.
 - emotion: anger, joy, sadness, fear, surprise, disgust, trust, anticipation, none.
 - tox: none, mild (insults, vulgarity), severe (hate speech, threats, incitement).
-- flags: list only the signals that apply, usually none ([]):
+- flags: list only what applies, usually none ([]).
+  Signals:
   - cs: the item mixes languages (code switching);
   - sarcasm: the intended meaning is the opposite of the literal one;
   - spam: advertising, scams, unrelated promotions, selling numbers or followers;
   - hate, threat, harass: hate speech, a threat, harassment of a person;
   - urgent: the item alleges danger, an outage affecting many, fraud, a health or food-safety problem, or an accident: something a brand or authority must see quickly.
+  Advertising (mainly posts; for comments use spam), at most one:
+  - ad_own: a brand, shop or business promoting its own products, services or offers (on its page or elsewhere);
+  - ad_paid: disclosed paid promotion of another brand ("sponsored", "إعلان", "برعاية", a paid partnership);
+  - ad_hidden: reads like paid promotion of a brand but is not disclosed: an influencer or news page praising a product with prices, discount codes, links or calls to buy;
+  - ad_sale: a private person selling or buying something (classifieds: cars, phones, property).
+  Possible legal or platform-policy breaches, for human review (flag only when the item itself does it, not when it reports or condemns it):
+  - incitement: calls for violence or for hatred against a group (sect, ethnicity, religion, nationality);
+  - terrorism: praise, support or propaganda for terrorist or armed extremist groups;
+  - child_safety: sexualisation, abuse or exploitation of minors;
+  - sexual_content: explicit sexual content, nudity, or offers of sexual services;
+  - graphic_violence: gore, or celebrating injury or killing;
+  - self_harm: encouraging suicide or self-harm;
+  - drugs: selling, buying or promoting illegal drugs;
+  - weapons: selling or buying weapons or ammunition;
+  - gambling: promoting betting or gambling;
+  - regulated_goods: selling alcohol, prescription medicines without prescription, or other restricted goods;
+  - fraud_scam: scams, phishing, fake giveaways, fake jobs, pyramid schemes, impersonating a brand or official page;
+  - unlicensed_finance: unlicensed currency trading, investment or loan offers promising returns;
+  - counterfeit: fake branded goods, pirated content or accounts for sale;
+  - privacy: publishing someone's phone number, address, ID, private photos or messages;
+  - defamation: a specific accusation of a crime or serious wrongdoing against a named company or private person, stated as fact.
+  Not breaches: criticism of the government, officials, institutions, companies or religion; political opinions; complaints; insults (use tox); news reporting about crimes; discussion of sexuality or identity.
 
 OUTPUT
 Answer only with the JSON object the schema requires. Never translate, quote or explain the items.
@@ -100,7 +146,8 @@ const mediaInstructions = `You analyse images (or key frames of a video, in orde
 - desc: one English sentence describing what is shown. labels: up to 8 English nouns for objects and scene.
 - people: how many people are visible. Never identify anyone from their face; name a person only if the name is written in the image or spoken in the transcript.
 - sent, score, conf: the sentiment of the message the image or video conveys (positive, negative, neutral, mixed; a whole number from -100 to 100; a whole number from 0 to 100).
-- ents: brands, organisations, public persons, places and events shown, written or spoken, with sentiment toward each (same rules as for text; never private persons). topics: up to 3 taxonomy ids.
+- ents: brands, organisations, public persons, positions, places and events shown, written or spoken, with sentiment toward each (same rules as for text; never private persons). topics: every taxonomy id that applies (at most 10).
+- flags, usually []: ad_own (a business promoting itself), ad_paid (disclosed paid promotion of another brand), ad_hidden (looks like undisclosed paid promotion), ad_sale (a private sale), and possible legal or platform-policy breaches for human review: incitement, terrorism, child_safety, sexual_content, graphic_violence, self_harm, drugs, weapons, gambling, regulated_goods, fraud_scam, unlicensed_finance, counterfeit, privacy, defamation (same meanings as for text; news images reporting such things are not breaches).
 
 Answer only with the JSON object the schema requires.
 

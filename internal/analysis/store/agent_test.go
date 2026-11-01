@@ -114,7 +114,20 @@ func TestAgentRolesAreScopedAndReadOnly(t *testing.T) {
 	if got := ids(a, `SELECT content_id FROM agent.texts WHERE to_tsvector('simple', search_norm) @@ plainto_tsquery('simple', analysis.ar_normalize('TEXT c3'))`); got != "c3" {
 		t.Fatalf("search = %q", got)
 	}
+	// The new fields and views are readable; authors are not.
 	for _, q := range []string{
+		`SELECT count(ad_type) + count(legal) + count(author_bot) FROM agent.items`,
+		`SELECT count(*) FROM agent.mentions WHERE author_bot IS NULL`,
+		`SELECT count(*) FROM agent.texts WHERE author_bot IS NULL`,
+		`SELECT count(*) FROM agent.rollup_flag_daily`,
+		`SELECT count(*) FROM agent.topics`,
+	} {
+		if _, err := a.Exec(ctx, q); err != nil {
+			t.Fatalf("agent cannot read %s: %v", q, err)
+		}
+	}
+	for _, q := range []string{
+		`SELECT count(*) FROM analysis.authors`,
 		`SELECT count(*) FROM analysis.content_items`,
 		`SELECT count(*) FROM analysis.entity_mentions`,
 		`SELECT count(*) FROM public.comments`, // fbs tables in the shared database

@@ -7,9 +7,13 @@
 A new service, **sb-analysis**, reads every post and comment the collector saves and works out:
 - the language and dialect;
 - whether the author is positive, negative, neutral or mixed;
-- which brands, organisations, public people and places are mentioned, and what the author thinks of each one;
-- the topics;
-- whether it is a complaint, a question, praise, spam, toxic, or urgent.
+- which brands, organisations, public people, positions (such as "the Prime Minister") and places are mentioned, and what the author thinks of each one;
+- every topic it is about. **The topic list grows by itself:** when content is about something missing from the list, the AI proposes it, the system checks it is not a duplicate (in Arabic and English), and once a day new topics join the list. Brands, people, positions and places become topics automatically too;
+- whether it is a complaint, a question, praise, spam, toxic, or urgent;
+- **whether a post is an ad:** a brand promoting itself, a disclosed paid ad, a hidden ad (an influencer promoting without saying so), or a private sale;
+- **possible legal or policy breaches**, for a person to review: incitement, terrorism, child abuse, sexual content, graphic violence, self-harm, drugs, weapons, gambling, restricted goods, scams, unlicensed finance, fake goods, privacy violations, defamation.
+
+Separately, once a day, every account is scored for **bot or fake-account behaviour** (posting in bursts, copying the same text everywhere, the same text as many other accounts, replying within seconds, posting day and night, mostly spam). Flagged accounts, and everything they ever posted, carry the flag.
 
 It does the same for images and videos (logos, text in the picture, what is shown, and speech turned into text). The files are deleted afterwards; only the results are kept.
 
@@ -23,9 +27,11 @@ At list prices, checked 1 November 2026. Estimates until the test with your labe
 
 | Text items per year | Recommended setup | First estimate |
 |---|---|---|
-| 100 million | about **$3,700** | $5,000 |
-| 300 million | about **$9,200** | $15,000 |
-| 1 billion | about **$26,000** | $50,000 |
+| 100 million | about **$3,900** | $5,000 |
+| 300 million | about **$9,700** | $15,000 |
+| 1 billion | about **$28,000** | $50,000 |
+
+This includes the ads, legal flags, growing topics and bot detection (about 5% of the total).
 
 **How it became cheaper, without losing quality or speed:**
 - **Shorter AI answers.** We pay mostly for what the AI writes back. It now writes short codes instead of words, and only the warnings that apply. Same information, about 30% cheaper.
@@ -35,7 +41,7 @@ At list prices, checked 1 November 2026. Estimates until the test with your labe
 - **Speech in videos:** above about 150 million items a year, our own speech-to-text server (about $2,000 a year) is cheaper than paying per minute. We use it only if the test shows it understands Iraqi dialect well enough.
 - **The daily spending limit now includes speech-to-text,** so the limit really holds.
 
-The "stronger setup" (a more expensive AI, Sonnet, for posts, images and videos) would now cost about $42,000 a year at 300 million. It is used only if the test shows the cheaper AI is not good enough there.
+The "stronger setup" (a more expensive AI, Sonnet, for posts, images and videos) would now cost about $43,000 a year at 300 million. It is used only if the test shows the cheaper AI is not good enough there.
 
 Server and storage costs come on top: roughly 330 GB of database storage a year at 300 million items.
 
@@ -70,7 +76,15 @@ Each has a default. If you do not answer, I continue with the default.
 10. **Backup AI company.**
     - *Default:* none until you add a second key.
     - *I recommend* adding Google (Gemini) or OpenAI, so analysis continues if Anthropic has an outage.
-11. **Very large posts (optional saving).**
+11. **Legal flags: what is never flagged.**
+    - *Default:* criticism of the government, officials, companies or religion, political opinions, insults, news about crimes, and discussion of sexuality or identity are **never** flagged as breaches. Iraqi law has been used against critics and against LGBT content; flagging those would turn the tool against ordinary users.
+    - Change this only with your lawyer.
+12. **Bot flags and your clients.**
+    - *Default:* bot flags stay internal until you have reviewed a sample (`sb-analysis authors list`) and the thresholds are tuned on your data. Behaviour alone gives false alarms (super-fans, people who enter every contest).
+    - You can mark any account as bot or human yourself; your decision always wins.
+13. **New topics.**
+    - *Default:* a new topic joins the list after 10 items use it and the daily check approves it. You can approve, merge, rename or reject any topic yourself (`sb-analysis topics ...`).
+14. **Very large posts (optional saving).**
     - *Default:* every comment is analysed.
     - *Option (not built):* on posts with thousands of comments, analyse every comment that mentions a brand and only a sample of the others, and scale the counts up. This saves a lot on viral posts, but you can no longer see the analysis of every single comment. Tell me if you want it.
 
@@ -81,6 +95,8 @@ Each has a default. If you do not answer, I continue with the default.
 - **Opinions about politicians and religion,** linked to a (pseudonymous) author, are "special category" data in GDPR terms. You need a data-protection impact assessment.
 - **People mentioned in comments:** we keep only public figures.
 - **Iraq** has no data-protection law in force yet. Your clients' countries may apply theirs.
+- **Bot scores are automated profiling of people** (even with hidden ids). A wrong "bot" label shown to a client is an accusation about a real person: keep it reviewed and correctable.
+- **Legal flags are allegations, not findings.** Do not publish them or report users to authorities based on them without legal advice.
 
 ## Steps on the pilot server
 
@@ -104,7 +120,7 @@ make docker
 
 (Once this work is merged into the main repository, go back with `git checkout main && git pull --ff-only origin main`.)
 
-**Step 1. Measure the pilot data (safe: counts only, no text).** Send me what it prints. It tells me how much Kurdish, Arabizi and duplicate text there is, and how long comments are.
+**Step 1. Measure the pilot data (safe: counts only, no text).** Send me what it prints. It tells me how much Kurdish, Arabizi and duplicate text there is, how long comments are, and how active the most active accounts are (to set the bot thresholds).
 
 ```bash
 make pilot-stats

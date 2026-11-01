@@ -38,3 +38,5 @@ topics:
   - {name: content.erasure.v1,         partitions: 6,  retention: 720h}
   - {name: analysis.result.v1,         partitions: 96, retention: 168h}
   - {name: analysis.media.v1,          partitions: 24, retention: 168h}
+  - {name: analysis.author.v1,         partitions: 12, retention: 720h}
+  - {name: analysis.topic.v1,          partitions: 3,  retention: 720h}

@@ -69,6 +69,14 @@ func (s *Store) Erase(ctx context.Context, e core.Erasure, consumer string) (map
 		if err != nil {
 			return err
 		}
+		if e.Subject == "author" {
+			// The author's behaviour profile (bot detection) goes too.
+			tag, err := tx.Exec(ctx, `DELETE FROM analysis.authors WHERE author_key = $1`, e.AuthorKey)
+			if err != nil {
+				return err
+			}
+			stats["authors"] = tag.RowsAffected()
+		}
 		for k, v := range n {
 			stats[k] = v
 		}

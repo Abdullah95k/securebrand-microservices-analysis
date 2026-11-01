@@ -50,27 +50,41 @@ func Parse(b []byte) (*Taxonomy, error) {
 	if err := yaml.Unmarshal(b, &t); err != nil {
 		return nil, fmt.Errorf("taxonomy: %w", err)
 	}
+	return &t, t.validate()
+}
+
+// New builds a taxonomy from topics (the dynamic list in the database),
+// with the same validation as Parse.
+func New(version string, topics []Topic) (*Taxonomy, error) {
+	t := Taxonomy{Version: version, Topics: topics}
+	if err := t.validate(); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (t *Taxonomy) validate() error {
 	if t.Version == "" {
-		return nil, errors.New("taxonomy: version is required")
+		return errors.New("taxonomy: version is required")
 	}
 	t.ids = map[string]bool{}
 	for _, top := range t.Topics {
 		if err := t.add(top.ID); err != nil {
-			return nil, err
+			return err
 		}
 		for _, c := range top.Children {
 			if !strings.HasPrefix(c.ID, top.ID+".") {
-				return nil, fmt.Errorf("taxonomy: %s must start with %s and a dot", c.ID, top.ID)
+				return fmt.Errorf("taxonomy: %s must start with %s and a dot", c.ID, top.ID)
 			}
 			if err := t.add(c.ID); err != nil {
-				return nil, err
+				return err
 			}
 		}
 	}
 	if len(t.ids) == 0 {
-		return nil, errors.New("taxonomy: no topics")
+		return errors.New("taxonomy: no topics")
 	}
-	return &t, nil
+	return nil
 }
 
 func (t *Taxonomy) add(id string) error {
@@ -82,6 +96,21 @@ func (t *Taxonomy) add(id string) error {
 	}
 	t.ids[id] = true
 	return nil
+}
+
+// Get returns a topic (top-level or child) by id.
+func (t *Taxonomy) Get(id string) (Topic, bool) {
+	for _, top := range t.Topics {
+		if top.ID == id {
+			return top, true
+		}
+		for _, c := range top.Children {
+			if c.ID == id {
+				return c, true
+			}
+		}
+	}
+	return Topic{}, false
 }
 
 // Valid reports whether id is a topic of this taxonomy.
@@ -98,6 +127,15 @@ func (t *Taxonomy) IDs() []string {
 		for _, c := range top.Children {
 			out = append(out, c.ID)
 		}
+	}
+	return out
+}
+
+// TopIDs lists the top-level topic ids in document order.
+func (t *Taxonomy) TopIDs() []string {
+	out := make([]string, 0, len(t.Topics))
+	for _, top := range t.Topics {
+		out = append(out, top.ID)
 	}
 	return out
 }

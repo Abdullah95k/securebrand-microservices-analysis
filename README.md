@@ -43,7 +43,7 @@ fbs-crawler --stages page ─PostTask─▶ post ─ThreadTask─▶ thread     
    └─▶ fbs.task.media ─▶ fbs-media-downloader ─▶ S3 ─▶ fb.media.ready.v1 ─▶ analysis service
                          fb.media.processed.v1 ─▶ fbs-media-janitor ─▶ delete ─▶ fb.media.deleted.v1
 sb-analysis: fb.* (or content.*) ─▶ Postgres queue ─▶ Claude (batch / real time) ─▶ analyses, mentions, rollups
-             ─▶ analysis.result.v1, analysis.media.v1; media acks on fb.media.processed.v1
+             ─▶ analysis.result.v1, analysis.media.v1, analysis.author.v1, analysis.topic.v1; media acks on fb.media.processed.v1
 ```
 
 | Binary | Role |
@@ -60,7 +60,7 @@ sb-analysis: fb.* (or content.*) ─▶ Postgres queue ─▶ Claude (batch / re
 | `sb-analysis` | Content analysis ([design](docs/design/analysis-service.md)): roles `ingest`, `pipeline`, `media`, `relay`, `rollup`; commands `migrate`, `entities`, `sources`, `reanalyze`, `replay-failed`, `agent-role`, `rollups` |
 | `sb-eval` | Evaluation harness: `sample`, `label` (web tool), `agreement`, `run`, `report`, `calibrate`, `cost` ([guide](docs/analysis/evaluation.md)) |
 
-Design decisions: [ADR 0001](docs/adr/0001-logged-out-graphql-scraping.md) (scraping approach), [0002](docs/adr/0002-kafka-postgres-valkey.md) (Kafka, Postgres, Valkey), [0003](docs/adr/0003-temporary-media.md) (temporary media), [0004](docs/adr/0004-analysis-service.md) (one analysis service, canonical contract), [0005](docs/adr/0005-llm-provider-strategy.md) (models and providers), [0006](docs/adr/0006-analysis-storage.md) (analysis storage and the analytics agent).
+Design decisions: [ADR 0001](docs/adr/0001-logged-out-graphql-scraping.md) (scraping approach), [0002](docs/adr/0002-kafka-postgres-valkey.md) (Kafka, Postgres, Valkey), [0003](docs/adr/0003-temporary-media.md) (temporary media), [0004](docs/adr/0004-analysis-service.md) (one analysis service, canonical contract), [0005](docs/adr/0005-llm-provider-strategy.md) (models and providers), [0006](docs/adr/0006-analysis-storage.md) (analysis storage and the analytics agent), [0007](docs/adr/0007-topics-flags-bots.md) (dynamic topics, ad and breach flags, bot detection).
 
 ### Quick start (Docker Compose, against fakefb)
 

@@ -1,6 +1,7 @@
 package textnorm
 
 import (
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -146,4 +147,40 @@ func display(w string) string {
 		i = j
 	}
 	return b.String()
+}
+
+// TopicKey is the duplicate key of a topic name: normalised, function
+// words and clitics dropped, a Latin plural "s" dropped, words sorted.
+// "Electricity cuts", "cuts of electricity" and "the electricity cut"
+// share a key; so do "انقطاع الكهرباء" and "انقطاع كهرباء". Synonyms in
+// other words ("power outage") are left to the curation step.
+func TopicKey(name string) string {
+	var toks []string
+	seen := map[string]bool{}
+	for _, t := range Tokens(Normalize(name)) {
+		if isStopword(t) {
+			continue
+		}
+		if s := StripClitic(t); s != "" {
+			t = s
+		}
+		if latinWord(t) && len(t) > 3 && strings.HasSuffix(t, "s") && !strings.HasSuffix(t, "ss") {
+			t = t[:len(t)-1]
+		}
+		if !seen[t] {
+			seen[t] = true
+			toks = append(toks, t)
+		}
+	}
+	sort.Strings(toks)
+	return strings.Join(toks, " ")
+}
+
+func latinWord(s string) bool {
+	for _, r := range s {
+		if !unicode.Is(unicode.Latin, r) {
+			return false
+		}
+	}
+	return s != ""
 }

@@ -26,12 +26,14 @@ type Assumptions struct {
 }
 
 // DefaultAssumptions are the design's estimates for the current output
-// format (prompt p2, schema s2): compact answers (about 45 output tokens
-// per comment instead of about 70), identical comments of a thread
-// answered once (10%, to be measured by `make pilot-stats`), and a 0.02%
-// audit sample.
+// format (prompt p3, schema s3): compact answers (about 50 output tokens
+// per comment instead of about 70, including the usually empty new-topic
+// list; ad and breach flags cost nothing when absent), identical comments
+// of a thread answered once (10%, to be measured by `make pilot-stats`),
+// and a 0.02% audit sample. The cached prefix grows by the flag
+// definitions.
 var DefaultAssumptions = Assumptions{
-	Comment: Tokens{60, 85, 45}, Post: Tokens{700, 500, 140}, Image: Tokens{1100, 500, 170}, Video: Tokens{3250, 500, 210},
+	Comment: Tokens{60, 110, 50}, Post: Tokens{700, 600, 150}, Image: Tokens{1100, 550, 180}, Video: Tokens{3250, 550, 220},
 	PostsPerItem: 1 / 58.3, MediaPerPost: 1, VideoShare: 0.2, VideoMinutes: 0.75,
 	DuplicateShare: 0.10, EscalationShare: 0.02, AuditShare: 0.0002,
 }

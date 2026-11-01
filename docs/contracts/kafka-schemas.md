@@ -20,6 +20,8 @@ Schema Registry subjects, get `kafka.topic_prefix` prepended.
 | `content.erasure.v1` | request id | `securebrand.content.v1.Erasure` | `content/v1/content.proto` |
 | `analysis.result.v1` | content id | `securebrand.analysis.v1.ItemAnalysis` (sb-analysis produces it) | `analysis/v1/analysis.proto` |
 | `analysis.media.v1` | media id | `securebrand.analysis.v1.MediaAnalysis` (sb-analysis produces it) | `analysis/v1/analysis.proto` |
+| `analysis.author.v1` | hex author key | `securebrand.analysis.v1.AuthorFlag` (an author's bot level changed) | `analysis/v1/analysis.proto` |
+| `analysis.topic.v1` | topic id | `securebrand.analysis.v1.TopicUpdate` (the topic list changed) | `analysis/v1/analysis.proto` |
 
 The `content.*` and `analysis.*` topics are the platform-neutral contract: see [content-v1.md](content-v1.md).
 

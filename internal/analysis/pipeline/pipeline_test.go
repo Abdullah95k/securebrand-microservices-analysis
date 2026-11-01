@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/core"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/curate"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/entities"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/pipeline"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/provider"
@@ -223,6 +224,75 @@ func TestShortPostsKeepTheirPage(t *testing.T) {
 	joined := strings.Join(users, "\n")
 	if !strings.Contains(joined, "page: Asiacell Iraq") || !strings.Contains(joined, "page: Zain Iraq") {
 		t.Fatalf("posts sent without their page:\n%s", joined)
+	}
+}
+
+// A missing topic becomes a candidate on the item, brands become "@"
+// topics, ads and breaches are stored, and once used often enough the
+// curation approves the candidate into a new taxonomy version.
+func TestNewTopicsEntityTopicsAndFlags(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) {
+		c.Topics.ApproveMinItems = 2
+		c.Topics.Curation = config.Route{Provider: "primary", Model: "curation-model", MaxTokens: 2000}
+	})
+	ctx := context.Background()
+	tax, _ := taxonomy.Load("")
+	if _, err := e.s.SeedTopicsIfEmpty(ctx, tax); err != nil {
+		t.Fatal(err)
+	}
+	e.ingest(t, comment(1, "شح المياه بالبصرة"), comment(2, "شح المياه ثاني يوم"), comment(3, "شبكة اسياسيل خايسة"),
+		comment(4, "إعلان: اربح ايفون، نصب"))
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE topics @> ARRAY['services.water_shortage'] AND is_current`); n != 2 {
+		t.Fatalf("candidate topic on %d items, want 2", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE content_id = 'fb:comment:3' AND topics @> ARRAY['@asiacell']`); n != 1 {
+		t.Fatal("entity topic missing")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE content_id = 'fb:comment:4' AND ad_type = 'paid' AND legal = ARRAY['fraud_scam']`); n != 1 {
+		t.Fatal("ad and breach not stored")
+	}
+	cur := &curate.Curator{Store: e.s, Providers: e.p.Providers, Pricing: e.p.Pricing, Cfg: e.p.Cfg.Topics, Taxonomy: e.p.Taxonomy}
+	v, err := cur.Run(ctx)
+	if err != nil || v == "" {
+		t.Fatalf("curation: %q %v", v, err)
+	}
+	next, err := e.s.LoadTaxonomy(ctx)
+	if err != nil || !next.Valid("services.water_shortage") {
+		t.Fatalf("approved topic not in the list: %v", err)
+	}
+	e.p.SetTaxonomy(next)
+	if e.p.Taxonomy().Version != v {
+		t.Fatal("pipeline kept the old list")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_requests WHERE route = 'curation'`); n != 1 {
+		t.Fatal("curation call not logged for the budget")
+	}
+	// Nothing left to curate: no new version.
+	if v2, err := cur.Run(ctx); err != nil || v2 != "" {
+		t.Fatalf("second curation: %q %v", v2, err)
+	}
+	// Without a curation provider, candidates are approved on the count.
+	if _, err := e.s.ResolveTopics(ctx, [][]core.TopicProposal{{{EN: "Fuel queues", Parent: "economy"}}, {{EN: "fuel queue", Parent: "economy"}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	// Use is counted from stored analyses: two items carry the candidate.
+	if _, err := e.s.DB.Exec(ctx, `UPDATE analysis.analyses SET topics = topics || 'economy.fuel_queues'::text
+		WHERE content_id IN ('fb:comment:1', 'fb:comment:2')`); err != nil {
+		t.Fatal(err)
+	}
+	plain := *cur
+	plain.Cfg.Curation = config.Route{}
+	if v3, err := plain.Run(ctx); err != nil || v3 == "" {
+		t.Fatalf("count-only curation: %q %v", v3, err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.topics WHERE topic_id = 'economy.fuel_queues' AND status = 'active'`); n != 1 {
+		t.Fatal("candidate not approved on the count")
 	}
 }
 

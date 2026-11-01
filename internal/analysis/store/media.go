@@ -125,13 +125,16 @@ func (s *Store) FinishMedia(ctx context.Context, r MediaResult) error {
 		}
 		logos, _ := json.Marshal(r.Result.Logos)
 		if _, err := tx.Exec(ctx, `INSERT INTO analysis.media_analyses (media_id, owner_content_id, platform, source_id, kind, analyzed_at,
-			provider, model, prompt_version, taxonomy_version, description, text_in_image, transcript, logos, result)
-			VALUES ($1, NULLIF($2,''), $3, NULLIF($4,''), $5, $6, $7, $8, $9, $10, NULLIF($11,''), NULLIF($12,''), NULLIF($13,''), $14, $15)
+			provider, model, prompt_version, taxonomy_version, description, text_in_image, transcript, logos, result, ad_type, legal)
+			VALUES ($1, NULLIF($2,''), $3, NULLIF($4,''), $5, $6, $7, $8, $9, $10, NULLIF($11,''), NULLIF($12,''), NULLIF($13,''), $14, $15,
+				NULLIF($16,''), $17)
 			ON CONFLICT (media_id) DO UPDATE SET analyzed_at = EXCLUDED.analyzed_at, provider = EXCLUDED.provider, model = EXCLUDED.model,
 				prompt_version = EXCLUDED.prompt_version, taxonomy_version = EXCLUDED.taxonomy_version, description = EXCLUDED.description,
-				text_in_image = EXCLUDED.text_in_image, transcript = EXCLUDED.transcript, logos = EXCLUDED.logos, result = EXCLUDED.result`,
+				text_in_image = EXCLUDED.text_in_image, transcript = EXCLUDED.transcript, logos = EXCLUDED.logos, result = EXCLUDED.result,
+				ad_type = EXCLUDED.ad_type, legal = EXCLUDED.legal`,
 			j.MediaID, j.OwnerContentID, j.Platform, j.SourceID, j.Kind, r.Prov.AnalyzedAt, r.Prov.Provider, r.Prov.Model,
-			r.Prov.PromptVersion, r.Prov.TaxonomyVersion, r.Result.Description, r.Result.TextInImage, r.Result.Transcript, logos, res); err != nil {
+			r.Prov.PromptVersion, r.Prov.TaxonomyVersion, r.Result.Description, r.Result.TextInImage, r.Result.Transcript, logos, res,
+			r.Result.AdType, nilIfNone(r.Result.Legal)); err != nil {
 			return err
 		}
 		// Logos and entities become mentions of the media item itself, so
@@ -210,7 +213,7 @@ func mediaEvent(r *MediaResult) *analysisv1.MediaAnalysis {
 		EventId: r.Job.MediaID + ":" + r.Prov.AnalyzedAt.UTC().Format(time.RFC3339), MediaId: r.Job.MediaID,
 		OwnerContentId: r.Job.OwnerContentID, Platform: adapter.PlatformEnum(r.Job.Platform), SourceId: r.Job.SourceID,
 		Kind: mediaKind(r.Job.Kind), TextInImage: m.TextInImage, Description: m.Description, Labels: m.Labels,
-		PeopleCount: int32(m.PeopleCount), Topics: m.Topics, Transcript: m.Transcript,
+		PeopleCount: int32(m.PeopleCount), Topics: m.Topics, Transcript: m.Transcript, AdType: m.AdType, Legal: m.Legal,
 		Sentiment: &analysisv1.Sentiment{Label: m.Sentiment, Score: float32(m.Score), Confidence: float32(m.Confidence)},
 		Provenance: &analysisv1.Provenance{Provider: r.Prov.Provider, Model: r.Prov.Model, PromptVersion: r.Prov.PromptVersion,
 			TaxonomyVersion: r.Prov.TaxonomyVersion, SchemaVersion: r.Prov.SchemaVersion, Route: r.Prov.Route, Lane: r.Prov.Lane,

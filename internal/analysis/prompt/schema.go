@@ -73,19 +73,22 @@ func entitySchema() map[string]any {
 // of flags (usually empty), scores as whole numbers, and no script (the
 // service detects it). Keywords ("kw") are asked only on the post route;
 // comments get them from their text.
-var ItemFields = []string{"i", "lng", "sent", "score", "conf", "ents", "topics", "intent", "emotion", "tox", "flags", "ppl"}
+// New-topic proposals ("new_topics") follow the topics and are usually [].
+var ItemFields = []string{"i", "lng", "sent", "score", "conf", "ents", "topics", "new_topics", "intent", "emotion", "tox", "flags", "ppl"}
 
 // TextSchema is the output schema of the text routes: {"items": [...]}.
 // keywords adds "kw" after "topics" (the post route).
 func TextSchema(tax *taxonomy.Taxonomy, keywords bool) map[string]any {
 	props := map[string]any{
-		"i":       integer(),
-		"lng":     enum(LangCodes),
-		"sent":    enum(Sentiments),
-		"score":   integer(),
-		"conf":    integer(),
-		"ents":    array(entitySchema()),
-		"topics":  array(enum(tax.IDs())),
+		"i":      integer(),
+		"lng":    enum(LangCodes),
+		"sent":   enum(Sentiments),
+		"score":  integer(),
+		"conf":   integer(),
+		"ents":   array(entitySchema()),
+		"topics": array(enum(tax.IDs())),
+		"new_topics": array(object(map[string]any{"en": str(), "ar": str(), "parent": enum(tax.TopIDs())},
+			[]string{"en", "ar", "parent"})),
 		"intent":  enum(Intents),
 		"emotion": enum(Emotions),
 		"tox":     enum(Toxicities),
@@ -120,5 +123,6 @@ func MediaSchema(tax *taxonomy.Taxonomy) map[string]any {
 		"conf":   integer(),
 		"ents":   array(entitySchema()),
 		"topics": array(enum(tax.IDs())),
-	}, []string{"logos", "ocr", "desc", "labels", "people", "sent", "score", "conf", "ents", "topics"})
+		"flags":  array(enum(MediaFlags)),
+	}, []string{"logos", "ocr", "desc", "labels", "people", "sent", "score", "conf", "ents", "topics", "flags"})
 }

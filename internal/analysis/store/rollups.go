@@ -62,16 +62,20 @@ func (s *Store) RecomputeDay(ctx context.Context, day time.Time) error {
 			`DELETE FROM analysis.rollup_entity_topic_daily WHERE day = $1`,
 			`DELETE FROM analysis.rollup_topic_daily WHERE day = $1`,
 			`DELETE FROM analysis.rollup_source_daily WHERE day = $1`,
+			`DELETE FROM analysis.rollup_flag_daily WHERE day = $1`,
 		} {
 			if _, err := tx.Exec(ctx, q, d); err != nil {
 				return err
 			}
 		}
 		for _, q := range []string{
-			`INSERT INTO analysis.rollup_entity_daily (day, entity_id, platform, source_id, sentiment, mentions, score_sum)
-			 SELECT $1::date, entity_id, platform, source_id, sentiment, count(*), coalesce(sum(score), 0)
-			 FROM analysis.entity_mentions WHERE created_at >= $2 AND created_at < $3 AND entity_id IS NOT NULL
-			 GROUP BY entity_id, platform, source_id, sentiment`,
+			`INSERT INTO analysis.rollup_entity_daily (day, entity_id, platform, source_id, sentiment, mentions, score_sum, bot_mentions)
+			 SELECT $1::date, m.entity_id, m.platform, m.source_id, m.sentiment, count(*), coalesce(sum(m.score), 0),
+			   count(*) FILTER (WHERE au.bot IS NOT NULL)
+			 FROM analysis.entity_mentions m
+			 LEFT JOIN analysis.authors au ON au.platform = m.platform AND au.author_key = m.author_key
+			 WHERE m.created_at >= $2 AND m.created_at < $3 AND m.entity_id IS NOT NULL
+			 GROUP BY m.entity_id, m.platform, m.source_id, m.sentiment`,
 			`INSERT INTO analysis.rollup_entity_topic_daily (day, entity_id, platform, topic, mentions, positive, negative, neutral, mixed)
 			 SELECT $1::date, entity_id, platform, t.topic, count(*), ` + sentimentCounts + `
 			 FROM analysis.entity_mentions m CROSS JOIN LATERAL unnest(coalesce(m.topics, '{}'::text[])) AS t(topic)
@@ -83,11 +87,23 @@ func (s *Store) RecomputeDay(ctx context.Context, day time.Time) error {
 			 WHERE a.is_current AND a.created_at >= $2 AND a.created_at < $3
 			 GROUP BY platform, source_id, t.topic`,
 			`INSERT INTO analysis.rollup_source_daily (day, platform, source_id, kind, items, positive, negative, neutral, mixed,
-			   complaints, urgent, score_sum)
-			 SELECT $1::date, platform, source_id, kind, count(*), ` + sentimentCounts + `,
-			   count(*) FILTER (WHERE intent = 'complaint'), count(*) FILTER (WHERE urgent), coalesce(sum(sentiment_score), 0)
-			 FROM analysis.analyses WHERE is_current AND created_at >= $2 AND created_at < $3
-			 GROUP BY platform, source_id, kind`,
+			   complaints, urgent, score_sum, ads, legal, bot_items)
+			 SELECT $1::date, a.platform, a.source_id, a.kind, count(*), ` + sentimentCounts + `,
+			   count(*) FILTER (WHERE intent = 'complaint'), count(*) FILTER (WHERE urgent), coalesce(sum(sentiment_score), 0),
+			   count(*) FILTER (WHERE a.ad_type IS NOT NULL), count(*) FILTER (WHERE a.legal IS NOT NULL),
+			   count(*) FILTER (WHERE au.bot IS NOT NULL)
+			 FROM analysis.analyses a
+			 LEFT JOIN analysis.authors au ON au.platform = a.platform AND au.author_key = a.author_key
+			 WHERE a.is_current AND a.created_at >= $2 AND a.created_at < $3
+			 GROUP BY a.platform, a.source_id, a.kind`,
+			`INSERT INTO analysis.rollup_flag_daily (day, platform, source_id, flag, items, bot_items)
+			 SELECT $1::date, a.platform, a.source_id, f.flag, count(*), count(*) FILTER (WHERE au.bot IS NOT NULL)
+			 FROM analysis.analyses a
+			 LEFT JOIN analysis.authors au ON au.platform = a.platform AND au.author_key = a.author_key
+			 CROSS JOIN LATERAL unnest(coalesce(a.legal, '{}'::text[]) ||
+			   CASE WHEN a.ad_type IS NOT NULL THEN ARRAY['ad_' || a.ad_type] ELSE '{}'::text[] END) AS f(flag)
+			 WHERE a.is_current AND a.created_at >= $2 AND a.created_at < $3
+			 GROUP BY a.platform, a.source_id, f.flag`,
 		} {
 			if _, err := tx.Exec(ctx, q, d, from, to); err != nil {
 				return err

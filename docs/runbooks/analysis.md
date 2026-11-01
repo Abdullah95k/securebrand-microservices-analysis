@@ -13,7 +13,7 @@ All times in reports and budgets are Iraq time (Asia/Baghdad, UTC+3).
 - **pipeline:** the real-time and batch lanes;
 - **media:** images and videos;
 - **relay:** the outbox to Kafka;
-- **rollup:** daily rollups.
+- **rollup:** daily rollups, the daily topic curation and the daily bot scoring (each job takes a database lock, so replicas never overlap).
 
 The Helm chart runs `analysis` (all roles but media) and `analysis-media` (media, on the ffmpeg image). Scaling:
 - **Ingest:** scales on Kafka lag (KEDA).
@@ -103,6 +103,28 @@ Check with `SELECT * FROM analysis.erasures ORDER BY received_at DESC LIMIT 20;`
 - **Merge duplicates:** `sb-analysis entities merge --from old-id --into kept-id`.
 - **People policy:** public figures only, always reviewed. Private persons are never stored.
 
+## Topics: the growing list
+
+The model proposes topics missing from the list. They are deduplicated at once (same words in English or Arabic, or a brand or person name, which becomes an `@entity` topic) and kept as candidates on the items. Once a day, candidates used by `analysis.topics.approve_min_items` items go to the curation model: synonyms are merged, names rejected, the rest approved, and a new taxonomy version is recorded.
+- **Look:** `sb-analysis topics list` (candidates, most used first); `--status active|merged|rejected|all`.
+- **Decide yourself:**
+  - `sb-analysis topics approve --id services.water_shortage [--en "Water shortages" --ar "شح المياه" --parent services]`;
+  - `sb-analysis topics merge --from services.power_cuts --into services.electricity`;
+  - `sb-analysis topics reject --id other.some_gossip`;
+  - `sb-analysis topics rename --id … --en … --ar …`.
+  Merges and rejections re-point stored analyses and rebuild their rollups.
+- **Run the curation now:** `sb-analysis topics curate`.
+- **Import a new taxonomy file** (topics added or renamed; nothing is deleted): `sb-analysis topics import --file taxonomy.v2.yaml`.
+- **Turn the growth off:** `analysis.topics.dynamic: false` (the file becomes a fixed list again).
+
+## Bots: flagged authors
+
+Once a day every author with 10+ items in 30 days is scored from behaviour (bursts, volume, the same text in many threads, the same text from many authors, replies within a minute, round-the-clock activity, spam share). Score ≥45 is `suspected`, ≥70 `likely`.
+- **Look:** `sb-analysis authors list` (flagged, highest score first, with reasons). The key is the pseudonymous author key, never a Facebook id.
+- **Decide:** `sb-analysis authors mark --key <hex> --as bot` (shows as `confirmed`), `--as human` (never flagged), `--as none` (back to the score). Every item of the author follows, earlier ones too.
+- **Score now:** `sb-analysis authors score`.
+- **Tune:** `analysis.bots` (thresholds, window, minimum items). Before showing bot flags to clients, review a sample of flagged authors: false positives (super-fans, giveaway hunters) are expected.
+
 ## Re-analysis
 
 Always estimate first:
@@ -145,6 +167,7 @@ The password file is created by the operator. Never pass passwords on the comman
 | `fbs_analysis_items_analyzed_total{route,model,outcome}` | written, stale (edited meanwhile), duplicate |
 | `fbs_analysis_items_failed_total{route,reason}` | missing, invalid, truncated, refused, error |
 | `fbs_analysis_items_deduplicated_total{route}` | items that shared the answer of an identical item of the same thread and parent (not sent to the model) |
+| `fbs_analysis_cost_usd_total{route="curation"}` | the daily topic curation calls |
 | `fbs_analysis_tokens_total`, `fbs_analysis_cost_usd_total` | token usage and spend by model and route |
 | `fbs_analysis_queue_depth`, `fbs_analysis_queue_oldest_seconds` | queue by lane and route |
 | `fbs_analysis_spent_today_usd`, `fbs_analysis_budget_paused` | budget |

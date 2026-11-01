@@ -146,6 +146,20 @@ type Result struct {
 	Urgent                bool     `json:"urgent"`
 	PrivatePersonMentions int      `json:"private_person_mentions"`
 	Refused               bool     `json:"refused,omitempty"`
+	// AdType: own | paid | hidden | sale, "" when the item is not an ad.
+	AdType string `json:"ad_type,omitempty"`
+	// Legal lists possible legal or platform-policy breaches (for review).
+	Legal []string `json:"legal,omitempty"`
+	// NewTopics are the model's proposals for topics missing from the
+	// taxonomy; the pipeline resolves them into Topics before storage.
+	NewTopics []TopicProposal `json:"-"`
+}
+
+// TopicProposal is a topic the model found missing from the taxonomy.
+type TopicProposal struct {
+	EN     string `json:"en"`
+	AR     string `json:"ar"`
+	Parent string `json:"parent"`
 }
 
 // Entity is an entity mention with the sentiment toward it.
@@ -175,6 +189,8 @@ type MediaResult struct {
 	Entities    []Entity `json:"entities"`
 	Topics      []string `json:"topics"`
 	Transcript  string   `json:"transcript,omitempty"`
+	AdType      string   `json:"ad_type,omitempty"`
+	Legal       []string `json:"legal,omitempty"`
 }
 
 // Logo is a brand logo seen in an image.
@@ -206,3 +222,31 @@ func RouteFor(it *Item, postShortChars int) string {
 	}
 	return RouteComment
 }
+
+// AuthorSignals is an author's behaviour over the bot-scoring window.
+// Shares are of the author's items in the window.
+type AuthorSignals struct {
+	Platform   string
+	AuthorKey  []byte
+	Items      int
+	ActiveDays int
+	// MaxPerHour is the most items in one clock hour; ActiveHours the
+	// distinct hours of the day (Iraq time) the author posted in.
+	MaxPerHour  int
+	Sources     int
+	ActiveHours int
+	// Repeated: the same substantial text posted in three or more threads.
+	Repeated float64
+	// Coordinated: a substantial text that several other authors posted too.
+	Coordinated float64
+	// Fast: comments within a minute of their post (of FastBase comments
+	// whose post is known).
+	Fast     float64
+	FastBase int
+	// Spammy: spam, advertising or scams according to the analyses.
+	Spammy              float64
+	FirstSeen, LastSeen time.Time
+}
+
+// PerDay is the author's average items per active day.
+func (s AuthorSignals) PerDay() float64 { return float64(s.Items) / float64(max(s.ActiveDays, 1)) }

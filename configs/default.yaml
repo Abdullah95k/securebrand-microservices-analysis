@@ -456,3 +456,26 @@ analysis:
   limits:
     max_attempts: 5
     candidate_min_seen: 20
+  # Topics the model finds missing from the list are deduplicated (same
+  # words in English or Arabic, or a known brand/person name -> "@entity")
+  # and kept as candidates; once used by approve_min_items items, a daily
+  # check by the curation model merges synonyms, rejects names of people
+  # or companies, and approves the rest into the list (a new taxonomy
+  # version). The taxonomy file is only the starting list.
+  topics:
+    dynamic: true
+    approve_min_items: 10
+    curate_every: 24h
+    curation: {provider: anthropic, model: claude-sonnet-5-5, thinking: "off", effort: low, max_tokens: 8000}
+  # Bot and fake-account detection from behaviour (no profile data):
+  # bursts, volume, the same text in many threads, the same text from many
+  # authors, replies within a minute, round-the-clock posting, spam share.
+  # Starting thresholds, to tune on the pilot data.
+  bots:
+    enabled: true
+    every: 24h
+    window: 720h             # 30 days
+    min_items: 10
+    suspected_score: 45
+    likely_score: 70
+    coordination_authors: 5

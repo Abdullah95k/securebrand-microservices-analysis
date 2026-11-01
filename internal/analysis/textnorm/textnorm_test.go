@@ -158,3 +158,24 @@ func TestKeywords(t *testing.T) {
 		}
 	}
 }
+
+func TestTopicKey(t *testing.T) {
+	same := [][]string{
+		{"Electricity cuts", "cuts of electricity", "The electricity cut"},
+		{"انقطاع الكهرباء", "انقطاع كهرباء", "الكهرباء انقطاع"},
+		{"Water shortage", "shortage of water"},
+	}
+	for _, g := range same {
+		for _, n := range g[1:] {
+			if TopicKey(n) != TopicKey(g[0]) || TopicKey(n) == "" {
+				t.Errorf("TopicKey(%q) = %q, want %q", n, TopicKey(n), TopicKey(g[0]))
+			}
+		}
+	}
+	if TopicKey("Electricity cuts") == TopicKey("Electricity prices") {
+		t.Fatal("different topics share a key")
+	}
+	if TopicKey("Gas") != "gas" || TopicKey("of the") != "" {
+		t.Fatalf("short words: %q %q", TopicKey("Gas"), TopicKey("of the"))
+	}
+}

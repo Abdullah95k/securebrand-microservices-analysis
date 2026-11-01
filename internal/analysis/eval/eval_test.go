@@ -249,6 +249,7 @@ func TestLabelServerSaves(t *testing.T) {
 	}
 	form := url.Values{"i": {"10"}, "lang": {"ar"}, "dialect": {"iraqi"}, "sentiment": {"negative"}, "intent": {"churn_threat"},
 		"emotion": {"anger"}, "toxicity": {"none"}, "topics": {"telecom.pricing", "telecom.network", "other", "social.youth"},
+		"ad": {"hidden"}, "legal": {"fraud_scam", "defamation"},
 		"e0_name": {"زين العراق"}, "e0_type": {"brand"}, "e0_id": {"zain-iraq"}, "e0_sent": {"positive"}, "e0_aspect": {"general"},
 		"labeller": {"L1"}}
 	req := httptest.NewRequest(http.MethodPost, "/save", strings.NewReader(form.Encode()))
@@ -260,7 +261,8 @@ func TestLabelServerSaves(t *testing.T) {
 	}
 	back, _ := ReadItems(path)
 	l := back[10].Label
-	if l == nil || l.Sentiment != "negative" || len(l.Topics) != 3 || len(l.Entities) != 1 || l.Entities[0].ID != "zain-iraq" || l.Labeller != "L1" {
+	if l == nil || l.Sentiment != "negative" || len(l.Topics) != 4 || len(l.Entities) != 1 || l.Entities[0].ID != "zain-iraq" || l.Labeller != "L1" ||
+		l.Ad != "hidden" || strings.Join(l.Legal, ",") != "fraud_scam,defamation" {
 		t.Fatalf("saved label %+v", l)
 	}
 	// A label without sentiment is refused unless unsure.
@@ -292,9 +294,9 @@ func TestCostModel(t *testing.T) {
 	within("previous lean at 300M", Yearly(p, PreviousAssumptions, lean, 300e6).Total, 14800, 15400)
 	within("previous heavier at 300M", Yearly(p, PreviousAssumptions, heavy, 300e6).Total, 47500, 49500)
 	// Current defaults (design section 16).
-	within("lean at 300M", Yearly(p, DefaultAssumptions, lean, 300e6).Total, 10800, 11400)
-	within("lean+whisper at 300M", Yearly(p, DefaultAssumptions, whisper, 300e6).Total, 9000, 9400)
-	within("lean+whisper at 1B", Yearly(p, DefaultAssumptions, whisper, 1e9).Total, 25500, 26300)
+	within("lean at 300M", Yearly(p, DefaultAssumptions, lean, 300e6).Total, 11400, 12000)
+	within("lean+whisper at 300M", Yearly(p, DefaultAssumptions, whisper, 300e6).Total, 9500, 9900)
+	within("lean+whisper at 1B", Yearly(p, DefaultAssumptions, whisper, 1e9).Total, 27400, 28200)
 	b := Yearly(p, DefaultAssumptions, whisper, 1e9)
 	if b.Lines["speech"] != 2000 {
 		t.Fatalf("own Whisper is a fixed cost: %v", b.Lines["speech"])
@@ -305,10 +307,10 @@ func TestCostModel(t *testing.T) {
 	if r := Yearly(p, DefaultAssumptions, lean, 1e9).Lines["comments"] / Yearly(p, noDup, lean, 1e9).Lines["comments"]; r < 0.899 || r > 0.901 {
 		t.Fatalf("duplicate share not applied: ratio %v", r)
 	}
-	within("haiku per 1M comments (batch)", 1e6*Unit(p, Choice{"claude-haiku-5-5", true}, DefaultAssumptions.Comment), 14, 15.5)
+	within("haiku per 1M comments (batch)", 1e6*Unit(p, Choice{"claude-haiku-5-5", true}, DefaultAssumptions.Comment), 15.5, 16.5)
 	var out bytes.Buffer
 	WriteCostReport(&out, p, DefaultAssumptions, []float64{1e8, 3e8, 1e9})
-	for _, want := range []string{"| lean | $3.7k | $11.1k | $37.0k |", "| lean+whisper | $4.4k | $9.2k | $25.9k |", "| speech | $1.3k \\| $2.0k |"} {
+	for _, want := range []string{"| lean | $3.9k | $11.7k | $38.9k |", "| lean+whisper | $4.6k | $9.7k | $27.8k |", "| speech | $1.3k \\| $2.0k |"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("cost report lacks %q:\n%s", want, out.String())
 		}

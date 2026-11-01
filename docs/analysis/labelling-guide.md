@@ -50,7 +50,7 @@ Ask: **what does the author feel or think, about the subject they are talking ab
 
 ## 3. Entities and the sentiment toward each
 
-List the **brands, products, organisations, public persons, places and events** that the item names or clearly refers to. For each one:
+List the **brands, products, organisations, public persons, positions, places and events** that the item names or clearly refers to. For each one:
 
 - **Name as written** (copy it from the text).
 - **Type:**
@@ -61,6 +61,7 @@ List the **brands, products, organisations, public persons, places and events** 
 | `product` | iPhone 15, a named package or offer |
 | `organization` | ministries, banks, parliament, a university |
 | `person_public` | politicians, officials, clerics, artists, journalists, athletes |
+| `position` | an office, whoever holds it: "رئيس الوزراء" (Prime Minister of Iraq), "وزير الكهرباء", "محافظ البصرة". If the person is named too, list both. |
 | `place` | Baghdad, Basra, a hospital by name |
 | `event` | a festival, a match, a named campaign |
 | `media_outlet` | a TV channel or news site |
@@ -76,9 +77,9 @@ List the **brands, products, organisations, public persons, places and events** 
 
 Up to six entities per item; most comments have none or one.
 
-## 4. Topics (up to 3)
+## 4. Topics (every one that applies)
 
-Pick **the most specific** topics from the list (it is grouped by area, with Arabic names). If several apply, pick up to three, most important first. If nothing fits, pick `other`.
+Pick **every** topic from the list that applies, the most specific ones (it is grouped by area, with Arabic names). Most items have one to three. If nothing fits, pick `other` and write the missing topic in the notes (for example "missing topic: water shortage"). Brands, people and places are entities, not topics: they become topics automatically.
 
 Examples:
 - "النت واقف من الصبح": `telecom.outage`.
@@ -114,6 +115,38 @@ Examples:
 **Spam:** ads for unrelated things, scams, fake prizes, selling numbers or followers, link spam.
 
 **Urgent:** the item reports danger, an outage affecting many people, fraud or a scam, a health or food-safety problem, or an accident. In short, something a brand or an authority should see within the hour.
+
+**Advertising** (mainly posts and images; for comments use spam), one choice:
+
+| Choice | When |
+|---|---|
+| `none` | Not an ad |
+| `own` | A brand, shop or business promoting its own products, services or offers |
+| `paid` | Disclosed paid promotion of another brand ("إعلان", "برعاية", "sponsored") |
+| `hidden` | Reads like paid promotion but is not marked as such: an influencer or news page praising a product with prices, discount codes, links or "order now" |
+| `sale` | A private person selling or buying something (a car, a phone, a flat) |
+
+**Possible legal or policy breach**: tick every one that applies, only when the item itself does it (not when it reports or condemns it):
+
+| Category | When |
+|---|---|
+| `incitement` | Calls for violence or for hatred against a group (sect, ethnicity, religion, nationality) |
+| `terrorism` | Praises, supports or spreads propaganda for terrorist or armed extremist groups |
+| `child_safety` | Sexualises, abuses or exploits children |
+| `sexual_content` | Explicit sexual content, nudity, offers of sexual services |
+| `graphic_violence` | Gore, or celebrates injury or killing |
+| `self_harm` | Encourages suicide or self-harm |
+| `drugs` | Sells, buys or promotes illegal drugs |
+| `weapons` | Sells or buys weapons or ammunition |
+| `gambling` | Promotes betting or gambling |
+| `regulated_goods` | Sells alcohol, prescription medicines without prescription, or other restricted goods |
+| `fraud_scam` | Scams, phishing, fake giveaways, fake jobs, pyramid schemes, a fake page pretending to be a brand or official |
+| `unlicensed_finance` | Currency trading, investment or loan offers promising returns |
+| `counterfeit` | Fake branded goods, pirated content, accounts for sale |
+| `privacy` | Publishes someone's phone number, address, ID, private photos or messages |
+| `defamation` | Accuses a named company or private person of a crime or serious wrongdoing, as a fact |
+
+**Never a breach:** criticism of the government, officials, institutions, companies or religion; political opinions; complaints; insults (that is toxicity); news about crimes; discussion of sexuality or identity.
 
 ## 6. Images (only when an image is shown)
 

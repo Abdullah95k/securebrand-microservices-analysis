@@ -1,9 +1,10 @@
 # SecureBrand content analysis service (`sb-analysis`)
 
-Status: proposed, first version built (see "What is built" at the end). Written 2026-11-01; cost revision the same day (section 16.1).
+Status: proposed, first version built (see "What is built" at the end). Written 2026-11-01; cost revision the same day (section 16.1); ads, legal and policy flags, a dynamic topic list and bot detection added the same day (sections 6.1-6.3).
 Decisions: [ADR 0004](../adr/0004-analysis-service.md) (one service, canonical contract, Postgres work queue),
 [ADR 0005](../adr/0005-llm-provider-strategy.md) (models and providers),
-[ADR 0006](../adr/0006-analysis-storage.md) (storage, analytics store, agent access).
+[ADR 0006](../adr/0006-analysis-storage.md) (storage, analytics store, agent access),
+[ADR 0007](../adr/0007-topics-flags-bots.md) (dynamic topics, ad and breach flags, bot detection).
 Owner-facing summary: [docs/owner/analysis-decisions.md](../owner/analysis-decisions.md).
 
 ## 1. Summary
@@ -12,10 +13,13 @@ Owner-facing summary: [docs/owner/analysis-decisions.md](../owner/analysis-decis
 - **One LLM call per group of items returns every field** (language, sentiment, per-entity sentiment, topics, entities, intent, emotion, toxicity, spam, sarcasm). Comments are grouped by post, with the post as context: one request carries one post and up to 40 of its comments.
 - **Models are chosen per content type and set in config.** The starting point is Claude Haiku 5.5 through the Batch API for comments and posts, with a stronger model only where the evaluation shows Haiku fails. Two further uses of a stronger model: escalation of low-confidence items that mention a client's tracked brand, and a 0.02% audit sample for drift monitoring.
 - **What is not paid for:** answers use a compact format (most of the cost is the model's output), identical comments of a thread are sent once, and the script and comment keywords are computed locally (section 16.1).
+- **Also in the same call, at no extra cost when absent:** ad detection (own, paid, hidden, private sale) and possible legal or platform-policy breaches (15 categories, for human review; criticism of the government is never a breach).
+- **The topic list grows by itself** (section 6.1): the model proposes missing topics, the service deduplicates them, and a daily check merges synonyms before they join the list. Brands, people, positions and places the item is about become topics too ("@asiacell").
+- **Bot and fake-account detection** (section 6.2): a daily behaviour score per author; every item of a flagged author carries the flag.
 - **Postgres is the work queue and the system of record.** Text, analyses, entity mentions and daily rollups live there, partitioned by month. Results are also published on `analysis.result.v1`, so ClickHouse can be added for the future chat/analytics agent without changing the service.
 - **Expected cost** (list prices of 2026-11-01; token counts and the duplicate share are estimates until the evaluation and `make pilot-stats` measure them):
-  - **lean mix** (Haiku 5.5 everywhere, Sonnet 5.5 for escalations): about **$3.7k/year at 100M** text items, **$9.2k at 300M** and **$26k at 1B**. Above ~150M items a year, speech-to-text runs on an own Whisper server instead of a per-minute API (if it passes the dialect test).
-  - **heavier mix** (Sonnet 5.5 for posts, images and videos): about $42k/year at 300M. It is needed only if the evaluation shows Haiku failing on those routes.
+  - **lean mix** (Haiku 5.5 everywhere, Sonnet 5.5 for escalations): about **$3.9k/year at 100M** text items, **$9.7k at 300M** and **$28k at 1B**. Above ~150M items a year, speech-to-text runs on an own Whisper server instead of a per-minute API (if it passes the dialect test).
+  - **heavier mix** (Sonnet 5.5 for posts, images and videos): about $43k/year at 300M. It is needed only if the evaluation shows Haiku failing on those routes.
   - The first estimate was $15.1k (lean) and $48.5k (heavier) at 300M; section 16.1 explains the difference.
 
 ## 2. Critique of the brief
@@ -151,16 +155,21 @@ One result per item. The model answers in a compact JSON format enforced by JSON
 |---|---|
 | `lang`, `dialect`, `script` | `ar`, `ckb` (Sorani), `kmr` (Kurmanji), `en`, `tr`, `fa`, `other`, `none`; dialect `iraqi`, `gulf`, `levantine`, `egyptian`, `msa`, `other`; script `arabic`, `latin` (Arabizi or English), `mixed`, `none` (computed from the letters: deterministic and free); plus `code_switch` (bool). |
 | `sentiment` | label `positive`/`negative`/`neutral`/`mixed`, `score` −1..1, `confidence` 0..1 (raw; a calibrated value is stored next to it). |
-| `entities[]` | `name` as written, `type` (`brand`, `product`, `organization`, `person_public`, `person_private`, `place`, `event`, `media_outlet`, `other`), `id` (a registry id from the hints, or empty), `sentiment` + `score` toward that entity (aspect-based), `aspect` (what about it: `price`, `network`, `customer_service`, ...). `person_private` entities are dropped before storage; only a count is kept. |
-| `topics[]` | Ids from the versioned taxonomy (`configs/analysis/taxonomy.v1.yaml`), at most 3. Also `keywords[]` (at most 5): the model's for long posts; for comments, their content words (function words, links, digits and masked contact details removed). A comment's keywords are its content words, and asking the model for them cost about a fifth of its answer. |
+| `entities[]` | `name` as written, `type` (`brand`, `product`, `organization`, `person_public`, `person_private`, `position`, `place`, `event`, `media_outlet`, `other`; a position is an office independent of its holder: "رئيس الوزراء" = Prime Minister of Iraq), `id` (a registry id from the hints, or empty), `sentiment` + `score` toward that entity (aspect-based), `aspect` (what about it: `price`, `network`, `customer_service`, ...). `person_private` entities are dropped before storage; only a count is kept. |
+| `topics[]` | Every topic that applies (up to 10 from the model): ids from the topic list, new topics the model proposed (section 6.1), and `@<entity id>` for every linked brand, organisation, public figure, position, place or event the item is about. Also `keywords[]` (at most 5): the model's for long posts; for comments, their content words (function words, links, digits and masked contact details removed). A comment's keywords are its content words, and asking the model for them cost about a fifth of its answer. |
 | `intent` | `complaint`, `praise`, `question`, `request`, `suggestion`, `purchase_intent`, `churn_threat`, `recommendation`, `information`, `giveaway_entry`, `greeting_religious`, `tagging`, `spam_ad`, `other`. |
 | `emotion` | `anger`, `joy`, `sadness`, `fear`, `surprise`, `disgust`, `trust`, `anticipation`, `none`. |
 | `toxicity` | `none`/`mild`/`severe`, plus flags `hate`, `threat`, `harassment`. |
 | `spam`, `sarcasm`, `urgent` | Booleans. `urgent` means a safety, outage or fraud allegation (crisis signal). |
+| `ad_type` | `own` (a brand or shop promoting itself), `paid` (disclosed paid promotion of another brand), `hidden` (looks like paid promotion but is not disclosed), `sale` (a private sale, classifieds); empty when not an ad. Mainly posts and images; comments use `spam`. |
+| `legal[]` | Possible legal or platform-policy breaches, for human review (section 6.3): `incitement`, `terrorism`, `child_safety`, `sexual_content`, `graphic_violence`, `self_harm`, `drugs`, `weapons`, `gambling`, `regulated_goods`, `fraud_scam`, `unlicensed_finance`, `counterfeit`, `privacy`, `defamation`. |
+| `author_bot` | The author's bot level: empty, `suspected`, `likely`, or `confirmed` by the owner (section 6.2). Not asked of the model. |
 
 **Signals worth their cost** (they come free in the same call): intent (complaint/praise/question is what brand teams act on), emotion, toxicity, spam, sarcasm (an explicit flag lowers the weight of mis-read praise), and urgency.
 
-**Bot-likeness is *not* asked of the LLM.** A single comment does not show it. It is computed from behaviour in SQL: the same `author_key` posting near-identical text across many sources, posting bursts, and tag-only comment rates. A later job will do this.
+**Bot-likeness is *not* asked of the LLM.** A single comment does not show it. It is computed from behaviour (section 6.2).
+
+The yes/no signals, ad types and breaches share one `flags` list in the model's answer, usually empty, so they add no output tokens when absent.
 
 **Images:**
 - `logos[]` (brand + registry id + confidence) and `text_in_image` (OCR, capped at 500 characters);
@@ -179,6 +188,57 @@ One result per item. The model answers in a compact JSON format enforced by JSON
 **Taxonomy v1** (`configs/analysis/taxonomy.v1.yaml`) was proposed from domain knowledge of Iraqi news and brand pages; the pilot data's content was not read. It has 20 top-level topics (including `other`) and 87 sub-topics: politics, security, economy, public services, telecom, banking & payments, retail, food, automotive, real estate, travel, health, education, religion & occasions, sports, entertainment, social issues, technology, and brand engagement. Each topic has an id, English and Arabic labels, and a one-line description that goes into the prompt.
 
 The taxonomy is versioned. A change bumps `taxonomy_version` and makes items eligible for selective re-analysis (section 10). The owner replaces or edits the list.
+
+### 6.1 Dynamic topic list
+
+The taxonomy file (`configs/analysis/taxonomy.v1.yaml`) is only the starting list. The list lives in the database (`analysis.topics`, `topic_aliases`, `taxonomy_versions`) and grows from what the content is about:
+
+1. **Proposals.** When an item is clearly about a theme no listed topic covers, the model adds it to `new_topics` (English name, Arabic name, top-level parent). It is told never to propose a synonym, translation or narrower wording of a listed topic, nor a name of a person, company, position or place.
+2. **Deduplication, at once** (`store.ResolveTopics`):
+   - a name that is a registry entity becomes that entity's topic (`@asiacell`);
+   - a name whose duplicate key matches a known topic becomes that topic. The key is the name normalised, without function words and clitics, singular, words sorted, in English and in Arabic (`textnorm.TopicKey`): "Electricity cuts", "cuts of electricity" and "انقطاع الكهرباء / انقطاع كهرباء" share keys. A merged topic leads to the one it was merged into; a rejected topic is dropped;
+   - anything else becomes a **candidate** topic under the proposed parent (`services.water_shortage`). The item keeps it, so nothing is lost while it waits.
+3. **Curation, daily** (`internal/analysis/curate`, role `rollup`). Candidates used by at least `topics.approve_min_items` items (default 10) go to the curation model (Sonnet 5.5, a few cents a day). It merges synonyms the key cannot catch ("power outages" into "Electricity cuts"), rejects names, one-off details and vague topics, and approves the rest with clean names. Without a curation provider, candidates are approved on the count alone.
+4. **A change is a version.** Each change of the active list records a taxonomy version (`tax-v1.1`, `tax-v1.2`...), which results carry. Merges and rejections re-point or remove the topic in stored analyses and mentions (GIN indexes on the topic arrays), rebuild their rollup days, and publish a `TopicUpdate` on `analysis.topic.v1` so downstream stores follow. Every replica reloads the list each minute. The system prompt changes only with the version, so the prompt cache breaks at most once per change.
+5. **The owner decides last:** `sb-analysis topics list | approve | rename | merge | reject | curate | import`.
+
+**Entity topics.** Every linked entity of an item becomes a topic `@<entity id>` at no cost: one spelling-independent topic per brand, organisation, public figure, position (`@pos-iraq-pm`), place or event. Linking a candidate entity later adds the topic to its earlier items; merging two entities re-points it.
+
+**Limits:** up to 10 model topics per item, at most 3 proposals per item, 24 topics per item in all.
+
+### 6.2 Bot and fake-account detection
+
+The service has no profile data (author ids are pseudonymous HMACs, by design), so detection is behavioural. Once a day (role `rollup`, `bots.every`), `store.ScoreAuthors` computes, for every author with at least `bots.min_items` (10) items in the last `bots.window` (30 days), excluding pages replying on their own page:
+
+| Signal | Points (weak / strong) |
+|---|---|
+| Burst: most items in one clock hour (≥15 / ≥30) | 10 / 25 |
+| Volume: items per active day (≥20 / ≥50) | 10 / 20 |
+| Repetition: share of items whose text (15+ characters) the author posted in 3+ threads (≥25% / ≥50%) | 10 / 25 |
+| Coordination: share of items whose long text (30+ characters, 5+ words) at least `bots.coordination_authors` (5) authors posted (≥10% / ≥30%) | 15 / 35 |
+| Fast replies: share of comments within 60 s of their post, with 10+ comments (≥30% / ≥50%) | 5 / 15 |
+| Spam: share flagged spam, ad or scam by the analysis (≥25% / ≥50%) | 10 / 20 |
+| Breadth: sources per active day (≥10 / ≥20) | 5 / 10 |
+| No sleep: distinct hours of the day, with 10+ items a day (≥20 / ≥23) | 5 / 10 |
+
+- **Levels:** score ≥ 45 `suspected`, ≥ 70 `likely` (`bots.suspected_score`, `likely_score`). The reasons are stored with the score.
+- **Formulaic texts never count** as repetition or coordination: contest entries, prayers and tags (intents `giveaway_entry`, `greeting_religious`, `tagging`). Thousands of real people write the same "تم".
+- **The owner decides last:** `sb-analysis authors list | mark --key … --as bot|human|none | score`. A `bot` override reads `confirmed`; `human` clears the flag whatever the score.
+- **Every item of a flagged author is flagged,** also retroactively:
+  - the agent views show `author_bot` from the author's current level;
+  - results carry the level at analysis time, and `AuthorFlag` events on `analysis.author.v1` announce every change;
+  - rollups count `bot_items` / `bot_mentions`, and a level change rebuilds the author's days.
+- **Limits, stated plainly:** behaviour alone produces false positives (super-fans, giveaway hunters, page admins posting from personal accounts) and misses careful bots. Paid human "electronic armies" look the same and are flagged the same; "bot" here means inauthentic behaviour, not proven automation. The thresholds are starting values: `make pilot-stats` prints the activity distribution (counts only), and the owner reviews a sample of flagged authors before the flags are shown to clients.
+- **Scale:** the scoring query scans 30 days of items once a day, minutes at pilot scale. At hundreds of millions of items a year it moves to ClickHouse with the rest of the analytics (section 12.3).
+- **Privacy:** this is automated profiling of (pseudonymous) people. It is flagged for the lawyer. The profile row is deleted with the author's other data on erasure.
+
+### 6.3 Legal and platform-policy flags
+
+The model flags possible breaches in the same call, for **human review, never as a legal finding**. Categories follow Iraqi law where it is clear and common platform policies (Meta's Community Standards): incitement to violence or hatred, terrorism and armed-extremist propaganda, child safety, explicit sexual content, graphic violence, self-harm, drugs, weapons, gambling, regulated goods (alcohol, prescription medicines), fraud and scams (including impersonating brand or official pages), unlicensed finance, counterfeit goods, privacy violations (doxxing), and defamation of companies and private persons.
+
+**Deliberately not breaches** (the prompt says so): criticism of the government, officials, institutions, companies or religion; political opinions; complaints; insults (that is toxicity); news reporting about crimes; discussion of sexuality or identity. Iraqi law has been used against government critics and against LGBT content, so flagging those would turn a monitoring tool into a reporting tool against users. Changing this boundary is the owner's decision, with their lawyer.
+
+Breaches are stored per item (`legal[]`), counted per day and source (`rollup_flag_daily`), and measured in the evaluation (the labeller marks them too).
 
 ## 7. Model strategy
 
@@ -376,6 +436,8 @@ Own migrations (`migrations/analysis`, goose table `analysis_goose_db_version`) 
 | `analysis_queue`, `provider_batches`, `provider_requests`, `analysis_dead_letters`, `outbox`, `rollup_dirty`, `model_changes`, `erasures` | – | operational |
 | `rollup_entity_daily`, `rollup_entity_topic_daily`, `rollup_topic_daily`, `rollup_source_daily` | – | PK on all dimensions |
 | `entities`, `entity_aliases`, `entity_candidates`, `clients`, `client_entities`, `client_sources`, `client_roles` | – | registry and scoping |
+| `topics`, `topic_aliases`, `taxonomy_versions` | – | the dynamic topic list (section 6.1) |
+| `authors` | – | PK (platform, author_key): behaviour, bot score, level, owner override (section 6.2) |
 
 **Size:** roughly 1.1 KB per item all-in (text ~150 B, analysis ~400 B, mentions, indexes), so ~330 GB/year at 300M items. Partitions are monthly, there is no retention drop, and old partitions can move to a cheaper tablespace.
 
@@ -388,7 +450,10 @@ Days are Iraq days (Asia/Baghdad).
 | `rollup_entity_daily` | day, entity, platform, source, sentiment → mentions, score sum | Sentiment toward a brand over time, per platform or page. |
 | `rollup_entity_topic_daily` | day, entity, platform, topic → mentions, positive, negative, neutral, mixed | "Most common topics when people mention brand X". |
 | `rollup_topic_daily` | day, platform, source, topic → items and sentiment counts | Topic trends. |
-| `rollup_source_daily` | day, platform, source, kind → items and sentiment counts, complaints, urgent | Per-page health. |
+| `rollup_source_daily` | day, platform, source, kind → items and sentiment counts, complaints, urgent, ads, possible breaches, bot items | Per-page health. |
+| `rollup_flag_daily` | day, platform, source, flag (`ad_own`, `ad_paid`, `ad_hidden`, `ad_sale`, or a breach category) → items, bot items | Ads and possible breaches over time. |
+
+`rollup_entity_daily` also counts `bot_mentions`, so "how much of the negativity toward brand X comes from suspected bots" is one query.
 
 **Correctness under re-analysis, merges and erasure:**
 - writers only mark `rollup_dirty(day)`;
@@ -487,7 +552,7 @@ Example retrieval returns at most 20 texts per call, with phones and e-mails mas
 ## 13. Erasure and privacy
 
 - **Erasure** (`fb.erasure.v1` via the adapter, `content.erasure.v1` natively), idempotent and logged in `erasures`:
-  - **author:** delete the author's items' text, analyses, mentions and media analyses, then mark the affected rollup days dirty;
+  - **author:** delete the author's items' text, analyses, mentions, media analyses and behaviour profile (`authors`), then mark the affected rollup days dirty;
   - **source:** delete everything from that source (items, analyses, mentions, media), plus its rows in the per-source rollups;
   - **both:** record the subject in `erased_subjects`, so late items and in-flight batch results for it are dropped at write time; delete pending queue and media rows.
   - **ClickHouse (later):** consumes the same erasure topics and runs lightweight deletes.
@@ -503,6 +568,8 @@ Example retrieval returns at most 20 texts per call, with phones and e-mails mas
 4. **People mentioned in comments:** storing who is mentioned, even public figures, is processing about them. The policy keeps private persons out.
 5. **Iraq:** there is no comprehensive data-protection law in force at the time of writing (a draft exists). Clients' jurisdictions and where SecureBrand is established decide which laws apply.
 6. **Facebook terms** (already flagged in the repo) apply equally to analysing the data.
+7. **Bot scores are automated profiling** of (pseudonymous) people (GDPR Art. 4(4), and Art. 22 if a decision with effects is based on them). A false "bot" label shown to a client is an accusation about a real person. Keep the label internal or reviewed, show reasons, and give a way to correct it (the owner override exists).
+8. **Legal and policy flags are allegations.** Treat them as leads for review, never publish them as findings, and do not use them to report users to authorities without legal advice. The boundary (criticism of the government is never flagged) is a deliberate choice (section 6.3).
 
 ## 14. Observability
 
@@ -557,7 +624,7 @@ The harness is `cmd/sb-eval`, with guide [docs/analysis/evaluation.md](../analys
 
 **Assumptions** (replace with measured numbers from `sb-eval run` and `make pilot-stats`):
 - **Volume:** posts = items / 58.3 (pilot ratio); media = 1 per post, 80% images and 20% videos of 45 s.
-- **Tokens per unit** (uncached in / cached in / out), compact format: comment 60 / 85 / 45; post 700 / 500 / 140; image 1,100 / 500 / 170; video 3,250 / 500 / 210.
+- **Tokens per unit** (uncached in / cached in / out), compact format (prompt `p3`): comment 60 / 110 / 50; post 700 / 600 / 150; image 1,100 / 550 / 180; video 3,250 / 550 / 220. The cached prefix includes the flag definitions; ads and breaches cost no output when absent.
 - **Duplicates:** 10% of comments share an identical comment's answer (same thread, parent and text); `make pilot-stats` measures it.
 - **Other shares:** 2% of analysed comments escalated to Sonnet 5.5 batch; 0.02% audit on Opus 5.5.
 - **Speech-to-text:** Gemini 3.5 Transcribe at $0.0051/min, or an own Whisper server at a fixed ~$2k/year (mix `lean+whisper`).
@@ -569,38 +636,39 @@ The harness is `cmd/sb-eval`, with guide [docs/analysis/evaluation.md](../analys
 
 | Model | Batch | Real time |
 |---|---|---|
-| Claude Haiku 5.5 | **$15** | $29 |
-| GPT-5.4 nano (unverified) | $35 | $70 |
-| Gemma 4 26B (Vertex, no batch) | $37 | $37 |
-| Gemini 3.1 Flash-Lite | $42 | $85 |
-| Gemini 3.5 Flash-Lite | $67 | $133 |
-| GPT-5.4 mini (unverified) | $127 | $254 |
-| Gemini 3.5 Flash | $254 | $508 |
-| Claude Sonnet 5.5 | $289 | $579 |
-| Claude Opus 5.5 | $579 | $1,157 |
+| Claude Haiku 5.5 | **$16** | $32 |
+| GPT-5.4 nano (unverified) | $38 | $77 |
+| Gemma 4 26B (Vertex, no batch) | $41 | $41 |
+| Gemini 3.1 Flash-Lite | $46 | $93 |
+| Gemini 3.5 Flash-Lite | $73 | $146 |
+| GPT-5.4 mini (unverified) | $139 | $278 |
+| Gemini 3.5 Flash | $278 | $557 |
+| Claude Sonnet 5.5 | $316 | $631 |
+| Claude Opus 5.5 | $631 | $1,262 |
 
 **Yearly, by mix:**
 
 | Mix | 100M items | 300M items | 1B items |
 |---|---|---|---|
-| **Lean** (Haiku 5.5 everywhere + Sonnet escalation + audit; speech on Gemini 3.5 Transcribe) | **$3.7k** | $11.1k | $37.0k |
-| **Lean + own Whisper** (the same; speech on an own server) | $4.4k | **$9.2k** | **$25.9k** |
-| Heavier (Haiku comments; Sonnet posts, images, videos) | $14.0k | $42.0k | $140k |
-| All Sonnet 5.5 | $37.8k | $113k | $378k |
-| All Gemini 3.5 Flash-Lite (+ Sonnet escalation) | $9.8k | $29.4k | $98.1k |
-| All GPT-5.4 nano (+ Sonnet escalation; unverified) | $6.2k | $18.5k | $61.5k |
+| **Lean** (Haiku 5.5 everywhere + Sonnet escalation + audit; speech on Gemini 3.5 Transcribe) | **$3.9k** | $11.7k | $38.9k |
+| **Lean + own Whisper** (the same; speech on an own server) | $4.6k | **$9.7k** | **$27.8k** |
+| Heavier (Haiku comments; Sonnet posts, images, videos) | $14.4k | $43.3k | $144k |
+| All Sonnet 5.5 | $40.4k | $121k | $404k |
+| All Gemini 3.5 Flash-Lite (+ Sonnet escalation) | $10.5k | $31.6k | $105k |
+| All GPT-5.4 nano (+ Sonnet escalation; unverified) | $6.5k | $19.6k | $65.4k |
 
 **By line** (lean | lean + own Whisper, where they differ):
 
 | Line | 100M | 300M | 1B |
 |---|---|---|---|
-| Comments | $1.3k | $3.9k | $13.0k |
-| Escalation | $0.5k | $1.5k | $5.1k |
-| Posts | $0.1k | $0.4k | $1.2k |
-| Images | $0.3k | $0.8k | $2.7k |
-| Videos (vision) | $0.1k | $0.4k | $1.5k |
+| Comments | $1.4k | $4.3k | $14.2k |
+| Escalation | $0.6k | $1.7k | $5.6k |
+| Posts | $0.1k | $0.4k | $1.3k |
+| Images | $0.3k | $0.8k | $2.8k |
+| Videos (vision) | $0.2k | $0.5k | $1.5k |
 | Speech-to-text | $1.3k \| $2.0k | $3.9k \| $2.0k | $13.1k \| $2.0k |
-| Audit | $35 | $0.1k | $0.3k |
+| Audit | $38 | $0.1k | $0.4k |
+| Topic curation, bot scoring | ~$20 | ~$20 | ~$20 |
 
 **Infrastructure** (not in the model): Postgres storage ~330 GB/year at 300M items; ClickHouse later ~$150-300/month; one small node for workers; the Whisper server above, if chosen.
 
@@ -626,6 +694,8 @@ The first estimate (lean $5.0k / $15.1k / $50.2k at 100M / 300M / 1B items; heav
 | **Speech cost counted in the budget** | none (a fix) | The daily cap now really caps spending: speech-to-text was not counted before. |
 
 Result: lean **$3.7k / $9.2k / $25.9k** at 100M / 300M / 1B (taking the cheaper speech option at each volume), **−26% / −39% / −48%**. The heavier mix falls to $14.0k / $42.0k / $140k.
+
+**The features added afterwards** (ads, legal and policy flags, new-topic proposals, positions; prompt `p3`) add ~5 output tokens per item (mostly the usually empty `new_topics`) and ~25 cached prefix tokens: **$3.9k / $9.7k / $27.8k**, +5-7%. Topic curation (a Sonnet call a day) and bot scoring (SQL) cost almost nothing.
 
 **Considered and not done** (each would save money but risk accuracy, or needs the owner):
 - **A positional answer format** (one string of codes per item, ~25 tokens): another ~−30% on comments. Models make more field-position errors in such formats; worth a gold-set comparison, not a blind switch.
@@ -678,6 +748,8 @@ Result: lean **$3.7k / $9.2k / $25.9k** at 100M / 300M / 1B (taking the cheaper 
   - integration tests against Postgres and Redpanda: store, agent scoping, pipeline lanes and failure modes, media with real ffmpeg, Facebook topics to `analysis.result.v1` end to end, the sampler;
   - the existing fbs suites still pass;
   - a mutation check of the new tests: 16 of 16 deliberate faults caught, and 11 of 11 for the cost revision (compact format, local script and keywords, duplicate collapsing).
+
+- **Ads, legal and policy flags, dynamic topics, bot detection** (sections 6.1-6.3): prompt `p3` / schema `s3`; migration `00002`; `store.ResolveTopics`, `ApplyTopicDecisions`, `ScoreAuthors`; `internal/analysis/curate`, `internal/analysis/bots`; `sb-analysis topics` and `authors`; `AuthorFlag` and `TopicUpdate` events; agent views with `ad_type`, `legal`, `author_bot`, `agent.topics`, `agent.rollup_flag_daily`; ad and breach labels in the labelling tool and the report; positions in the brand list (14 Iraqi offices seeded).
 
 **Not built:** ClickHouse, embeddings and `sb-eval retrieval`, the agent itself, the speech-to-text evaluation, and the own Whisper server's deployment (added only if it passes that evaluation).
 

@@ -23,4 +23,6 @@ var ValueSchemas = map[string]string{
 	ContentErasure:        "securebrand/content/v1/content.proto",
 	AnalysisResult:        "securebrand/analysis/v1/analysis.proto",
 	AnalysisMedia:         "securebrand/analysis/v1/analysis.proto",
+	AnalysisAuthor:        "securebrand/analysis/v1/analysis.proto",
+	AnalysisTopic:         "securebrand/analysis/v1/analysis.proto",
 }

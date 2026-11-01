@@ -84,6 +84,8 @@ message ItemAnalysis {
   bool code_switch = 12;
   Sentiment sentiment = 13;
   repeated EntityMention entities = 14;
+  // Taxonomy topic ids, and "@<entity_id>" for each linked entity the item
+  // is about (brands, organisations, public figures, positions, places).
   repeated string topics = 15;
   repeated string keywords = 16;
   string intent = 17;
@@ -97,6 +99,16 @@ message ItemAnalysis {
   // True when every provider refused to analyse the item.
   bool refused = 24;
   Provenance provenance = 25;
+  // Advertising: own | paid | hidden | sale, "" when the item is not an ad.
+  string ad_type = 26;
+  // Possible legal or platform-policy breaches, for human review:
+  // incitement, terrorism, child_safety, sexual_content, graphic_violence,
+  // self_harm, drugs, weapons, gambling, regulated_goods, fraud_scam,
+  // unlicensed_finance, counterfeit, privacy, defamation.
+  repeated string legal = 27;
+  // The author's bot level when the item was analysed: "" | suspected |
+  // likely | confirmed. Later changes arrive on analysis.author.v1.
+  string author_bot = 28;
 }
 
 message Logo {
@@ -125,4 +137,40 @@ message MediaAnalysis {
   string transcript = 15;
   string transcript_lang = 16;
   Provenance provenance = 17;
+  string ad_type = 18;
+  repeated string legal = 19;
+}
+
+// AuthorFlag is published on analysis.author.v1, keyed by the hex author
+// key, when an author's bot level changes. Every item of the author takes
+// the new level.
+message AuthorFlag {
+  string event_id = 1;
+  securebrand.content.v1.Platform platform = 2;
+  bytes author_key = 3;
+  // "" (no longer flagged) | suspected | likely | confirmed (the owner's
+  // decision).
+  string bot = 4;
+  int32 score = 5;
+  // Behaviour behind the score: burst, volume, repetition, coordinated,
+  // fast_replies, spam, breadth, no_sleep.
+  repeated string reasons = 6;
+  google.protobuf.Timestamp scored_at = 7;
+}
+
+// TopicUpdate is published on analysis.topic.v1, keyed by topic id, when
+// the topic list changes: a new topic approved, renamed, merged into
+// another (results carrying topic_id now mean merged_into) or rejected
+// (results carrying it should drop it).
+message TopicUpdate {
+  string event_id = 1;
+  string topic_id = 2;
+  string parent_id = 3;
+  string name_en = 4;
+  string name_ar = 5;
+  // active | merged | rejected
+  string status = 6;
+  string merged_into = 7;
+  string taxonomy_version = 8;
+  google.protobuf.Timestamp updated_at = 9;
 }

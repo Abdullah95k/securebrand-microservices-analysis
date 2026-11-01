@@ -35,7 +35,6 @@ import (
 type Pipeline struct {
 	Store     *store.Store
 	Providers *registry.Registry
-	Tax       *taxonomy.Taxonomy
 	Cfg       config.Analysis
 	Pricing   provider.Pricing
 	Calib     map[string]*Calibration
@@ -47,19 +46,18 @@ type Pipeline struct {
 	downMu sync.Mutex
 	down   map[string]time.Time
 
-	textSystem string
-	textSchema map[string]any // comment, escalation and audit routes
-	postSchema map[string]any // post route: with keywords
-	urgentSrc  map[string]bool
-	now        func() time.Time
+	// tax is the topic list in use, with the prompts and schemas built
+	// from it; the dynamic topic list swaps in new versions.
+	tax       atomic.Pointer[taxState]
+	urgentSrc map[string]bool
+	now       func() time.Time
 }
 
 // New builds a pipeline.
 func New(st *store.Store, providers *registry.Registry, tax *taxonomy.Taxonomy, cfg config.Analysis, calib map[string]*Calibration) *Pipeline {
-	p := &Pipeline{Store: st, Providers: providers, Tax: tax, Cfg: cfg, Pricing: provider.Pricing(cfg.Pricing), Calib: calib,
-		textSystem: prompt.TextSystem(tax), textSchema: prompt.TextSchema(tax, false), postSchema: prompt.TextSchema(tax, true),
-		urgentSrc: map[string]bool{}, now: time.Now,
-		down: map[string]time.Time{}}
+	p := &Pipeline{Store: st, Providers: providers, Cfg: cfg, Pricing: provider.Pricing(cfg.Pricing), Calib: calib,
+		urgentSrc: map[string]bool{}, now: time.Now, down: map[string]time.Time{}}
+	p.SetTaxonomy(tax)
 	for _, s := range cfg.Urgent.Sources {
 		p.urgentSrc[s] = true
 	}
@@ -70,6 +68,36 @@ func New(st *store.Store, providers *registry.Registry, tax *taxonomy.Taxonomy, 
 	p.Budget = &Budget{Store: st, DailyUSD: cfg.Budget.DailyUSD, RouteUSD: routeCaps, UrgentExempt: cfg.Budget.UrgentExempt}
 	p.entities.Store(entities.New(nil, nil, nil))
 	return p
+}
+
+// taxState is a topic list with its prompts and schemas.
+type taxState struct {
+	tax                    *taxonomy.Taxonomy
+	textSystem             string
+	textSchema, postSchema map[string]any // post route: with keywords
+	mediaSystem            string
+	mediaSchema            map[string]any
+}
+
+// SetTaxonomy swaps in a topic list (a new version of the dynamic list).
+// Prompts and schemas are rebuilt only when the version changes, so the
+// cached system prompt stays byte-identical between versions.
+func (p *Pipeline) SetTaxonomy(t *taxonomy.Taxonomy) {
+	if cur := p.tax.Load(); cur != nil && cur.tax.Version == t.Version {
+		return
+	}
+	p.tax.Store(&taxState{tax: t, textSystem: prompt.TextSystem(t), textSchema: prompt.TextSchema(t, false),
+		postSchema: prompt.TextSchema(t, true), mediaSystem: prompt.MediaSystem(t), mediaSchema: prompt.MediaSchema(t)})
+}
+
+// Taxonomy returns the topic list in use.
+func (p *Pipeline) Taxonomy() *taxonomy.Taxonomy { return p.tax.Load().tax }
+
+// MediaPrompt returns the media system prompt and schema of the topic list
+// in use, and the list itself.
+func (p *Pipeline) MediaPrompt() (string, map[string]any, *taxonomy.Taxonomy) {
+	st := p.tax.Load()
+	return st.mediaSystem, st.mediaSchema, st.tax
 }
 
 // SetEntities swaps in a new registry snapshot.
@@ -221,6 +249,7 @@ func (p *Pipeline) build(ctx context.Context, g group, model string) (built, err
 		b.hashes = append(b.hashes, it.InputHash())
 	}
 	lead := leaders(g.route, g.items, b.hashes)
+	ts := p.tax.Load()
 	var c prompt.Context
 	inGroup := map[string]int{}
 	for i, it := range g.items {
@@ -272,9 +301,9 @@ func (p *Pipeline) build(ctx context.Context, g group, model string) (built, err
 			inputs = append(inputs, in)
 		}
 		b.req.User = prompt.TextUser(c, inputs)
-		b.req.Schema = p.textSchema
+		b.req.Schema = ts.textSchema
 		if allPosts(g.items) && g.route != core.RouteComment {
-			b.req.Schema = p.postSchema // escalated or audited long posts keep the model's keywords
+			b.req.Schema = ts.postSchema // escalated or audited long posts keep the model's keywords
 		}
 	} else {
 		for i, it := range g.items {
@@ -287,12 +316,12 @@ func (p *Pipeline) build(ctx context.Context, g group, model string) (built, err
 			page = g.items[0].SourceName
 		}
 		b.req.User = prompt.TextUser(prompt.Context{Page: page}, inputs)
-		b.req.Schema = p.postSchema
+		b.req.Schema = ts.postSchema
 	}
 	b.prompted = len(inputs)
 	rc := p.Cfg.Routes[g.route]
 	b.req.Model = model
-	b.req.System = p.textSystem
+	b.req.System = ts.textSystem
 	b.req.SchemaName = "items"
 	b.req.MaxTokens = rc.MaxTokens
 	b.req.Effort = rc.Effort
@@ -367,7 +396,7 @@ func (p *Pipeline) handle(ctx context.Context, s sent, items []core.Item, hashes
 		ametrics.ItemsFailed.WithLabelValues(s.route, "refused").Add(float64(len(items)))
 		out.Failed, out.Reason = ids(items), "refused: retried one by one"
 	default:
-		got, missing, probs, err := prompt.ParseText(resp.Text, want, p.Tax, p.Entities())
+		got, missing, probs, err := prompt.ParseText(resp.Text, want, p.Taxonomy(), p.Entities())
 		p.repairs(s.route, probs)
 		if err != nil {
 			reason := "invalid"
@@ -406,6 +435,9 @@ func (p *Pipeline) handle(ctx context.Context, s sent, items []core.Item, hashes
 			}
 		}
 	}
+	if err := p.finishTopics(ctx, results); err != nil {
+		return err
+	}
 	st, err := p.Store.WriteResults(ctx, results, out)
 	if err != nil {
 		return err
@@ -425,7 +457,7 @@ func (p *Pipeline) result(s sent, it core.Item, hash []byte, r core.Result, cost
 		r.CalibratedConfidence = r.Confidence
 	}
 	ir := store.ItemResult{Item: it, Route: s.route, InputHash: hash, Result: r, CostUSD: cost, Audit: s.route == core.RouteAudit,
-		Prov: core.Provenance{Provider: s.provider, Model: s.model, PromptVersion: prompt.PromptVersion, TaxonomyVersion: p.Tax.Version,
+		Prov: core.Provenance{Provider: s.provider, Model: s.model, PromptVersion: prompt.PromptVersion, TaxonomyVersion: p.Taxonomy().Version,
 			SchemaVersion: prompt.SchemaVersion, Route: s.route, Lane: s.lane, Fallback: s.fallback, AnalyzedAt: p.now().UTC(),
 			RequestID: s.id.String()}}
 	if s.route == core.RouteComment || s.route == core.RoutePost {
@@ -507,6 +539,69 @@ func (p *Pipeline) repairs(route string, pr prompt.Problems) {
 		}
 	}
 }
+
+// finishTopics completes the results' topic lists before they are stored:
+// the model's proposals of missing topics resolved into topic ids
+// (deduplicated against the list, new ones as candidates), then "@<id>"
+// for every linked entity the item is about. Audits never add topics.
+func (p *Pipeline) finishTopics(ctx context.Context, rs []store.ItemResult) error {
+	if p.Cfg.Topics.Dynamic {
+		props := make([][]core.TopicProposal, len(rs))
+		for i := range rs {
+			if !rs[i].Audit {
+				props[i] = rs[i].Result.NewTopics
+			}
+		}
+		reg := p.Entities()
+		ids, err := p.Store.ResolveTopics(ctx, props, func(name string) string { return reg.Link("", name) })
+		if err != nil {
+			return err
+		}
+		for i := range rs {
+			rs[i].Result.Topics = addTopics(rs[i].Result.Topics, ids[i]...)
+		}
+	}
+	for i := range rs {
+		rs[i].Result.Topics = addTopics(rs[i].Result.Topics, EntityTopics(rs[i].Result.Entities)...)
+		rs[i].Result.NewTopics = nil
+	}
+	return nil
+}
+
+// EntityTopics are the "@<entity id>" topics of an item's linked entities
+// (brands, organisations, public figures, positions, places, events,
+// products, media outlets).
+func EntityTopics(ents []core.Entity) []string {
+	var out []string
+	for _, e := range ents {
+		if e.ID == "" || e.Type == "person_private" || e.Type == "other" {
+			continue
+		}
+		out = append(out, "@"+e.ID)
+	}
+	return out
+}
+
+// addTopics appends topics not yet in the list, up to maxTopics in all.
+func addTopics(list []string, add ...string) []string {
+	for _, t := range add {
+		if len(list) >= maxTopics {
+			break
+		}
+		dup := false
+		for _, x := range list {
+			dup = dup || x == t
+		}
+		if !dup {
+			list = append(list, t)
+		}
+	}
+	return list
+}
+
+// maxTopics caps an item's topics: the model's (up to prompt.MaxTopics),
+// new ones and entity topics.
+const maxTopics = 24
 
 // candidates sends unlinked entity names to the review queue (best effort).
 func (p *Pipeline) candidates(ctx context.Context, rs []store.ItemResult) {
@@ -615,13 +710,13 @@ func (p *Pipeline) RecordModels(ctx context.Context) error {
 		if !r.On() {
 			continue
 		}
-		changed, err := p.Store.RecordModelChange(ctx, n, r.Model, prompt.PromptVersion, p.Tax.Version)
+		changed, err := p.Store.RecordModelChange(ctx, n, r.Model, prompt.PromptVersion, p.Taxonomy().Version)
 		if err != nil {
 			return err
 		}
 		if changed {
 			slog.Info("analysis: route configuration recorded", "route", n, "model", r.Model, "prompt", prompt.PromptVersion,
-				"taxonomy", p.Tax.Version)
+				"taxonomy", p.Taxonomy().Version)
 		}
 	}
 	return nil

@@ -46,6 +46,23 @@ SELECT count(*) AS non_empty,
            AS answered_by_a_duplicate
 FROM comments WHERE text IS NOT NULL AND btrim(text) <> '';
 
+\echo '== authors: activity per author (counts only; tunes the bot thresholds)'
+SELECT count(*) AS authors,
+       percentile_cont(ARRAY[0.5, 0.9, 0.99, 0.999]) WITHIN GROUP (ORDER BY n) AS comments_per_author_p50_90_99_999,
+       max(n) AS max_comments_one_author,
+       count(*) FILTER (WHERE n >= 10) AS authors_with_10_or_more
+FROM (SELECT author_key, count(*) n FROM comments WHERE author_key IS NOT NULL GROUP BY author_key) t;
+SELECT percentile_cont(ARRAY[0.9, 0.99, 0.999]) WITHIN GROUP (ORDER BY n) AS max_comments_in_one_hour_p90_99_999,
+       max(n) AS max_in_one_hour
+FROM (SELECT author_key, max(c) n FROM (SELECT author_key, date_trunc('hour', created_at) h, count(*) c FROM comments
+      WHERE author_key IS NOT NULL AND created_at IS NOT NULL GROUP BY 1, 2) x GROUP BY 1) t;
+SELECT count(*) AS authors_repeating_a_text_in_3_or_more_posts
+FROM (SELECT author_key FROM comments WHERE author_key IS NOT NULL AND char_length(text) >= 15
+      GROUP BY author_key, md5(lower(regexp_replace(btrim(text), '\s+', ' ', 'g'))) HAVING count(DISTINCT post_id) >= 3) t;
+SELECT count(*) AS long_texts_posted_by_5_or_more_authors
+FROM (SELECT 1 FROM comments WHERE char_length(text) >= 30
+      GROUP BY md5(lower(regexp_replace(btrim(text), '\s+', ' ', 'g'))) HAVING count(DISTINCT author_key) >= 5) t;
+
 \echo '== comments per post (percentiles) and per page per week'
 SELECT percentile_cont(ARRAY[0.5, 0.9, 0.99]) WITHIN GROUP (ORDER BY n) AS comments_per_post_p50_90_99, max(n) AS max_per_post
 FROM (SELECT post_id, count(*) n FROM comments GROUP BY post_id) t;

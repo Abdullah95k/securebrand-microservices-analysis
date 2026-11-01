@@ -66,9 +66,12 @@ func (p *Provider) Complete(_ context.Context, req provider.Request) (*provider.
 		r.Refused, r.StopReason = true, "refusal"
 		return r, nil
 	}
-	if len(req.Images) > 0 || req.SchemaName == "media" {
+	switch {
+	case req.SchemaName == "topic_decisions":
+		r.Text = curationAnswer(req)
+	case len(req.Images) > 0 || req.SchemaName == "media":
 		r.Text = mediaAnswer(req)
-	} else {
+	default:
 		r.Text = p.textAnswer(req)
 	}
 	r.Usage = provider.Usage{InputTokens: len(req.User) / 3, CacheReadTokens: len(req.System) / 3, OutputTokens: len(r.Text) / 3}
@@ -133,9 +136,21 @@ func (p *Provider) textAnswer(req provider.Request) string {
 		} else if isLatin(norm) {
 			lng = "en"
 		}
+		// Markers for tests: a missing topic, an ad, a scam.
+		newTopics := []map[string]any{}
+		if strings.Contains(it.Text, "شح المياه") {
+			newTopics = append(newTopics, map[string]any{"en": "Water shortage", "ar": "شح المياه", "parent": "services"})
+		}
+		flags := []string{}
+		if strings.Contains(it.Text, "إعلان") {
+			flags = append(flags, "ad_paid")
+		}
+		if strings.Contains(norm, textnorm.Normalize("نصب")) {
+			flags = append(flags, "fraud_scam")
+		}
 		ans := map[string]any{
 			"i": it.I, "lng": lng, "sent": sent, "score": score, "conf": 80, "ents": ents, "topics": []string{"other"},
-			"intent": intent, "emotion": "none", "tox": "none", "flags": []string{}, "ppl": 0,
+			"new_topics": newTopics, "intent": intent, "emotion": "none", "tox": "none", "flags": flags, "ppl": 0,
 		}
 		if kw {
 			ans["kw"] = []string{"fake"}
@@ -149,8 +164,25 @@ func (p *Provider) textAnswer(req provider.Request) string {
 func mediaAnswer(req provider.Request) string {
 	b, _ := json.Marshal(map[string]any{
 		"logos": []any{}, "ocr": "", "desc": fmt.Sprintf("An image (%d attached).", len(req.Images)), "labels": []string{"image"},
-		"people": 0, "sent": "neutral", "score": 0, "conf": 50, "ents": []any{}, "topics": []string{"other"},
+		"people": 0, "sent": "neutral", "score": 0, "conf": 50, "ents": []any{}, "topics": []string{"other"}, "flags": []string{},
 	})
+	return string(b)
+}
+
+// curationAnswer approves every candidate of a topic curation request.
+func curationAnswer(req provider.Request) string {
+	var cands []struct {
+		ID, EN, AR, Parent string
+	}
+	start, end := strings.Index(req.User, "<candidates>"), strings.LastIndex(req.User, "</candidates>")
+	if start >= 0 && end > start {
+		_ = json.Unmarshal([]byte(strings.TrimSpace(req.User[start+len("<candidates>"):end])), &cands)
+	}
+	ds := []map[string]any{}
+	for _, c := range cands {
+		ds = append(ds, map[string]any{"id": c.ID, "action": "approve", "into": "", "en": c.EN, "ar": c.AR, "parent": c.Parent})
+	}
+	b, _ := json.Marshal(map[string]any{"decisions": ds})
 	return string(b)
 }
 

@@ -106,6 +106,7 @@ type view struct {
 	Intents        []string
 	Emotions       []string
 	Toxicities     []string
+	Legal, Ads     []string
 	Aspects        []string
 	Labeller       string
 	Saved          bool
@@ -137,7 +138,8 @@ func (s *LabelServer) show(w http.ResponseWriter, r *http.Request) {
 	}
 	v := view{I: i, Total: len(s.items), Done: done, Item: s.items[i], Label: s.items[i].Label, Tax: s.Tax, Entities: s.Entities,
 		Langs: prompt.Langs, Dialects: prompt.Dialects, Sentiments: prompt.Sentiments, Types: labelTypes(), Intents: prompt.Intents,
-		Emotions: prompt.Emotions, Toxicities: prompt.Toxicities, Aspects: prompt.Aspects, Labeller: labeller, Saved: r.URL.Query().Get("saved") != ""}
+		Emotions: prompt.Emotions, Toxicities: prompt.Toxicities, Aspects: prompt.Aspects, Labeller: labeller, Saved: r.URL.Query().Get("saved") != "",
+		Legal: prompt.LegalFlags, Ads: []string{"none", "own", "paid", "hidden", "sale"}}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.Execute(w, v); err != nil {
 		slog.Error("label page", "err", err)
@@ -177,7 +179,10 @@ func (s *LabelServer) save(w http.ResponseWriter, r *http.Request) {
 		Sarcasm: r.FormValue("sarcasm") != "", Topics: r.Form["topics"], Intent: r.FormValue("intent"), Emotion: r.FormValue("emotion"),
 		Toxicity: r.FormValue("toxicity"), Spam: r.FormValue("spam") != "", Urgent: r.FormValue("urgent") != "",
 		Unsure: r.FormValue("unsure") != "", Notes: strings.TrimSpace(r.FormValue("notes")), Labeller: strings.TrimSpace(r.FormValue("labeller")),
-		LabelledAt: time.Now().UTC(),
+		LabelledAt: time.Now().UTC(), Legal: r.Form["legal"],
+	}
+	if ad := r.FormValue("ad"); ad != "none" {
+		l.Ad = ad
 	}
 	if len(l.Topics) > prompt.MaxTopics {
 		l.Topics = l.Topics[:prompt.MaxTopics]
@@ -293,7 +298,7 @@ button{font-size:1.1em;padding:8px 22px}
 <td><select name="e{{$k}}_sent">{{range $v.Sentiments}}<option {{if eq $e.Sentiment .}}selected{{end}}>{{.}}</option>{{end}}</select></td>
 <td><select name="e{{$k}}_aspect">{{range $v.Aspects}}<option {{if eq $e.Aspect .}}selected{{end}}>{{.}}</option>{{end}}</select></td>
 </tr>{{end}}</table></fieldset>
-<fieldset><legend>Topics (up to 3; hold Ctrl or Cmd to pick several)</legend>
+<fieldset><legend>Topics (every one that applies; hold Ctrl or Cmd to pick several)</legend>
 <select name="topics" multiple size="14" style="width:100%">
 {{range .Tax.Topics}}<optgroup label="{{.EN}} / {{.AR}}"><option value="{{.ID}}" {{if and $l (has $l.Topics .ID)}}selected{{end}}>{{.ID}} (general)</option>
 {{range .Children}}<option value="{{.ID}}" {{if and $l (has $l.Topics .ID)}}selected{{end}}>{{.EN}} / {{.AR}}</option>{{end}}</optgroup>{{end}}
@@ -304,6 +309,8 @@ Emotion <select name="emotion">{{range .Emotions}}<option {{if and $l (eq $l.Emo
 Toxicity {{range .Toxicities}}<label><input type="radio" name="toxicity" value="{{.}}" {{if and $l (eq $l.Toxicity .)}}checked{{else if and (not $l) (eq . "none")}}checked{{end}}>{{.}}</label>{{end}}
 <label><input type="checkbox" name="spam" {{if and $l $l.Spam}}checked{{end}}>spam</label>
 <label><input type="checkbox" name="urgent" {{if and $l $l.Urgent}}checked{{end}}>urgent</label>
+<br>Advertising {{range .Ads}}<label><input type="radio" name="ad" value="{{.}}" {{if and $l (eq $l.Ad .)}}checked{{else if and $l (eq $l.Ad "") (eq . "none")}}checked{{else if and (not $l) (eq . "none")}}checked{{end}}>{{.}}</label>{{end}}
+<br>Possible legal or policy breach {{range .Legal}}<label><input type="checkbox" name="legal" value="{{.}}" {{if and $l (has $l.Legal .)}}checked{{end}}>{{.}}</label>{{end}}
 </fieldset>
 {{if .Item.ImagePath}}<fieldset><legend>Image</legend>
 Logos (registry ids or names, comma separated) <input type="text" name="logos" size="40" value="{{if $l}}{{join $l.Logos ", "}}{{end}}"><br>

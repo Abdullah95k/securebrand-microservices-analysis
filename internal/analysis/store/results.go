@@ -165,13 +165,14 @@ func (s *Store) writeOne(ctx context.Context, tx pgx.Tx, r *ItemResult, req uuid
 	if _, err := tx.Exec(ctx, `INSERT INTO analysis.analyses (created_at, content_id, version, is_current, purpose, platform, source_id, kind,
 		route, lane, provider, model, prompt_version, taxonomy_version, schema_version, input_hash, fallback, analyzed_at, request_id,
 		lang, dialect, script, code_switch, sentiment, sentiment_score, confidence, calibrated_confidence, intent, emotion, toxicity,
-		spam, sarcasm, urgent, topics, keywords, private_person_mentions, refused, result, cost_usd)
+		spam, sarcasm, urgent, topics, keywords, private_person_mentions, refused, result, cost_usd, ad_type, legal, author_key)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
-		        $31,$32,$33,$34,$35,$36,$37,$38,$39)`,
+		        $31,$32,$33,$34,$35,$36,$37,$38,$39,NULLIF($40,''),$41,$42)`,
 		it.CreatedAt, it.ContentID, version, !r.Audit, purpose, it.Platform, it.SourceID, it.Kind,
 		r.Route, p.Lane, p.Provider, p.Model, p.PromptVersion, p.TaxonomyVersion, p.SchemaVersion, r.InputHash, p.Fallback, p.AnalyzedAt, reqID,
 		x.Lang, x.Dialect, x.Script, x.CodeSwitch, x.Sentiment, x.Score, x.Confidence, x.CalibratedConfidence, x.Intent, x.Emotion, x.Toxicity,
-		x.Spam, x.Sarcasm, x.Urgent, x.Topics, x.Keywords, x.PrivatePersonMentions, x.Refused, res, r.CostUSD); err != nil {
+		x.Spam, x.Sarcasm, x.Urgent, x.Topics, x.Keywords, x.PrivatePersonMentions, x.Refused, res, r.CostUSD,
+		x.AdType, nilIfNone(x.Legal), nilIfEmptyBytes(it.AuthorKey)); err != nil {
 		return false, false, err
 	}
 	if r.Audit {
@@ -202,6 +203,9 @@ func (s *Store) writeOne(ctx context.Context, tx pgx.Tx, r *ItemResult, req uuid
 		return false, false, err
 	}
 	ev := ItemEvent(it, &x, &p, r.Route, r.InputHash, version)
+	if ev.AuthorBot, err = authorBot(ctx, tx, it.Platform, it.AuthorKey); err != nil {
+		return false, false, err
+	}
 	if err := outbox(ctx, tx, topics.AnalysisResult, it.ContentID, ev); err != nil {
 		return false, false, err
 	}
@@ -269,6 +273,8 @@ func ItemEvent(it *core.Item, x *core.Result, p *core.Provenance, route string, 
 		Spam:     x.Spam, Sarcasm: x.Sarcasm, Urgent: x.Urgent,
 		PrivatePersonMentions: int32(x.PrivatePersonMentions),
 		Refused:               x.Refused,
+		AdType:                x.AdType,
+		Legal:                 x.Legal,
 		Provenance: &analysisv1.Provenance{Provider: p.Provider, Model: p.Model, PromptVersion: p.PromptVersion,
 			TaxonomyVersion: p.TaxonomyVersion, SchemaVersion: p.SchemaVersion, Route: route, Lane: p.Lane,
 			AnalyzedAt: timestamppb.New(p.AnalyzedAt), InputHash: inputHash, AnalysisVersion: uint32(version),
@@ -289,6 +295,14 @@ func outbox(ctx context.Context, tx pgx.Tx, topic, key string, msg proto.Message
 	_, err = tx.Exec(ctx, `INSERT INTO analysis.outbox (topic, key, type, payload) VALUES ($1, $2, $3, $4)`,
 		topic, key, string(proto.MessageName(msg)), b)
 	return err
+}
+
+// nilIfNone stores an empty list as NULL (no flag).
+func nilIfNone(xs []string) []string {
+	if len(xs) == 0 {
+		return nil
+	}
+	return xs
 }
 
 func orDefault(s, d string) string {

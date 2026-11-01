@@ -9,6 +9,8 @@
 //	sb-analysis replay-failed [--route r]
 //	sb-analysis agent-role --client c --name "Client" --role sb_agent_c --password-file f
 //	sb-analysis rollups recompute --day 2026-11-01
+//	sb-analysis topics list | approve | rename | merge | reject | curate | import
+//	sb-analysis authors list | mark --key k --as bot|human|none | score
 package main
 
 import (
@@ -64,6 +66,10 @@ func main() {
 		err = agentRoleCmd(args)
 	case "rollups":
 		err = rollupsCmd(args)
+	case "topics":
+		err = topicsCmd(args)
+	case "authors":
+		err = authorsCmd(args)
 	case "help", "-h", "--help":
 		fmt.Println(usage)
 		return
@@ -76,7 +82,7 @@ func main() {
 	}
 }
 
-const usage = `usage: sb-analysis [run|migrate|entities|sources|reanalyze|replay-failed|agent-role|rollups] [flags]
+const usage = `usage: sb-analysis [run|migrate|entities|sources|reanalyze|replay-failed|agent-role|rollups|topics|authors] [flags]
   run            run the service (--roles ingest,pipeline,media,relay,rollup; default all)
   migrate        apply the analysis migrations
   entities       import [--file f] | review [--min-seen n] | resolve --norm n --type t --action accept|merge|reject [--entity-id id] [--name n]
@@ -85,7 +91,10 @@ const usage = `usage: sb-analysis [run|migrate|entities|sources|reanalyze|replay
   reanalyze      --since 2026-10-01 --until ... --platform --source --entity --model --taxonomy-not --sample 0.1 --limit n --route r [--dry-run] [--max-usd n]
   replay-failed  [--route r] [--limit n]
   agent-role     --client id --name "Name" --role sb_agent_x --password-file /run/secrets/f
-  rollups        recompute --day YYYY-MM-DD`
+  rollups        recompute --day YYYY-MM-DD
+  topics         list [--status candidate|active|merged|rejected|all] [--min-seen n] | approve --id t [--en --ar --parent p]
+                 | rename --id t --en .. --ar .. | merge --from t --into t | reject --id t | curate | import --file f.yaml
+  authors        list [--all] [--limit n] | mark --key hex --as bot|human|none [--platform facebook] | score`
 
 // withApp loads the config (flags parsed into fs first), opens the
 // analysis database and runs fn.

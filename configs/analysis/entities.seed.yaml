@@ -4,8 +4,9 @@
 # replaces it. Aliases are matched after normalisation (alef/yaa/taa forms,
 # diacritics, clitics و/ب/ل/ال). Never alias a common word: "زين" alone means
 # "good" in Iraqi Arabic, so Zain Iraq is aliased only in longer forms.
-# Only public organisations and places here; public figures are added by
-# review (docs/design/analysis-service.md, people policy).
+# Only public organisations, positions and places here; public figures are
+# added by review (docs/design/analysis-service.md, people policy).
+# Positions are offices, independent of who holds them.
 entities:
   # Telecom and internet
   - {id: asiacell, name: Asiacell, name_ar: آسياسيل, type: brand, aliases: [آسياسيل, اسياسيل, آسيا سيل, اسيا سيل, asiacell, asia cell, asiasell, asyasel]}
@@ -36,6 +37,21 @@ entities:
   - {id: ministry-electricity, name: Ministry of Electricity, name_ar: وزارة الكهرباء, type: organization, aliases: [وزارة الكهرباء, ministry of electricity]}
   - {id: ministry-health, name: Ministry of Health, name_ar: وزارة الصحة, type: organization, aliases: [وزارة الصحة, ministry of health]}
   - {id: ministry-education, name: Ministry of Education, name_ar: وزارة التربية, type: organization, aliases: [وزارة التربية, ministry of education]}
+  # Positions (offices)
+  - {id: pos-iraq-pm, name: Prime Minister of Iraq, name_ar: رئيس مجلس الوزراء, type: position, aliases: [رئيس الوزراء, رئيس مجلس الوزراء, رئيس الحكومة, رئيس الوزراء العراقي, iraqi prime minister, iraq pm, prime minister of iraq]}
+  - {id: pos-iraq-president, name: President of Iraq, name_ar: رئيس الجمهورية, type: position, aliases: [رئيس الجمهورية, رئيس جمهورية العراق, president of iraq, iraqi president]}
+  - {id: pos-iraq-speaker, name: Speaker of the Council of Representatives, name_ar: رئيس مجلس النواب, type: position, aliases: [رئيس مجلس النواب, رئيس البرلمان, speaker of parliament, parliament speaker]}
+  - {id: pos-cbi-governor, name: Governor of the Central Bank of Iraq, name_ar: محافظ البنك المركزي, type: position, aliases: [محافظ البنك المركزي, محافظ البنك المركزي العراقي, cbi governor]}
+  - {id: pos-minister-electricity, name: Minister of Electricity, name_ar: وزير الكهرباء, type: position, aliases: [وزير الكهرباء, minister of electricity]}
+  - {id: pos-minister-oil, name: Minister of Oil, name_ar: وزير النفط, type: position, aliases: [وزير النفط, minister of oil]}
+  - {id: pos-minister-health, name: Minister of Health, name_ar: وزير الصحة, type: position, aliases: [وزير الصحة, minister of health]}
+  - {id: pos-minister-education, name: Minister of Education, name_ar: وزير التربية, type: position, aliases: [وزير التربية, minister of education]}
+  - {id: pos-minister-interior, name: Minister of Interior, name_ar: وزير الداخلية, type: position, aliases: [وزير الداخلية, minister of interior]}
+  - {id: pos-minister-finance, name: Minister of Finance, name_ar: وزير المالية, type: position, aliases: [وزير المالية, minister of finance]}
+  - {id: pos-minister-communications, name: Minister of Communications, name_ar: وزير الاتصالات, type: position, aliases: [وزير الاتصالات, minister of communications]}
+  - {id: pos-krg-pm, name: Prime Minister of the Kurdistan Region, name_ar: رئيس حكومة إقليم كردستان, type: position, aliases: [رئيس حكومة اقليم كردستان, رئيس حكومة الاقليم, krg prime minister]}
+  - {id: pos-governor-baghdad, name: Governor of Baghdad, name_ar: محافظ بغداد, type: position, aliases: [محافظ بغداد, governor of baghdad]}
+  - {id: pos-governor-basra, name: Governor of Basra, name_ar: محافظ البصرة, type: position, aliases: [محافظ البصرة, governor of basra]}
   # Places (governorates)
   - {id: baghdad, name: Baghdad, name_ar: بغداد, type: place, aliases: [بغداد, baghdad]}
   - {id: basra, name: Basra, name_ar: البصرة, type: place, aliases: [البصرة, بصرة, basra, basrah]}

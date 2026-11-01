@@ -15,10 +15,14 @@ import (
 
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/adapter"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/ametrics"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/bots"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/core"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/curate"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/entities"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/ingest"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/media"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/pipeline"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/provider"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/provider/registry"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/relay"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/store"
@@ -40,6 +44,9 @@ type App struct {
 	Kafka    kafka.ClientConfig
 	S3       *minio.Client
 	Producer *kafka.Producer
+	// File is the taxonomy file: the fixed list, or the seed of the
+	// dynamic one.
+	File *taxonomy.Taxonomy
 }
 
 // New wires the store, providers, taxonomy, registry and pipeline. db must
@@ -64,7 +71,7 @@ func New(ctx context.Context, cfg *config.Config, db *pgxpool.Pool, kc kafka.Cli
 		return nil, err
 	}
 	p := pipeline.New(st, providers, tax, a, calib)
-	return &App{Cfg: cfg, DB: db, Store: st, Pipeline: p, Kafka: kc}, nil
+	return &App{Cfg: cfg, DB: db, Store: st, Pipeline: p, Kafka: kc, File: tax}, nil
 }
 
 // Prepare migrates, seeds the registry when empty, creates the partitions
@@ -84,10 +91,48 @@ func (a *App) Prepare(ctx context.Context, migrate bool) error {
 	} else if seeded {
 		slog.Info("analysis: entity registry seeded", "entities", len(seed.Entities))
 	}
+	if a.Cfg.Analysis.Topics.Dynamic {
+		if seeded, err := a.Store.SeedTopicsIfEmpty(ctx, a.File); err != nil {
+			return err
+		} else if seeded {
+			slog.Info("analysis: topic list seeded", "version", a.File.Version, "topics", a.File.Len())
+		}
+	}
 	if err := a.Store.EnsureWindow(ctx, time.Now(), 1, 2); err != nil {
 		return err
 	}
+	if err := a.RefreshTaxonomy(ctx); err != nil {
+		return err
+	}
 	return a.RefreshEntities(ctx)
+}
+
+// RefreshTaxonomy loads the latest version of the dynamic topic list.
+func (a *App) RefreshTaxonomy(ctx context.Context) error {
+	if !a.Cfg.Analysis.Topics.Dynamic {
+		return nil
+	}
+	tax, err := a.Store.LoadTaxonomy(ctx)
+	if err != nil {
+		return err
+	}
+	a.Pipeline.SetTaxonomy(tax)
+	return nil
+}
+
+// Curator returns the topic curation job.
+func (a *App) Curator() *curate.Curator {
+	return &curate.Curator{Store: a.Store, Providers: a.Pipeline.Providers, Pricing: provider.Pricing(a.Cfg.Analysis.Pricing),
+		Cfg: a.Cfg.Analysis.Topics, Taxonomy: a.Pipeline.Taxonomy}
+}
+
+// ScoreBots scores the authors active in the window.
+func (a *App) ScoreBots(ctx context.Context) (store.BotRun, error) {
+	b := a.Cfg.Analysis.Bots
+	t := bots.Thresholds{Suspected: b.SuspectedScore, Likely: b.LikelyScore}
+	return a.Store.ScoreAuthors(ctx, b.Window, b.MinItems, b.CoordinationAuthors, func(s core.AuthorSignals) (int, string, []string) {
+		return bots.Score(s, t)
+	})
 }
 
 // RefreshEntities reloads the registry snapshot.
@@ -147,6 +192,8 @@ func (a *App) Components(roles []string) ([]func(context.Context) error, error) 
 			rl := &relay.Relay{Store: a.Store, Producer: a.Producer}
 			fns = append(fns, rl.Run)
 		case "rollup":
+			// The scheduled jobs: rollups, topic curation, bot scoring
+			// (each takes a database lock, so replicas do not overlap).
 			fns = append(fns, func(ctx context.Context) error {
 				return Every(ctx, "rollups", cfg.Rollups.Every, func(ctx context.Context) error {
 					n, err := a.Store.RecomputeDirtyDays(ctx, 50, 30*time.Second)
@@ -154,13 +201,35 @@ func (a *App) Components(roles []string) ([]func(context.Context) error, error) 
 					return err
 				})
 			})
+			if cfg.Topics.Dynamic {
+				cur := a.Curator()
+				fns = append(fns, func(ctx context.Context) error {
+					return Every(ctx, "topic-curation", cfg.Topics.CurateEvery, func(ctx context.Context) error {
+						_, err := cur.Run(ctx)
+						return err
+					})
+				})
+			}
+			if cfg.Bots.Enabled {
+				fns = append(fns, func(ctx context.Context) error {
+					return Every(ctx, "bot-scoring", cfg.Bots.Every, func(ctx context.Context) error {
+						run, err := a.ScoreBots(ctx)
+						if err == nil {
+							slog.Info("analysis: authors scored", "scored", run.Scored, "flagged", run.Flagged, "changed", run.Changed)
+						}
+						return err
+					})
+				})
+			}
 		default:
 			return nil, fmt.Errorf("unknown role %q (want %s)", r, strings.Join(Roles, ", "))
 		}
 	}
-	// Every role reads the registry: refresh it.
+	// Every role reads the registry and the topic list: refresh them.
 	fns = append(fns, func(ctx context.Context) error {
-		return Every(ctx, "entities", time.Minute, a.RefreshEntities)
+		return Every(ctx, "entities", time.Minute, func(ctx context.Context) error {
+			return errors.Join(a.RefreshTaxonomy(ctx), a.RefreshEntities(ctx))
+		})
 	})
 	return fns, nil
 }

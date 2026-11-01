@@ -180,9 +180,16 @@ func (s *Store) ResolveCandidate(ctx context.Context, norm, typ, action, entityI
 				VALUES ($1, $2, $3, 'discovered') ON CONFLICT DO NOTHING`, norm, entityID, surface); err != nil {
 				return err
 			}
-			// Earlier unlinked mentions of the name now point at the entity.
+			// Earlier unlinked mentions of the name now point at the entity,
+			// and their items are about it ("@<entity>" topic).
 			if _, err := tx.Exec(ctx, `UPDATE analysis.entity_mentions SET entity_id = $1 WHERE entity_id IS NULL
 				AND analysis.ar_normalize(lower(name)) = analysis.ar_normalize(lower($2))`, entityID, surface); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE analysis.analyses a SET topics = analysis.topics_replace(coalesce(a.topics, '{}') || ('@' || $1), NULL, NULL)
+				FROM (SELECT DISTINCT created_at, content_id FROM analysis.entity_mentions WHERE entity_id = $1 AND content_id NOT LIKE 'media:%') m
+				WHERE a.created_at = m.created_at AND a.content_id = m.content_id AND a.is_current
+				  AND NOT coalesce(a.topics, '{}') @> ARRAY['@' || $1]`, entityID); err != nil {
 				return err
 			}
 			if _, err := tx.Exec(ctx, `INSERT INTO analysis.rollup_dirty (day)
@@ -213,6 +220,8 @@ func (s *Store) MergeEntity(ctx context.Context, from, into string) error {
 			{`INSERT INTO analysis.rollup_dirty (day) SELECT DISTINCT day FROM analysis.entity_mentions WHERE entity_id = $1
 			  ON CONFLICT (day) DO UPDATE SET marked_at = now()`, one},
 			{`UPDATE analysis.entity_mentions SET entity_id = $2 WHERE entity_id = $1`, two},
+			{`UPDATE analysis.analyses SET topics = analysis.topics_replace(topics, '@' || $1, '@' || $2) WHERE topics @> ARRAY['@' || $1]`, two},
+			{`UPDATE analysis.entity_mentions SET topics = analysis.topics_replace(topics, '@' || $1, '@' || $2) WHERE topics @> ARRAY['@' || $1]`, two},
 			{`INSERT INTO analysis.entity_aliases (alias_norm, entity_id, alias, source)
 			  SELECT alias_norm, $2, alias, source FROM analysis.entity_aliases WHERE entity_id = $1 ON CONFLICT DO NOTHING`, two},
 			{`DELETE FROM analysis.entity_aliases WHERE entity_id = $1`, one},

@@ -17,7 +17,7 @@ import (
 )
 
 // Entity types the registry and the model use.
-var Types = []string{"brand", "product", "organization", "person_public", "person_private", "place", "event", "media_outlet", "other"}
+var Types = []string{"brand", "product", "organization", "person_public", "person_private", "position", "place", "event", "media_outlet", "other"}
 
 // Entity is a canonical entity.
 type Entity struct {

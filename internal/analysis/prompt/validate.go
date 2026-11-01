@@ -15,14 +15,16 @@ import (
 
 // Limits applied to every answer.
 const (
-	MaxTopics    = 3
-	MaxKeywords  = 5
-	MaxEntities  = 12
-	maxNameRunes = 80
-	maxKwRunes   = 40
-	maxOCRRunes  = 500
-	maxDescRunes = 300
-	maxLabels    = 8
+	MaxTopics     = 10
+	MaxNewTopics  = 3
+	MaxKeywords   = 5
+	MaxEntities   = 12
+	maxNameRunes  = 80
+	maxKwRunes    = 40
+	maxOCRRunes   = 500
+	maxDescRunes  = 300
+	maxLabels     = 8
+	maxTopicRunes = 60
 )
 
 // ErrInvalidJSON means the answer is not the JSON object the schema asks
@@ -46,12 +48,19 @@ type itemOut struct {
 	Conf    float64     `json:"conf"`
 	Ents    []entityOut `json:"ents"`
 	Topics  []string    `json:"topics"`
+	New     []newTopic  `json:"new_topics"`
 	KW      []string    `json:"kw"`
 	Intent  string      `json:"intent"`
 	Emotion string      `json:"emotion"`
 	Tox     string      `json:"tox"`
 	Flags   []string    `json:"flags"`
 	PPL     int         `json:"ppl"`
+}
+
+type newTopic struct {
+	EN     string `json:"en"`
+	AR     string `json:"ar"`
+	Parent string `json:"parent"`
 }
 
 // Problems counts what validation had to repair or drop, for metrics.
@@ -150,9 +159,12 @@ func toResult(o itemOut, tax *taxonomy.Taxonomy, reg *entities.Registry, p *Prob
 		case "urgent":
 			r.Urgent = true
 		default:
-			p.FixedValues++
+			if !legalOrAd(f, &r.Legal, &r.AdType) {
+				p.FixedValues++
+			}
 		}
 	}
+	r.NewTopics = NewTopics(o.New, tax)
 	r.CalibratedConfidence = r.Confidence
 	r.PrivatePersonMentions = max(o.PPL, 0)
 	r.Topics = Topics(o.Topics, tax, p)
@@ -165,6 +177,45 @@ func toResult(o itemOut, tax *taxonomy.Taxonomy, reg *entities.Registry, p *Prob
 	}
 	r.Entities, r.PrivatePersonMentions = Entities(o.Ents, reg, r.PrivatePersonMentions, p)
 	return r
+}
+
+// adRank orders ad types when the model lists several: the most specific
+// (undisclosed, then paid) wins.
+var adRank = map[string]int{"hidden": 4, "paid": 3, "own": 2, "sale": 1}
+
+// legalOrAd records an ad or legal flag; false for an unknown flag.
+func legalOrAd(f string, legal *[]string, ad *string) bool {
+	if oneOf(f, AdFlags) {
+		if t := strings.TrimPrefix(f, "ad_"); adRank[t] > adRank[*ad] {
+			*ad = t
+		}
+		return true
+	}
+	if oneOf(f, LegalFlags) {
+		if !oneOf(f, *legal) {
+			*legal = append(*legal, f)
+		}
+		return true
+	}
+	return false
+}
+
+// NewTopics keeps well-formed proposals (a name, a top-level parent), at
+// most MaxNewTopics, names trimmed.
+func NewTopics(in []newTopic, tax *taxonomy.Taxonomy) []core.TopicProposal {
+	var out []core.TopicProposal
+	for _, n := range in {
+		en, ar := cut(strings.TrimSpace(n.EN), maxTopicRunes), cut(strings.TrimSpace(n.AR), maxTopicRunes)
+		if en == "" && ar == "" || len(out) >= MaxNewTopics {
+			continue
+		}
+		parent := n.Parent
+		if !oneOf(parent, tax.TopIDs()) {
+			parent = "other"
+		}
+		out = append(out, core.TopicProposal{EN: en, AR: ar, Parent: parent})
+	}
+	return out
 }
 
 // percent turns a whole-number score (-100..100) or confidence (0..100)
@@ -281,6 +332,7 @@ func ParseMedia(raw string, tax *taxonomy.Taxonomy, reg *entities.Registry) (cor
 		Conf   float64     `json:"conf"`
 		Ents   []entityOut `json:"ents"`
 		Topics []string    `json:"topics"`
+		Flags  []string    `json:"flags"`
 	}
 	if err := json.Unmarshal([]byte(js), &o); err != nil {
 		return core.MediaResult{}, p, fmt.Errorf("%w: %w", ErrInvalidJSON, err)
@@ -322,6 +374,11 @@ func ParseMedia(raw string, tax *taxonomy.Taxonomy, reg *entities.Registry) (cor
 		r.Logos = append(r.Logos, core.Logo{ID: id, Name: cut(name, maxNameRunes), Confidence: clamp(percent(l.Conf), 0, 1, &p)})
 	}
 	r.Entities, _ = Entities(o.Ents, reg, 0, &p)
+	for _, f := range o.Flags {
+		if !legalOrAd(f, &r.Legal, &r.AdType) {
+			p.FixedValues++
+		}
+	}
 	return r, p, nil
 }
 
