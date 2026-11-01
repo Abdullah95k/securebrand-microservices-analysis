@@ -317,3 +317,82 @@ func TestRegistryAndCandidates(t *testing.T) {
 		t.Fatalf("alias moved: %q", reg.Link("", "شركة نجمة"))
 	}
 }
+
+func TestReanalysisAndEscalationVersions(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	at := time.Now().UTC().Add(-time.Hour)
+	it := comment("fb:comment:5", "اسياسيل", at, "a5")
+	if _, err := s.Ingest(ctx, []*core.Item{it}, plan); err != nil {
+		t.Fatal(err)
+	}
+	write := func(route, model string) WriteStats {
+		t.Helper()
+		ws, err := s.WriteResults(ctx, []ItemResult{{Item: *it, Route: route, InputHash: it.InputHash(), Result: core.Result{Sentiment: "neutral"},
+			Prov: core.Provenance{Provider: "p", Model: model, PromptVersion: "p1", TaxonomyVersion: "t1", AnalyzedAt: time.Now()}}}, RequestOutcome{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ws
+	}
+	if ws := write(core.RouteComment, "m1"); ws.Written != 1 {
+		t.Fatal("first analysis")
+	}
+	if ws := write(core.RouteComment, "m1"); ws.Duplicate != 1 {
+		t.Fatal("a re-polled result must be a duplicate")
+	}
+	// A model switch (re-analysis on the same route) writes a new version.
+	if ws := write(core.RouteComment, "m2"); ws.Written != 1 {
+		t.Fatalf("re-analysis with another model dropped: %+v", ws)
+	}
+	if ws := write(core.RouteEscalation, "strong"); ws.Written != 1 {
+		t.Fatal("escalation")
+	}
+	// A late primary result never replaces the escalated one.
+	if ws := write(core.RouteComment, "m3"); ws.Duplicate != 1 {
+		t.Fatalf("late comment result replaced the escalation: %+v", ws)
+	}
+	var model string
+	var version int
+	if err := s.DB.QueryRow(ctx, `SELECT model, version FROM analysis.analyses WHERE content_id = $1 AND is_current`, it.ContentID).Scan(&model, &version); err != nil {
+		t.Fatal(err)
+	}
+	if model != "strong" || version != 3 {
+		t.Fatalf("current = %s v%d, want strong v3", model, version)
+	}
+}
+
+func TestAuthorErasureRemovesMediaMentions(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	at := time.Now().UTC().Add(-time.Hour)
+	it := comment("fb:comment:7", "صورة", at, "author-z")
+	if _, err := s.Ingest(ctx, []*core.Item{it}, plan); err != nil {
+		t.Fatal(err)
+	}
+	job := core.MediaJob{MediaID: "m7", OwnerContentID: it.ContentID, Platform: "facebook", SourceID: "fb:page:1", Kind: "comment_photo",
+		Bucket: "b", Key: "k", AckFormat: "fb"}
+	if _, err := s.InsertMediaJobs(ctx, []*core.MediaJob{&job}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishMedia(ctx, MediaResult{Job: job, OwnerTime: at, Consumer: "analysis",
+		Result: core.MediaResult{Sentiment: "neutral", Logos: []core.Logo{{ID: "asiacell", Name: "Asiacell", Confidence: 0.9}}},
+		Prov:   core.Provenance{Provider: "p", Model: "m", AnalyzedAt: time.Now()}}); err != nil {
+		t.Fatal(err)
+	}
+	// Re-analysis under another owner time replaces, never duplicates.
+	if err := s.FinishMedia(ctx, MediaResult{Job: job, OwnerTime: at.Add(time.Hour), Consumer: "analysis",
+		Result: core.MediaResult{Sentiment: "neutral", Logos: []core.Logo{{ID: "asiacell", Name: "Asiacell", Confidence: 0.9}}},
+		Prov:   core.Provenance{Provider: "p", Model: "m", AnalyzedAt: time.Now()}}); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.entity_mentions WHERE content_id = 'media:m7'`); n != 1 {
+		t.Fatalf("media mentions %d, want 1", n)
+	}
+	if _, err := s.Erase(ctx, core.Erasure{RequestID: "r7", Subject: "author", AuthorKey: []byte("author-z")}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.entity_mentions WHERE content_id = 'media:m7'`); n != 0 {
+		t.Fatal("erased author's media mentions remain")
+	}
+}

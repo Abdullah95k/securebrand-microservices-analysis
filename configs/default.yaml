@@ -416,7 +416,8 @@ analysis:
   media:
     enabled: true
     consumer: analysis     # must match media.required_consumers
-    kinds: [photo, video, reel, comment_photo, comment_video, cover]
+    # Facebook kinds, and the canonical image/video of content.media.ready.v1.
+    kinds: [photo, video, reel, comment_photo, comment_video, cover, image]
     workers: 4
     max_bytes: 524288000
     image_max_side: 1024

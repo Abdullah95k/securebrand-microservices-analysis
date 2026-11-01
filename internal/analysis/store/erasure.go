@@ -102,7 +102,16 @@ func (s *Store) Erase(ctx context.Context, e core.Erasure, consumer string) (map
 			for i, k := range keys {
 				ids[i] = k.contentID
 			}
-			tag, err := tx.Exec(ctx, `DELETE FROM analysis.media_analyses WHERE owner_content_id = ANY($1)`, ids)
+			// Logos and entities seen in the author's media are stored as
+			// mentions of "media:<id>": remove them too.
+			tag, err := tx.Exec(ctx, `DELETE FROM analysis.entity_mentions WHERE content_id IN (
+				SELECT 'media:' || media_id FROM analysis.media_analyses WHERE owner_content_id = ANY($1)
+				UNION SELECT 'media:' || media_id FROM analysis.media_jobs WHERE owner_content_id = ANY($1))`, ids)
+			if err != nil {
+				return err
+			}
+			stats["media_mentions"] = tag.RowsAffected()
+			tag, err = tx.Exec(ctx, `DELETE FROM analysis.media_analyses WHERE owner_content_id = ANY($1)`, ids)
 			if err != nil {
 				return err
 			}

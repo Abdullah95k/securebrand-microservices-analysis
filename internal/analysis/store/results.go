@@ -135,8 +135,14 @@ func (s *Store) writeOne(ctx context.Context, tx pgx.Tx, r *ItemResult, req uuid
 		if exists {
 			return false, true, s.dequeue(ctx, tx, it.ContentID, r.Route, req)
 		}
-	} else if bytes.Equal(analyzedHash, r.InputHash) && analyzedRoute != nil && *analyzedRoute == r.Route {
-		return false, true, s.dequeue(ctx, tx, it.ContentID, r.Route, req)
+	} else if bytes.Equal(analyzedHash, r.InputHash) && analyzedRoute != nil {
+		dup, err := s.duplicate(ctx, tx, r, *analyzedRoute)
+		if err != nil {
+			return false, false, err
+		}
+		if dup {
+			return false, true, s.dequeue(ctx, tx, it.ContentID, r.Route, req)
+		}
 	}
 	version++
 	res, err := json.Marshal(r.Result)
@@ -207,6 +213,30 @@ func (s *Store) writeOne(ctx context.Context, tx pgx.Tx, r *ItemResult, req uuid
 		}
 	}
 	return true, false, s.dequeue(ctx, tx, it.ContentID, r.Route, req)
+}
+
+// duplicate reports whether a result for an already analysed input adds
+// nothing: the current analysis came from the same route, model, prompt and
+// taxonomy (a re-polled batch), or it is an escalation that a late
+// comment/post result must not replace. A re-analysis with another model,
+// prompt or taxonomy is not a duplicate.
+func (s *Store) duplicate(ctx context.Context, tx pgx.Tx, r *ItemResult, curRoute string) (bool, error) {
+	if curRoute == core.RouteEscalation && (r.Route == core.RouteComment || r.Route == core.RoutePost) {
+		return true, nil
+	}
+	if curRoute != r.Route {
+		return false, nil
+	}
+	var model, promptV, taxV string
+	err := tx.QueryRow(ctx, `SELECT model, prompt_version, taxonomy_version FROM analysis.analyses
+		WHERE created_at = $1 AND content_id = $2 AND is_current`, r.Item.CreatedAt, r.Item.ContentID).Scan(&model, &promptV, &taxV)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return model == r.Prov.Model && promptV == r.Prov.PromptVersion && taxV == r.Prov.TaxonomyVersion, nil
 }
 
 // dequeue removes the item's queue entry of this request. An entry reset by

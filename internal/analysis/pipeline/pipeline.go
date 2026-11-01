@@ -488,7 +488,9 @@ func (p *Pipeline) RunGroup(ctx context.Context, g group, lane string) error {
 		ametrics.Requests.WithLabelValues(s.provider, s.model, lane, "error").Inc()
 		ametrics.ItemsFailed.WithLabelValues(g.route, "error").Add(float64(len(g.items)))
 		if errors.Is(err, context.Canceled) {
-			return p.Store.ReleaseUnsent(context.WithoutCancel(ctx), ids(g.items), g.route, 0)
+			// Shutting down: close the request (its estimate must not count
+			// against the budget) and return the items without an attempt.
+			return p.Store.AbortRequests(context.WithoutCancel(ctx), []uuid.UUID{s.id}, "cancelled", 0)
 		}
 		return p.Store.FailRequest(ctx, s.id, err.Error(), p.Cfg.Limits.MaxAttempts)
 	}

@@ -43,26 +43,26 @@ func (p *Pipeline) RunRealtime(ctx context.Context) error {
 // routes; it returns the items processed.
 func (p *Pipeline) RealtimeOnce(ctx context.Context) (int, error) {
 	total := 0
+	// A failing route must not hold the others back: every route gets its
+	// round, errors are reported together.
+	var errs []error
 	for _, route := range routeOrder {
 		if rc, ok := p.Cfg.Routes[route]; !ok || !rc.On() {
 			continue
 		}
 		claimed, err := p.Store.Claim(ctx, core.LaneRealtime, route, p.Cfg.Grouping.MaxItems*2, p.Cfg.Realtime.Lease, p.Cfg.Realtime.Wait)
 		if err != nil {
-			return total, err
+			errs = append(errs, err)
+			continue
 		}
-		var errs []error
 		for _, g := range p.Groups(route, claimed) {
 			if err := p.RunGroup(ctx, g, core.LaneRealtime); err != nil {
 				errs = append(errs, err)
 			}
 			total += len(g.items)
 		}
-		if err := errors.Join(errs...); err != nil {
-			return total, err
-		}
 	}
-	return total, nil
+	return total, errors.Join(errs...)
 }
 
 // RunBatch submits batch-lane items every batch.submit_every and polls

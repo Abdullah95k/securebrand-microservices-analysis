@@ -64,6 +64,18 @@ type Worker struct {
 	Cfg     config.AnalysisMedia
 	kinds   map[string]bool
 	once    sync.Once
+
+	promptOnce sync.Once
+	system     string
+	schema     map[string]any
+}
+
+// prompts builds the static media prompt and schema once.
+func (w *Worker) prompts() (string, map[string]any) {
+	w.promptOnce.Do(func() {
+		w.system, w.schema = prompt.MediaSystem(w.P.Tax), prompt.MediaSchema(w.P.Tax)
+	})
+	return w.system, w.schema
 }
 
 func (w *Worker) analysed(kind string) bool {
@@ -215,13 +227,14 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	for _, m := range reg.Find(hintText) {
 		hints = append(hints, prompt.Hint{ID: m.EntityID, Name: m.Name})
 	}
+	system, schema := w.prompts()
 	req := provider.Request{
 		ID:         uuid.NewString(),
 		Model:      rc.Model,
-		System:     prompt.MediaSystem(w.P.Tax),
+		System:     system,
 		User:       prompt.MediaUser(mask(textnorm.Truncate(postText, 1000)), hints, mask(transcript), len(images)),
 		Images:     images,
-		Schema:     prompt.MediaSchema(w.P.Tax),
+		Schema:     schema,
 		SchemaName: "media",
 		MaxTokens:  rc.MaxTokens,
 		Effort:     rc.Effort,

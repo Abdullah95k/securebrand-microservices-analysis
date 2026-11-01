@@ -137,7 +137,11 @@ func (s *Store) FinishMedia(ctx context.Context, r MediaResult) error {
 		// Logos and entities become mentions of the media item itself, so
 		// they count in the entity rollups with the owner's source.
 		mediaContent := "media:" + j.MediaID
-		if _, err := tx.Exec(ctx, `DELETE FROM analysis.entity_mentions WHERE created_at = $1 AND content_id = $2`, r.OwnerTime, mediaContent); err != nil {
+		// Earlier mentions of this media, whatever owner time they were
+		// stored under; their days are rebuilt.
+		if _, err := tx.Exec(ctx, `WITH d AS (DELETE FROM analysis.entity_mentions WHERE content_id = $1 RETURNING day)
+			INSERT INTO analysis.rollup_dirty (day) SELECT DISTINCT day FROM d ON CONFLICT (day) DO UPDATE SET marked_at = now()`,
+			mediaContent); err != nil {
 			return err
 		}
 		origin := "image"

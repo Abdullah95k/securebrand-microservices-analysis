@@ -21,6 +21,7 @@ import (
 	"github.com/abdullah95k/securebrand-microservices/internal/fb/ratelimit"
 	"github.com/abdullah95k/securebrand-microservices/internal/platform/kafka"
 	"github.com/abdullah95k/securebrand-microservices/internal/platform/metrics"
+	"github.com/abdullah95k/securebrand-microservices/internal/platform/run"
 	"github.com/abdullah95k/securebrand-microservices/internal/store"
 	"github.com/abdullah95k/securebrand-microservices/internal/topics"
 )
@@ -29,18 +30,7 @@ func taskLane(l int16) taskv1.Lane { return taskv1.Lane(l) }
 
 // Every runs fn every interval until ctx is done, logging errors.
 func Every(ctx context.Context, name string, interval time.Duration, fn func(context.Context) error) error {
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		if err := fn(ctx); err != nil && ctx.Err() == nil {
-			slog.Warn("scheduler: loop failed", "loop", name, "err", err)
-		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-t.C:
-		}
-	}
+	return run.Every(ctx, name, interval, fn)
 }
 
 // Planner enqueues scheduled re-scrapes of registered pages, with the

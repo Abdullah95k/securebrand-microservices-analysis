@@ -25,6 +25,7 @@ import (
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/taxonomy"
 	"github.com/abdullah95k/securebrand-microservices/internal/config"
 	"github.com/abdullah95k/securebrand-microservices/internal/platform/kafka"
+	"github.com/abdullah95k/securebrand-microservices/internal/platform/run"
 )
 
 // Roles a process can run.
@@ -164,22 +165,10 @@ func (a *App) Components(roles []string) ([]func(context.Context) error, error) 
 	return fns, nil
 }
 
-// Every runs fn now and then every interval until ctx ends; failures are
-// logged, not fatal.
+// Every runs fn now and then every interval (a minute when unset).
 func Every(ctx context.Context, name string, interval time.Duration, fn func(context.Context) error) error {
 	if interval <= 0 {
 		interval = time.Minute
 	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		if err := fn(ctx); err != nil && ctx.Err() == nil {
-			slog.Warn("analysis: loop failed", "loop", name, "err", err)
-		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-t.C:
-		}
-	}
+	return run.Every(ctx, name, interval, fn)
 }

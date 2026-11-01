@@ -192,13 +192,16 @@ func TestWorkerAnalysesSkipsAndFails(t *testing.T) {
 	ctx := context.Background()
 	objs["b/img"] = pngBytes(t, 2000, 1000)
 	objs["b/bad"] = []byte("garbage")
-	jobs := []*core.MediaJob{job("img", "photo"), job("stk", "sticker"), job("bad", "photo"), job("gone", "photo")}
+	objs["b/canon"] = pngBytes(t, 200, 200)
+	canon := job("canon", "image") // canonical content.media.ready.v1 kind
+	canon.AckFormat = "content"
+	jobs := []*core.MediaJob{job("img", "photo"), job("stk", "sticker"), job("bad", "photo"), job("gone", "photo"), canon}
 	if _, err := st.InsertMediaJobs(ctx, jobs, "analysis"); err != nil {
 		t.Fatal(err)
 	}
 	var seen []int
 	fp.Fail = nil
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 5; i++ {
 		n, err := w.Once(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -218,12 +221,16 @@ func TestWorkerAnalysesSkipsAndFails(t *testing.T) {
 		}
 	}
 	var n int
-	_ = st.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.media_analyses WHERE media_id = 'img' AND description <> ''`).Scan(&n)
+	_ = st.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.media_analyses WHERE media_id IN ('img', 'canon') AND description <> ''`).Scan(&n)
+	if n != 2 {
+		t.Fatal("image analyses not stored (Facebook photo and canonical image)")
+	}
+	_ = st.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.outbox WHERE topic = 'content.media.processed.v1' AND key = 'canon'`).Scan(&n)
 	if n != 1 {
-		t.Fatal("image analysis not stored")
+		t.Fatal("canonical image not acknowledged on content.media.processed.v1")
 	}
 	_ = st.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.provider_requests WHERE route = 'image' AND status = 'done'`).Scan(&n)
-	if n != 1 {
+	if n != 2 {
 		t.Fatal("image request not recorded for the budget")
 	}
 	// A re-announcement of a done job changes nothing; of a failed one, retries.

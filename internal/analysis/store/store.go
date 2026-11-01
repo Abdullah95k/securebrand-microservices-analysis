@@ -83,24 +83,20 @@ const partitionLock = 4_200_101
 // EnsureMonths creates the monthly partitions holding ts for every
 // partitioned table, once per process per month.
 func (s *Store) EnsureMonths(ctx context.Context, ts ...time.Time) error {
-	var todo []time.Time
+	// Creation is rare: hold the lock while creating, so no caller inserts
+	// into a month another caller is still creating.
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, t := range ts {
 		m := monthStart(t)
 		k := m.Format("2006-01")
-		if !s.months[k] {
-			s.months[k] = true // optimistic; undone on error
-			todo = append(todo, m)
+		if s.months[k] {
+			continue
 		}
-	}
-	s.mu.Unlock()
-	for _, m := range todo {
 		if err := s.createMonth(ctx, m); err != nil {
-			s.mu.Lock()
-			delete(s.months, m.Format("2006-01"))
-			s.mu.Unlock()
 			return err
 		}
+		s.months[k] = true
 	}
 	return nil
 }
