@@ -319,18 +319,30 @@ func TestAdsLegalAndBotScoring(t *testing.T) {
 		t.Fatalf("result author_bot %q", last.AuthorBot)
 	}
 	// The owner's decision wins over the score, both ways.
-	if err := s.OverrideAuthor(ctx, "facebook", []byte(bot), "human"); err != nil {
+	if err := s.OverrideAuthor(ctx, "facebook", []byte(bot), "human", "", ""); err == nil {
+		t.Fatal("an override without who decided was accepted")
+	}
+	if err := s.OverrideAuthor(ctx, "facebook", []byte(bot), "human", "Abdullah", "customer service account"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.OverrideAuthor(ctx, "facebook", []byte("human-1"), "bot"); err != nil {
+	if err := s.OverrideAuthor(ctx, "facebook", []byte("human-1"), "bot", "Abdullah", ""); err != nil {
 		t.Fatal(err)
 	}
 	if n := count(t, s, `SELECT count(*) FROM analysis.authors WHERE (author_key = $1 AND bot IS NULL) OR (author_key = $2 AND bot = 'confirmed')`,
 		[]byte(bot), []byte("human-1")); n != 2 {
 		t.Fatal("overrides not applied")
 	}
-	if err := s.OverrideAuthor(ctx, "facebook", []byte(bot), "maybe"); err == nil {
+	if err := s.OverrideAuthor(ctx, "facebook", []byte(bot), "maybe", "Abdullah", ""); err == nil {
 		t.Fatal("unknown override accepted")
+	}
+	// Every decision is logged, with the level before and after.
+	log, err := s.AuthorOverrides(ctx, []byte(bot), 10)
+	if err != nil || len(log) != 1 || log[0].Override != "human" || log[0].Before != bots.Likely || log[0].After != "" ||
+		log[0].By != "Abdullah" || log[0].Note != "customer service account" {
+		t.Fatalf("override log %+v %v", log, err)
+	}
+	if all, _ := s.AuthorOverrides(ctx, nil, 10); len(all) != 2 {
+		t.Fatalf("whole log: %d rows, want 2", len(all))
 	}
 	rows, err := s.Authors(ctx, true, 10)
 	if err != nil || len(rows) != 6 || rows[len(rows)-1].Bot != "confirmed" || string(rows[len(rows)-1].Key) != "human-1" {
@@ -342,6 +354,9 @@ func TestAdsLegalAndBotScoring(t *testing.T) {
 	}
 	if n := count(t, s, `SELECT count(*) FROM analysis.authors WHERE author_key = $1`, []byte(bot)); n != 0 {
 		t.Fatal("author profile survived erasure")
+	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.author_overrides WHERE author_key = $1`, []byte(bot)); n != 0 {
+		t.Fatal("override log survived erasure")
 	}
 }
 

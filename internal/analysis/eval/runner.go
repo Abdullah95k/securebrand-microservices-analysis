@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/core"
@@ -27,6 +28,8 @@ type RunConfig struct {
 	MaxTokens int
 	Batch     bool // through the provider's batch API
 	MaskPII   bool
+	// Parallel real-time requests (default 4).
+	Parallel int
 }
 
 // Request is one request's record in a results file.
@@ -67,6 +70,7 @@ type Runner struct {
 	Out      *json.Encoder
 	// Poll is the batch polling interval.
 	Poll time.Duration
+	mu   sync.Mutex // guards Out
 }
 
 type group struct {
@@ -151,11 +155,24 @@ func (r *Runner) Run(ctx context.Context, items []Item, cfg RunConfig) error {
 		}
 		return fmt.Errorf("provider %s has no batch API configured", cfg.Provider)
 	}
-	for _, g := range gs {
-		start := time.Now()
-		resp, err := r.Providers.Complete(ctx, cfg.Provider, g.req)
-		r.record(g, cfg, resp, err, time.Since(start), "realtime")
+	work := make(chan group)
+	var wg sync.WaitGroup
+	for range max(cfg.Parallel, 1) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for g := range work {
+				start := time.Now()
+				resp, err := r.Providers.Complete(ctx, cfg.Provider, g.req)
+				r.record(g, cfg, resp, err, time.Since(start), "realtime")
+			}
+		}()
 	}
+	for _, g := range gs {
+		work <- g
+	}
+	close(work)
+	wg.Wait()
 	return r.runImages(ctx, items, cfg)
 }
 
@@ -247,7 +264,9 @@ func (r *Runner) record(g group, cfg RunConfig, resp *provider.Response, err err
 		}
 		rec.Items = append(rec.Items, p)
 	}
+	r.mu.Lock()
 	_ = r.Out.Encode(rec)
+	r.mu.Unlock()
 }
 
 // runImages analyses image items one by one (real time).

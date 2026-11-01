@@ -140,6 +140,61 @@ func (r *Registry) Get(id string) (*Entity, bool) {
 	return nil, false
 }
 
+// Similar returns up to n entities whose name or aliases resemble name
+// (word trigram similarity), most similar first, as "id: Name / الاسم".
+func (r *Registry) Similar(name string, n int) []string {
+	if r == nil {
+		return nil
+	}
+	q := textnorm.Tokens(textnorm.Normalize(name))
+	if len(q) == 0 {
+		return nil
+	}
+	best := map[string]float64{}
+	for alias, ids := range r.aliases {
+		at := strings.Fields(alias)
+		score := 0.0
+		for _, w := range q {
+			m := 0.0
+			for _, a := range at {
+				m = max(m, textnorm.Similarity(w, a))
+			}
+			score += m
+		}
+		score /= float64(max(len(q), len(at)))
+		for _, id := range ids {
+			if e, ok := r.Get(id); ok && score > best[e.ID] {
+				best[e.ID] = score
+			}
+		}
+	}
+	type hit struct {
+		id    string
+		score float64
+	}
+	var hits []hit
+	for id, sc := range best {
+		if sc >= 0.3 {
+			hits = append(hits, hit{id, sc})
+		}
+	}
+	sort.Slice(hits, func(i, j int) bool {
+		if hits[i].score != hits[j].score {
+			return hits[i].score > hits[j].score
+		}
+		return hits[i].id < hits[j].id
+	})
+	var out []string
+	for _, h := range hits {
+		if len(out) == n {
+			break
+		}
+		e := r.entities[h.id]
+		out = append(out, fmt.Sprintf("%s: %s / %s", e.ID, e.Name, e.NameAR))
+	}
+	return out
+}
+
 // Len is the number of entities.
 func (r *Registry) Len() int { return len(r.entities) }
 

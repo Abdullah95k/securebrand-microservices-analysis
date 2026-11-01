@@ -132,7 +132,7 @@ func topicsCmd(args []string) error {
 // on one, or a scoring run now.
 func authorsCmd(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("authors: want list, mark or score")
+		return fmt.Errorf("authors: want list, mark, log or score")
 	}
 	sub, args := args[0], args[1:]
 	fs := flag.NewFlagSet("authors "+sub, flag.ExitOnError)
@@ -140,7 +140,9 @@ func authorsCmd(args []string) error {
 	limit := fs.Int("limit", 100, "list: at most this many")
 	key := fs.String("key", "", "mark: author key (hex, as list prints it)")
 	platform := fs.String("platform", "facebook", "mark: platform")
-	as := fs.String("as", "", "mark: bot, human or none (back to the score)")
+	as := fs.String("as", "", "mark: bot, human (not a bot) or none (back to the score)")
+	by := fs.String("by", "", "mark: who decides (your name), kept in the log")
+	note := fs.String("note", "", "mark: why (kept in the log)")
 	return withApp("authors", args, fs, func(ctx context.Context, a *app.App) error {
 		switch sub {
 		case "list":
@@ -167,11 +169,34 @@ func authorsCmd(args []string) error {
 			case "":
 				return fmt.Errorf("mark: --as bot, human or none")
 			}
-			if err := a.Store.OverrideAuthor(ctx, *platform, k, override); err != nil {
+			if err := a.Store.OverrideAuthor(ctx, *platform, k, override, *by, *note); err != nil {
 				return err
 			}
-			fmt.Println("done")
+			fmt.Println("done (logged)")
 			return nil
+		case "log":
+			var k []byte
+			if *key != "" {
+				var err error
+				if k, err = hex.DecodeString(*key); err != nil {
+					return fmt.Errorf("log: --key must be the hex author key")
+				}
+			}
+			rows, err := a.Store.AuthorOverrides(ctx, k, *limit)
+			if err != nil {
+				return err
+			}
+			w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
+			_, _ = fmt.Fprintln(w, "WHEN (Iraq time)\tAUTHOR KEY\tDECISION\tBEFORE\tAFTER\tBY\tNOTE")
+			for _, o := range rows {
+				dec := o.Override
+				if dec == "" {
+					dec = "back to score"
+				}
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", o.At.In(a.Store.Loc).Format("2006-01-02 15:04"), hex.EncodeToString(o.Key),
+					dec, o.Before, o.After, o.By, o.Note)
+			}
+			return w.Flush()
 		case "score":
 			run, err := a.ScoreBots(ctx)
 			if err != nil {

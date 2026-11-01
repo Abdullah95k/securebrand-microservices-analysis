@@ -40,6 +40,8 @@ config:
       video: {provider: fake}
       escalation: {provider: fake}
       audit: {provider: fake}
+    topics:
+      curation: {provider: fake, model: fake}
     batch: {submit_every: 10s, poll_every: 5s}
     media:
       video: {enabled: false}

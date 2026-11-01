@@ -5,7 +5,7 @@ PG_DSN ?= postgres://fbs:fbs@localhost:5432/fbs?sslmode=disable
 TEST_ENV = FBS_TEST_PG_DSN="$(PG_DSN)" FBS_TEST_REDIS_ADDR=localhost:6379 FBS_TEST_KAFKA_BROKERS=localhost:19092 FBS_TEST_SCHEMA_REGISTRY=http://localhost:18081
 COMPOSE = docker compose -f deploy/compose/docker-compose.yml
 
-.PHONY: all build test lint vet generate golden fixtures infra-up infra-down test-integration e2e loadtest soak docker docker-prebuilt compose-up compose-down spike-report phase0 phase0-dryrun phase0-trim phase0-rate pilot-up pilot-register pilot-registry pilot-report pilot-down pilot-clean pilot-stats pilot-analysis-up pilot-analysis-down pilot-analysis-status docker-analysis-media eval-sample eval-label eval-agreement eval-run eval-report eval-cost spike-bin chart-check chart-smoke clean
+.PHONY: all build test lint vet generate golden fixtures infra-up infra-down test-integration e2e loadtest soak docker docker-prebuilt compose-up compose-down spike-report phase0 phase0-dryrun phase0-trim phase0-rate pilot-up pilot-register pilot-registry pilot-report pilot-down pilot-clean pilot-stats pilot-analysis-up pilot-analysis-down pilot-analysis-status pilot-analysis-cmd docker-analysis-media eval-sample eval-silver eval-label eval-agreement eval-run eval-report eval-cost spike-bin chart-check chart-smoke clean
 
 all: generate build test
 
@@ -226,13 +226,23 @@ pilot-stats:
 ## only after the owner's decision, docs/owner/analysis-decisions.md).
 pilot-analysis-up:
 	$(PILOT_RUN)
-	@test -f deploy/compose/analysis.env || { echo "missing deploy/compose/analysis.env (the API key): docs/owner/analysis-decisions.md, step 3"; exit 2; }
+	@test -f deploy/compose/analysis.env || { echo "missing deploy/compose/analysis.env (the API key): docs/owner/analysis-decisions.md, step 5"; exit 2; }
 	@test "$$(stat -c %a deploy/compose/analysis.env)" = 600 || { echo "deploy/compose/analysis.env must be mode 600: chmod 600 deploy/compose/analysis.env"; exit 2; }
+	@# The analysis topics and schemas (fbctl kafka apply / schemas apply are idempotent).
+	$(PILOT_COMPOSE) run --rm topics
+	$(PILOT_COMPOSE) run --rm schemas
 	$(PILOT_COMPOSE) --profile analysis up -d analysis
 	@echo "analysis running; follow it with: make pilot-analysis-status"
 
 pilot-analysis-down:
 	$(PILOT_COMPOSE) --profile analysis stop analysis
+
+## Owner commands of the analysis service on the pilot, e.g.
+##   make pilot-analysis-cmd ARGS="authors list"
+##   make pilot-analysis-cmd ARGS='topics find "electricity cuts"'
+pilot-analysis-cmd:
+	$(PILOT_RUN)
+	$(PILOT_COMPOSE) --profile analysis run --rm --no-deps -T --entrypoint /usr/local/bin/sb-analysis analysis $(ARGS)
 
 ## Analysis progress and spend (counts only).
 pilot-analysis-status:
@@ -252,6 +262,11 @@ eval-sample:
 	@test -d $(GOLD_DIR) || { echo "create it first: mkdir -p $(GOLD_DIR) && chown 65532:65532 $(GOLD_DIR) && chmod 700 $(GOLD_DIR)"; exit 2; }
 	$(EVAL) --network fbs_default -e FBS_POSTGRES__DSN=postgres://fbs:fbs@postgres:5432/fbs?sslmode=disable $(IMAGE) \
 	  sample --out /gold/gold.labels.jsonl $(EVAL_ARGS)
+## Reference labels from the strongest model (no human labeller): Opus
+## 5.5 labels the sample, the production model is measured against it.
+eval-silver:
+	@test -f deploy/compose/analysis.env || { echo "missing deploy/compose/analysis.env (API keys): docs/owner/analysis-decisions.md"; exit 2; }
+	$(EVAL) --env-file deploy/compose/analysis.env $(IMAGE) silver --gold /gold/gold.labels.jsonl $(EVAL_ARGS)
 eval-label:
 	@echo "Open http://127.0.0.1:8099 through an SSH tunnel (docs/analysis/evaluation.md). Ctrl+C to stop."
 	$(EVAL) --network host $(IMAGE) label --file /gold/gold.labels.jsonl

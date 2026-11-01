@@ -69,6 +69,8 @@ func (p *Provider) Complete(_ context.Context, req provider.Request) (*provider.
 	switch {
 	case req.SchemaName == "topic_decisions":
 		r.Text = curationAnswer(req)
+	case req.SchemaName == "entity_decisions":
+		r.Text = entityCurationAnswer(req)
 	case len(req.Images) > 0 || req.SchemaName == "media":
 		r.Text = mediaAnswer(req)
 	default:
@@ -190,6 +192,33 @@ func curationAnswer(req provider.Request) string {
 	ds := []map[string]any{}
 	for _, c := range cands {
 		ds = append(ds, map[string]any{"id": c.ID, "action": "approve", "into": "", "en": c.EN, "ar": c.AR, "parent": c.Parent})
+	}
+	b, _ := json.Marshal(map[string]any{"decisions": ds})
+	return string(b)
+}
+
+// entityCurationAnswer approves every candidate whose name has a Latin
+// letter (id from the name), merges "اسيا سيل" into asiacell, and rejects
+// the rest (as a private person would be).
+func entityCurationAnswer(req provider.Request) string {
+	var cands []struct {
+		Key, Name, Type string
+	}
+	start, end := strings.Index(req.User, "<candidates>"), strings.LastIndex(req.User, "</candidates>")
+	if start >= 0 && end > start {
+		_ = json.Unmarshal([]byte(strings.TrimSpace(req.User[start+len("<candidates>"):end])), &cands)
+	}
+	ds := []map[string]any{}
+	for _, c := range cands {
+		d := map[string]any{"key": c.Key, "action": "reject", "into": "", "id": "", "name": "", "name_ar": "", "type": "other", "public_figure": false}
+		switch {
+		case strings.Contains(c.Name, "اسيا"):
+			d["action"], d["into"] = "merge", "asiacell"
+		case isLatin(textnorm.Normalize(c.Name)):
+			d["action"], d["id"], d["name"], d["type"] = "approve", strings.ReplaceAll(strings.ToLower(c.Name), " ", "-"), c.Name, c.Type
+			d["public_figure"] = c.Type == "person_public"
+		}
+		ds = append(ds, d)
 	}
 	b, _ := json.Marshal(map[string]any{"decisions": ds})
 	return string(b)

@@ -13,7 +13,7 @@ Owner-facing summary: [docs/owner/analysis-decisions.md](../owner/analysis-decis
 - **One LLM call per group of items returns every field** (language, sentiment, per-entity sentiment, topics, entities, intent, emotion, toxicity, spam, sarcasm). Comments are grouped by post, with the post as context: one request carries one post and up to 40 of its comments.
 - **Models are chosen per content type and set in config.** The starting point is Claude Haiku 5.5 through the Batch API for comments and posts, with a stronger model only where the evaluation shows Haiku fails. Two further uses of a stronger model: escalation of low-confidence items that mention a client's tracked brand, and a 0.02% audit sample for drift monitoring.
 - **What is not paid for:** answers use a compact format (most of the cost is the model's output), identical comments of a thread are sent once, and the script and comment keywords are computed locally (section 16.1).
-- **Also in the same call, at no extra cost when absent:** ad detection (affiliate, own, paid, hidden, private sale) and possible legal or platform-policy breaches (20 categories, including hate speech, misinformation and defamation, for human review; section 6.3).
+- **Also in the same call, at no extra cost when absent:** ad detection (affiliate, own, paid, hidden, private sale) and possible legal or platform-policy breaches (20 categories, including hate speech, misinformation, defamation and religious offense, for human review; section 6.3).
 - **The topic list grows by itself** (section 6.1): the model proposes missing topics, the service deduplicates them, and a daily check merges synonyms before they join the list. Brands, people, positions and places the item is about become topics too ("@asiacell").
 - **Bot and fake-account detection** (section 6.2): a daily behaviour score per author; every item of a flagged author carries the flag.
 - **Postgres is the work queue and the system of record.** Text, analyses, entity mentions and daily rollups live there, partitioned by month. Results are also published on `analysis.result.v1`, so ClickHouse can be added for the future chat/analytics agent without changing the service.
@@ -162,7 +162,7 @@ One result per item. The model answers in a compact JSON format enforced by JSON
 | `toxicity` | `none`/`mild`/`severe`, plus flags `hate`, `threat`, `harassment`. |
 | `spam`, `sarcasm`, `urgent` | Booleans. `urgent` means a safety, outage or fraud allegation (crisis signal). |
 | `ad_type` | `affiliate` (affiliate marketing: commission links or referral codes), `own` (a brand or shop promoting itself), `paid` (disclosed paid promotion of another brand), `hidden` (looks like paid promotion but is not disclosed), `sale` (a private sale, classifieds); empty when not an ad. Mainly posts and images; comments use `spam`. |
-| `legal[]` | Possible legal or platform-policy breaches, for human review (section 6.3): `hate_speech`, `threat`, `incitement`, `terrorism`, `child_safety`, `sexual_content`, `graphic_violence`, `self_harm`, `drugs`, `weapons`, `gambling`, `regulated_goods`, `fraud_scam`, `unlicensed_finance`, `counterfeit`, `privacy`, `defamation`, `misinformation`, `extortion`, `other_illegal`. |
+| `legal[]` | Possible legal or platform-policy breaches, for human review (section 6.3): `hate_speech`, `threat`, `incitement`, `terrorism`, `child_safety`, `sexual_content`, `graphic_violence`, `self_harm`, `drugs`, `weapons`, `gambling`, `regulated_goods`, `fraud_scam`, `unlicensed_finance`, `counterfeit`, `privacy`, `defamation`, `misinformation`, `extortion`, `religious_offense`, `other_illegal`. |
 | `author_bot` | The author's bot level: empty, `suspected`, `likely`, or `confirmed` by the owner (section 6.2). Not asked of the model. |
 
 **Signals worth their cost** (they come free in the same call): intent (complaint/praise/question is what brand teams act on), emotion, toxicity, spam, sarcasm (an explicit flag lowers the weight of mis-read praise), and urgency.
@@ -230,7 +230,10 @@ The service has no profile data (author ids are pseudonymous HMACs, by design), 
 
 - **Levels:** score ≥ 45 `suspected`, ≥ 70 `likely` (`bots.suspected_score`, `likely_score`). The reasons are stored with the score.
 - **Formulaic texts never count** as repetition or coordination: contest entries, prayers and tags (intents `giveaway_entry`, `greeting_religious`, `tagging`). Thousands of real people write the same "تم".
-- **The owner decides last:** `sb-analysis authors list | mark --key … --as bot|human|none | score`. A `bot` override reads `confirmed`; `human` clears the flag whatever the score.
+- **Flags are shown, and people correct them** (the owner's decision): `sb-analysis authors list | mark --key … --as bot|human|none --by <name> --note <why> | log | score`.
+  - A `bot` override reads `confirmed`; `human` ("not a bot") clears the flag whatever the score.
+  - Every decision is logged in `author_overrides`: who, when, why, the level before and after. `authors log` shows it.
+  - The log is deleted with the author's other data on erasure.
 - **Every item of a flagged author is flagged,** also retroactively:
   - the agent views show `author_bot` from the author's current level;
   - results carry the level at analysis time, and `AuthorFlag` events on `analysis.author.v1` announce every change;
@@ -243,6 +246,7 @@ The service has no profile data (author ids are pseudonymous HMACs, by design), 
 
 The model flags possible breaches in the same call, for **human review, never as a legal finding**. The categories cover what is illegal in Iraq and what common platform policies (Meta's Community Standards) forbid, with a focus on what causes social harm:
 - **speech that harms others:** hate speech (from the `hate` signal: attacks on people for sect, ethnicity, religion, tribe, nationality, gender or disability), threats (from the `threat` signal, including tribal threats), incitement to violence, revenge or sectarian hatred, terrorism and armed-extremist propaganda, defamation, misinformation, extortion and sextortion, privacy violations (doxxing);
+- **religious offense** (always flagged, the owner's decision): insults, mockery, ridicule or attacks on a religion or sect, a sacred text, a prophet, imam or saint, a religious symbol or rite, or a religious figure as a religious figure; desecration; calls to abandon or attack a faith. Iraqi Penal Code article 372 punishes these, and they cause unrest;
 - **harmful content:** child sexual abuse or exploitation, explicit sexual content, graphic violence, encouragement of self-harm;
 - **illegal trade and fraud:** drugs, weapons, gambling, regulated goods (alcohol, prescription medicines), fraud and scams (including impersonating brand or official pages), unlicensed finance, counterfeit goods;
 - **other clear crimes under Iraqi law** (`other_illegal`): human trafficking, bribery offers, vote buying, selling official documents or exam questions, organ trade.
@@ -250,8 +254,11 @@ The model flags possible breaches in the same call, for **human review, never as
 How the hard cases are drawn:
 - **Defamation:** a specific accusation of a crime or serious wrongdoing against a named person (officials included) or company, stated as fact without evidence or a source. Corruption allegations are common in Iraqi comments; reported ones with a source are not flagged.
 - **Misinformation:** a claim presented as fact that is false or very likely false and can cause harm or panic (health, security incidents, disasters, elections, shortages, the dollar rate, fabricated quotes or documents). Only clear cases; opinions and predictions are not. The model cannot verify breaking news, so this category has the most false positives and false negatives. The evaluation measures it, and a person reviews every flag.
-- **Criticism, opinions, satire and complaints** are not breaches by themselves. They are flagged when they also do one of the above: criticism that states an unproven crime as fact is defamation; a complaint that calls for attacking a sect is incitement.
-- **Not flagged on their own, even where Iraqi law criminalises them:** peaceful political or religious opinion (criticism of the government, officials or religion), and a person's sexuality or gender identity. They are speech and identity, not harm to others. Flagging them would turn a monitoring tool into a list of people to prosecute, under laws (insulting officials or institutions, the 2024 amendment on homosexuality) that UN human-rights bodies have criticised. Content in these areas is still flagged when it contains hate speech, threats, explicit sexual content, defamation or misinformation.
+- **Criticism, opinions, satire and complaints** are not breaches by themselves. They are flagged when they also do one of the above: criticism that states an unproven crime as fact is defamation; mocking a sacred figure is religious offense; a complaint that calls for attacking a sect is incitement.
+- **Religion, where the line is:** insult, mockery and attack are always flagged. A respectful question or disagreement, a person stating their own belief or doubt, and criticism of a cleric's political actions are not flagged on their own. Two reasons:
+  - Article 372 punishes insulting or offending religion, not disagreement.
+  - Many Iraqi political leaders are clerics, so flagging every criticism of them would bury the real cases under ordinary political comments.
+- **Not flagged on their own, even where Iraqi law criminalises them:** peaceful political opinion (criticism of the government or officials) and a person's sexuality or gender identity. They are speech and identity, not harm to others. Flagging them would turn a monitoring tool into a list of people to prosecute, under laws (insulting officials or institutions, the 2024 amendment on homosexuality) that UN human-rights bodies have criticised. Content in these areas is still flagged when it contains hate speech, threats, explicit sexual content, defamation or misinformation.
 
 Breaches are stored per item (`legal[]`), counted per day and source (`rollup_flag_daily`), and measured in the evaluation (the labeller marks them too).
 
@@ -435,7 +442,12 @@ Re-analysis uses priority `low` and the batch lane, and stops at the budget. Typ
   1. a valid hint id;
   2. an exact normalised alias match that is not ambiguous;
   3. otherwise an `entity_candidates` row (surface, type, count, first/last seen, up to 5 example content ids).
-- **Review queue:** candidates seen ≥ N times (default 20) appear in `sb-analysis entities review`, which can accept as new, merge into an existing entity, or reject (adds a stop-alias). A merge re-points mentions in SQL and marks rollups dirty. `person_public` candidates always need review; private persons never become candidates.
+- **Automatic growth** (the owner's decision, `analysis.entities`):
+  - every 6 hours, candidates seen at least 5 times go to the curation model (Sonnet 5.5) with two example texts (contact details masked) and the three most similar registry entities;
+  - it merges spellings into known entities, approves new brands, organisations, public figures, positions, places and events (with English and Arabic names), and rejects private persons, bare titles and generic words;
+  - each decision records who made it (`resolved_by`, `resolved_at`).
+  Public figures are stored without a person's review; when unsure whether a person is public, the model rejects, so private persons are never stored.
+- **The owner can still decide by hand:** `sb-analysis entities review`, then `resolve` (accept, merge or reject), and `merge` for duplicates. A merge re-points mentions in SQL and marks rollups dirty.
 
 ## 12. Storage
 

@@ -150,9 +150,10 @@ Examples:
 | `defamation` | Accuses a named person (officials included) or company of a crime or serious wrongdoing, as a fact, without evidence or a source |
 | `misinformation` | States as fact something false or very likely false that can cause harm or panic (health, security, disasters, elections, shortages, the dollar rate, fake quotes or documents). Only clear cases |
 | `extortion` | Blackmail, threatening to publish private photos or information unless paid |
+| `religious_offense` | Insults, mocks or attacks a religion, sect, sacred text, prophet, imam, saint, religious symbol or rite, or a religious figure as a religious figure. Always tick it |
 | `other_illegal` | Clearly illegal in Iraq and not listed above: trafficking, bribery offers, vote buying, selling official documents or exam questions, organ trade |
 
-Criticism, opinions, satire and complaints are not breaches by themselves; tick a category only when they also do it (criticism that states an unproven crime as fact is defamation). Peaceful political or religious opinion and a person's sexuality or gender identity are never breaches by themselves.
+Criticism, opinions, satire and complaints are not breaches by themselves; tick a category only when they also do it (criticism that states an unproven crime as fact is defamation; mocking a sacred figure is religious_offense). Not breaches by themselves: peaceful political opinion; a respectful religious question, disagreement, or someone stating their own belief or doubt; criticism of a cleric's political actions; a person's sexuality or gender identity.
 
 ## 6. Images (only when an image is shown)
 

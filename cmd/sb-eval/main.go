@@ -12,8 +12,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -34,7 +36,7 @@ import (
 	"github.com/abdullah95k/securebrand-microservices/internal/platform/pg"
 )
 
-const usage = `usage: sb-eval <sample|label|agreement|run|report|calibrate|cost> [flags]   (sb-eval <command> -h for flags)`
+const usage = `usage: sb-eval <sample|silver|label|agreement|run|report|calibrate|cost> [flags]   (sb-eval <command> -h for flags)`
 
 func main() {
 	if len(os.Args) < 2 {
@@ -57,6 +59,8 @@ func main() {
 		err = calibrate(os.Args[2:])
 	case "cost":
 		err = cost(os.Args[2:])
+	case "silver":
+		err = silver(ctx, os.Args[2:])
 	case "agreement":
 		err = agreement(os.Args[2:])
 	default:
@@ -190,6 +194,7 @@ func run(ctx context.Context, args []string) error {
 	fs.IntVar(&rc.MaxTokens, "max-tokens", 0, "max output tokens (0 = 400 + 150 per item)")
 	fs.BoolVar(&rc.Batch, "batch", false, "use the provider's batch API (half price; can take up to 24h)")
 	fs.BoolVar(&rc.MaskPII, "mask-pii", true, "mask phones and e-mails, as production does")
+	fs.IntVar(&rc.Parallel, "parallel", 4, "parallel real-time requests")
 	limit := fs.Int("limit", 0, "only the first N labelled items (0 = all)")
 	_ = fs.Parse(args)
 	if *gold == "" || *out == "" {
@@ -231,6 +236,82 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Printf("done in %s; results appended to %s. Next: sb-eval report --gold %s %s\n", time.Since(start).Round(time.Second), *out, *gold, *out)
+	return nil
+}
+
+// silver labels the unlabelled items of a gold file with a reference model
+// (the owner chose no human labeller): the strongest model's answers
+// become the labels the production model is measured against.
+func silver(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("silver", flag.ExitOnError)
+	cfgPath := fs.String("config", os.Getenv("FBS_CONFIG"), "config file(s) with analysis.providers")
+	gold := fs.String("gold", "", "gold file to label (sb-eval sample writes it)")
+	var rc eval.RunConfig
+	fs.StringVar(&rc.Provider, "provider", "anthropic", "provider name in analysis.providers")
+	fs.StringVar(&rc.Model, "model", "claude-opus-5-5", "reference model")
+	fs.IntVar(&rc.GroupSize, "group", 10, "items per request")
+	fs.StringVar(&rc.Effort, "effort", "medium", "effort")
+	fs.StringVar(&rc.Thinking, "thinking", "adaptive", "off | adaptive")
+	fs.BoolVar(&rc.MaskPII, "mask-pii", true, "mask phones and e-mails, as production does")
+	fs.IntVar(&rc.Parallel, "parallel", 4, "parallel requests")
+	// Thinking tokens count against the limit: the default of the
+	// production routes would cut the reference model's answers off.
+	fs.IntVar(&rc.MaxTokens, "max-tokens", 16000, "max output tokens per request, thinking included")
+	limit := fs.Int("limit", 0, "only the first N unlabelled items (0 = all)")
+	_ = fs.Parse(args)
+	if *gold == "" {
+		return fmt.Errorf("--gold is required")
+	}
+	cfg, err := loadConfig(*cfgPath)
+	if err != nil {
+		return err
+	}
+	items, err := eval.ReadItems(*gold)
+	if err != nil {
+		return err
+	}
+	todo := eval.Unlabelled(items)
+	if *limit > 0 && *limit < len(todo) {
+		todo = todo[:*limit]
+	}
+	if len(todo) == 0 {
+		fmt.Println("every item is already labelled")
+		return nil
+	}
+	tax, err := taxonomy.Load(cfg.Analysis.TaxonomyFile)
+	if err != nil {
+		return err
+	}
+	reg, _, err := registryFromSeed(cfg.Analysis.EntitiesSeed)
+	if err != nil {
+		return err
+	}
+	providers, err := registry.New(cfg.Analysis.Providers)
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	r := &eval.Runner{Providers: providers, Tax: tax, Entities: reg, Pricing: provider.Pricing(cfg.Analysis.Pricing), Out: json.NewEncoder(&buf)}
+	fmt.Printf("labelling %d items with %s/%s (thinking %s, effort %s)...\n", len(todo), rc.Provider, rc.Model, rc.Thinking, rc.Effort)
+	// Answers already paid for are kept even if the run stops early.
+	runErr := r.Run(ctx, todo, rc)
+	reqs, err := eval.DecodeRequests(&buf)
+	if err != nil {
+		return errors.Join(runErr, err)
+	}
+	usd := 0.0
+	for _, q := range reqs {
+		usd += q.CostUSD
+	}
+	n := eval.Silver(items, reqs, rc.Model)
+	if err := eval.WriteItems(*gold, items); err != nil {
+		return err
+	}
+	fmt.Printf("labelled %d of %d items for $%.2f; %s now holds model labels (labeller %s%s). Next: run the production model and the report.\n",
+		n, len(todo), usd, *gold, eval.SilverLabeller, rc.Model)
+	if runErr != nil {
+		return fmt.Errorf("stopped early (run it again to label the rest): %w", runErr)
+	}
 	return nil
 }
 

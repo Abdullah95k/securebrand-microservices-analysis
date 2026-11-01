@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
+	"strings"
 
 	"golang.org/x/time/rate"
 
@@ -40,6 +42,13 @@ func New(cfg map[string]config.Provider) (*Registry, error) {
 	sort.Strings(names)
 	for _, name := range names {
 		c := cfg[name]
+		// A hosted API without a key would fail every call: leave it out,
+		// so a route's fallback is only used once its key is set. Self-
+		// hosted servers (plain http, no key) are kept.
+		if c.APIKey == "" && (c.Kind == "anthropic" || (c.Kind == "openai_compat" && strings.HasPrefix(c.BaseURL, "https://"))) {
+			slog.Info("analysis: provider has no API key, not used", "provider", name)
+			continue
+		}
 		var p provider.Provider
 		switch c.Kind {
 		case "anthropic":
@@ -68,6 +77,12 @@ func (r *Registry) Add(name string, p provider.Provider, useBatch bool, rps floa
 	}
 }
 
+// Has reports whether a provider is configured (and has its key).
+func (r *Registry) Has(name string) bool {
+	_, ok := r.providers[name]
+	return ok
+}
+
 // Get returns a provider.
 func (r *Registry) Get(name string) (provider.Provider, bool) {
 	p, ok := r.providers[name]
@@ -91,7 +106,7 @@ func (r *Registry) Transcriber(name string) (provider.Transcriber, bool) {
 }
 
 // Available reports whether the provider's circuit is not open.
-func (r *Registry) Available(name string) bool { return !r.breakers.IsOpen(name) }
+func (r *Registry) Available(name string) bool { return r.Has(name) && !r.breakers.IsOpen(name) }
 
 // Complete calls a provider through its limiter and breaker.
 func (r *Registry) Complete(ctx context.Context, name string, req provider.Request) (*provider.Response, error) {

@@ -43,3 +43,10 @@ registry_sync:
 analysis:
   budget: {daily_usd: 5}
   media: {enabled: false}
+  # Backup provider: Google Gemini 3.1 Flash-Lite answers in real time when
+  # Anthropic is down or refuses. Used only once
+  # FBS_ANALYSIS__PROVIDERS__GEMINI__API_KEY is in deploy/compose/analysis.env.
+  routes:
+    comment: {fallback_provider: gemini, fallback_model: gemini-3.1-flash-lite}
+    post: {fallback_provider: gemini, fallback_model: gemini-3.1-flash-lite}
+    escalation: {fallback_provider: gemini, fallback_model: gemini-3.5-flash}

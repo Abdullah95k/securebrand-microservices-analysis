@@ -203,18 +203,32 @@ func TestNewTopicParents(t *testing.T) {
 
 func TestAffiliateWins(t *testing.T) {
 	raw := `{"items":[{"i":0,"lng":"ar-iq","sent":"positive","score":50,"conf":80,"ents":[],"topics":["other"],"new_topics":[],
-		"intent":"recommendation","emotion":"joy","tox":"none","flags":["ad_hidden","ad_affiliate","extortion","other_illegal"],"ppl":0}]}`
+		"intent":"recommendation","emotion":"joy","tox":"none","flags":["ad_hidden","religious_offense","ad_affiliate","extortion","other_illegal"],"ppl":0}]}`
 	got, _, _, err := ParseText(raw, []int{0}, tax(t), reg())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := got[0]; r.AdType != "affiliate" || strings.Join(r.Legal, ",") != "extortion,other_illegal" {
+	if r := got[0]; r.AdType != "affiliate" || strings.Join(r.Legal, ",") != "religious_offense,extortion,other_illegal" {
 		t.Fatalf("ad %q legal %v", r.AdType, r.Legal)
 	}
 	for _, c := range []string{"hate_speech", "threat", "misinformation", "defamation"} {
 		if !oneOf(c, LegalCategories) {
 			t.Fatalf("%s missing from LegalCategories", c)
 		}
+	}
+}
+
+// Every breach flag the schema allows is defined for the model, and
+// insulting religion is always flagged (the owner's instruction).
+func TestLegalFlagsDefined(t *testing.T) {
+	sys := TextSystem(tax(t))
+	for _, f := range LegalFlags {
+		if !strings.Contains(sys, "\n  - "+f+": ") {
+			t.Errorf("%s has no definition in the text instructions", f)
+		}
+	}
+	if !strings.Contains(sys, "religious_offense: insults") || !strings.Contains(sys, "Always flag these, whoever the target") {
+		t.Error("religious_offense must be defined as always flagged")
 	}
 }
 
@@ -291,5 +305,20 @@ func TestParseCuration(t *testing.T) {
 	}
 	if _, err := json.Marshal(CurationSchema(tax(t))); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// An approval naming a known entity's id is a spelling of it: merged, not
+// a second entity.
+func TestEntityApprovalOfKnownIDMerges(t *testing.T) {
+	cands := []EntityCandidate{{Key: "0", Name: "Asia Cell Iraq", Type: "brand"}, {Key: "1", Name: "Toyota Iraq", Type: "brand"}}
+	raw := `{"decisions":[{"key":"0","action":"approve","into":"","id":"asiacell","name":"Asiacell","name_ar":"","type":"brand","public_figure":false},
+		{"key":"1","action":"approve","into":"","id":"toyota-iraq","name":"Toyota Iraq","name_ar":"","type":"brand","public_figure":false}]}`
+	ds, err := ParseEntityCuration(raw, cands, func(id string) bool { return id == "asiacell" })
+	if err != nil || len(ds) != 2 {
+		t.Fatalf("%+v %v", ds, err)
+	}
+	if ds[0].Action != "merge" || ds[0].Into != "asiacell" || ds[1].Action != "approve" || ds[1].ID != "toyota-iraq" {
+		t.Fatalf("decisions %+v", ds)
 	}
 }

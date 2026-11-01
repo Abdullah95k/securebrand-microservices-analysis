@@ -439,7 +439,7 @@ type ItemAnalysis struct {
 	// hate_speech, threat, incitement, terrorism, child_safety,
 	// sexual_content, graphic_violence, self_harm, drugs, weapons, gambling,
 	// regulated_goods, fraud_scam, unlicensed_finance, counterfeit, privacy,
-	// defamation, misinformation, extortion, other_illegal.
+	// defamation, misinformation, extortion, religious_offense, other_illegal.
 	Legal []string `protobuf:"bytes,27,rep,name=legal,proto3" json:"legal,omitempty"`
 	// The author's bot level when the item was analysed: "" | suspected |
 	// likely | confirmed. Later changes arrive on analysis.author.v1.

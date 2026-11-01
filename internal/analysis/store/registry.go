@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -141,11 +142,13 @@ type CandidateRow struct {
 	Norm, Type, Surface string
 	Seen                int
 	FirstSeen, LastSeen time.Time
+	// Examples are up to five content ids that named it.
+	Examples []string
 }
 
 // PendingCandidates lists candidates seen at least minSeen times.
 func (s *Store) PendingCandidates(ctx context.Context, minSeen, limit int) ([]CandidateRow, error) {
-	rows, err := s.DB.Query(ctx, `SELECT norm, type, surface, seen, first_seen, last_seen FROM analysis.entity_candidates
+	rows, err := s.DB.Query(ctx, `SELECT norm, type, surface, seen, first_seen, last_seen, examples FROM analysis.entity_candidates
 		WHERE status = 'pending' AND seen >= $1 ORDER BY seen DESC LIMIT $2`, minSeen, limit)
 	if err != nil {
 		return nil, err
@@ -154,7 +157,7 @@ func (s *Store) PendingCandidates(ctx context.Context, minSeen, limit int) ([]Ca
 	var out []CandidateRow
 	for rows.Next() {
 		var c CandidateRow
-		if err := rows.Scan(&c.Norm, &c.Type, &c.Surface, &c.Seen, &c.FirstSeen, &c.LastSeen); err != nil {
+		if err := rows.Scan(&c.Norm, &c.Type, &c.Surface, &c.Seen, &c.FirstSeen, &c.LastSeen, &c.Examples); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -163,25 +166,81 @@ func (s *Store) PendingCandidates(ctx context.Context, minSeen, limit int) ([]Ca
 }
 
 // ResolveCandidate accepts a candidate as a new entity (entityID new),
-// merges it into an existing one as an alias, or rejects it.
+// merges it into an existing one as an alias, or rejects it (the owner's
+// command).
 func (s *Store) ResolveCandidate(ctx context.Context, norm, typ, action, entityID, name string) error {
+	d := EntityDecision{Action: action, ID: entityID, Into: entityID, Name: name, Type: typ, PublicFigure: typ == "person_public", By: "owner"}
+	if action == "accept" {
+		d.Action = "approve"
+	}
+	return s.DecideCandidate(ctx, norm, typ, d)
+}
+
+// EntityDecision resolves a candidate: approve (a new entity; the id gets a
+// suffix if taken), merge (into an existing entity, as an alias), or
+// reject. By records who decided (the curation model or the owner).
+type EntityDecision struct {
+	Action, Into, ID, Name, NameAR, Type string
+	PublicFigure                         bool
+	By                                   string
+}
+
+// DecideCandidate applies a decision in one transaction. Earlier unlinked
+// mentions of the name are linked to the entity (and their items get its
+// "@" topic), their rollup days rebuilt.
+func (s *Store) DecideCandidate(ctx context.Context, norm, typ string, d EntityDecision) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		var surface string
-		if err := tx.QueryRow(ctx, `SELECT surface FROM analysis.entity_candidates WHERE norm = $1 AND type = $2 FOR UPDATE`,
-			norm, typ).Scan(&surface); err != nil {
+		var surface, status string
+		if err := tx.QueryRow(ctx, `SELECT surface, status FROM analysis.entity_candidates WHERE norm = $1 AND type = $2 FOR UPDATE`,
+			norm, typ).Scan(&surface, &status); err != nil {
 			return fmt.Errorf("candidate %q: %w", norm, err)
 		}
-		switch action {
-		case "accept":
-			if name == "" {
-				name = surface
+		// Decided once: a second decision (the curator and a person at
+		// the same time, or a repeated run) would duplicate the entity. A
+		// person may still revisit a rejection.
+		if status != "pending" && (d.By != "owner" || status != "rejected") {
+			return fmt.Errorf("candidate %q already %s", norm, status)
+		}
+		entityID := ""
+		switch d.Action {
+		case "approve":
+			name := orDefault(d.Name, surface)
+			etype := orDefault(d.Type, typ)
+			if etype == "person_private" {
+				return errors.New("a private person is never stored")
 			}
-			if _, err := tx.Exec(ctx, `INSERT INTO analysis.entities (entity_id, name, type, public_figure) VALUES ($1, $2, $3, $4)`,
-				entityID, name, typ, typ == "person_public"); err != nil {
+			id, err := freeEntityID(ctx, tx, d.ID)
+			if err != nil {
 				return err
 			}
-			fallthrough
+			if _, err := tx.Exec(ctx, `INSERT INTO analysis.entities (entity_id, name, name_ar, type, public_figure) VALUES ($1, $2, NULLIF($3,''), $4, $5)`,
+				id, name, d.NameAR, etype, d.PublicFigure || etype == "person_public"); err != nil {
+				return err
+			}
+			for _, a := range []string{name, d.NameAR} {
+				if n := textnorm.Normalize(a); n != "" {
+					if _, err := tx.Exec(ctx, `INSERT INTO analysis.entity_aliases (alias_norm, entity_id, alias, source)
+						VALUES ($1, $2, $3, 'discovered') ON CONFLICT DO NOTHING`, n, id, a); err != nil {
+						return err
+					}
+				}
+			}
+			entityID = id
 		case "merge":
+			var ok bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM analysis.entities WHERE entity_id = $1 AND status = 'active')`,
+				d.Into).Scan(&ok); err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("merge into %q: no such active entity", d.Into)
+			}
+			entityID = d.Into
+		case "reject":
+		default:
+			return fmt.Errorf("unknown action %q (accept/approve, merge, reject)", d.Action)
+		}
+		if entityID != "" {
 			if _, err := tx.Exec(ctx, `INSERT INTO analysis.entity_aliases (alias_norm, entity_id, alias, source)
 				VALUES ($1, $2, $3, 'discovered') ON CONFLICT DO NOTHING`, norm, entityID, surface); err != nil {
 				return err
@@ -203,15 +262,31 @@ func (s *Store) ResolveCandidate(ctx context.Context, norm, typ, action, entityI
 				entityID); err != nil {
 				return err
 			}
-		case "reject":
-		default:
-			return fmt.Errorf("unknown action %q (accept, merge, reject)", action)
 		}
-		status := map[string]string{"accept": "accepted", "merge": "merged", "reject": "rejected"}[action]
-		_, err := tx.Exec(ctx, `UPDATE analysis.entity_candidates SET status = $3, resolved_entity_id = NULLIF($4,'')
-			WHERE norm = $1 AND type = $2`, norm, typ, status, entityID)
+		st := map[string]string{"approve": "accepted", "merge": "merged", "reject": "rejected"}[d.Action]
+		_, err := tx.Exec(ctx, `UPDATE analysis.entity_candidates SET status = $3, resolved_entity_id = NULLIF($4,''),
+			resolved_by = NULLIF($5,''), resolved_at = now() WHERE norm = $1 AND type = $2`, norm, typ, st, entityID, d.By)
 		return err
 	})
+}
+
+// freeEntityID returns id, or id with a numeric suffix when taken.
+func freeEntityID(ctx context.Context, tx pgx.Tx, id string) (string, error) {
+	if id == "" {
+		return "", errors.New("approve needs an entity id")
+	}
+	cand := id
+	for n := 2; n < 100; n++ {
+		var taken bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM analysis.entities WHERE entity_id = $1)`, cand).Scan(&taken); err != nil {
+			return "", err
+		}
+		if !taken {
+			return cand, nil
+		}
+		cand = fmt.Sprintf("%s-%d", id, n)
+	}
+	return "", fmt.Errorf("no free entity id for %s", id)
 }
 
 // MergeEntity merges entity from into into: mentions re-pointed, aliases

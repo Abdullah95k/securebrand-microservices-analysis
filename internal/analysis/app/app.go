@@ -126,6 +126,13 @@ func (a *App) Curator() *curate.Curator {
 		Cfg: a.Cfg.Analysis.Topics, Taxonomy: a.Pipeline.Taxonomy}
 }
 
+// EntityCurator returns the entity registry curation job.
+func (a *App) EntityCurator() *curate.EntityCurator {
+	c := a.Cfg.Analysis
+	return &curate.EntityCurator{Store: a.Store, Providers: a.Pipeline.Providers, Pricing: provider.Pricing(c.Pricing),
+		Route: c.Topics.Curation, MinSeen: c.Entities.MinSeen, Registry: a.Pipeline.Entities, MaskPII: c.Privacy.MaskPII}
+}
+
 // ScoreBots scores the authors active in the window.
 func (a *App) ScoreBots(ctx context.Context) (store.BotRun, error) {
 	b := a.Cfg.Analysis.Bots
@@ -206,6 +213,15 @@ func (a *App) Components(roles []string) ([]func(context.Context) error, error) 
 				fns = append(fns, func(ctx context.Context) error {
 					return Every(ctx, "topic-curation", cfg.Topics.CurateEvery, func(ctx context.Context) error {
 						_, err := cur.Run(ctx)
+						return err
+					})
+				})
+			}
+			if cfg.Entities.Auto {
+				ec := a.EntityCurator()
+				fns = append(fns, func(ctx context.Context) error {
+					return Every(ctx, "entity-curation", cfg.Entities.CurateEvery, func(ctx context.Context) error {
+						_, err := ec.Run(ctx)
 						return err
 					})
 				})

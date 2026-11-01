@@ -25,6 +25,8 @@ analysis:
     video: {provider: fake}
     escalation: {provider: fake}
     audit: {provider: fake}
+  topics:
+    curation: {provider: fake, model: fake}
   batch: {submit_every: 30s, poll_every: 10s}
   media:
     video: {stt_provider: fake}

@@ -47,48 +47,28 @@ The "stronger setup" (a more expensive AI, Sonnet, for posts, images and videos)
 
 Server and storage costs come on top: roughly 330 GB of database storage a year at 300 million items.
 
-## Your decisions
+## Your decisions (answered 1 November 2026)
 
-Each has a default. If you do not answer, I continue with the default.
+| # | Question | Your answer | What the system does |
+|---|---|---|---|
+| 1 | Send comments to Anthropic? | Yes | Analysis uses Claude. Phone numbers, e-mails and author names never leave. Your lawyer should still check the data-processing terms. |
+| 2 | Daily spending limit | Set after the test | $5 a day on the pilot until then. |
+| 3 | Everything within minutes? | No, within hours is fine | Bulk at half price; brand mentions within a minute. |
+| 4 | Topic list | Fine, if missing topics are added automatically | New topics are proposed by the AI, checked for duplicates, and approved by a second AI every 6 hours once 5 posts use them. You can step in at any time. |
+| 5 | Brand list | Fine, if missing ones are added automatically | New brands, organisations, public figures, positions and places found 5+ times are approved by the AI every 6 hours; spelling variants are merged into the known one. |
+| 6 | People | Public accounts stored | Public figures and public accounts are stored automatically. Private people are never stored. When the AI is unsure whether someone is public, it does not store them. |
+| 7 | Two copies of comments | Keep both for now | Both kept. |
+| 8-9 | Labeller and quality bar | No labeller; rely on the AI | The strongest AI (Opus) labels 1,200 real items once, about $3-5, and Haiku is measured against it (step 6 below). Production keeps checking 1 in 5,000 items with Opus. |
+| 10 | Backup AI company | You asked me to choose | **Google Gemini** (reasons below). It is already set up on the pilot as the backup, and starts working as soon as you add its key (step 5). |
+| 11 | Legal flags | Religion: always flag criticism | Insults, mockery or attacks on any religion, sect, sacred text, symbol or religious figure are always flagged. A respectful question or disagreement, someone stating their own belief, and criticism of a cleric's *political* actions are not flagged on their own. Iraqi law punishes insulting religion, not disagreement, and many politicians are clerics. Peaceful political criticism and a person's sexuality are not flagged on their own; hate speech, threats, defamation, misinformation and the rest always are. |
+| 12 | Bot flags | Show them; users can mark "not a bot", with a log | Bot flags are shown on every item of the account. Anyone you allow can mark an account "not a bot" (or "is a bot"). Each decision is logged with who, when, why and the before/after. |
+| 13 | New topics | An AI approves; a person only steps in if needed | As in 4. |
+| 14 | Very large posts | Every comment | Every comment is analysed. |
 
-1. **May comments be sent to an outside AI company (Anthropic)?**
-   - *Default:* yes, after your lawyer agrees. Only paid accounts are used. Phone numbers and e-mails are hidden, and no author names or ids are sent.
-   - *Alternative:* run our own AI servers, about $44,000+ a year plus an engineer, and less accurate.
-2. **Daily spending limit.**
-   - *Default:* $5 a day on the pilot (about $150 a month). The service stops non-urgent work at the limit and continues the next day at midnight.
-   - *For production:* set after the test.
-3. **Speed.**
-   - *Default:* most comments within hours (half price), brand mentions within a minute. Do you need everything within minutes? That doubles the price.
-4. **Topic list.**
-   - *Default:* the list I proposed: 20 areas and 87 topics, in Arabic and English, in `configs/analysis/taxonomy.v1.yaml` (telecom, electricity, prices, health, religion, sports...).
-   - Send me changes or your own list.
-5. **Brand list.**
-   - *Default:* 45 public Iraqi companies, ministries and governorates, in `configs/analysis/entities.seed.yaml`.
-   - Please send each client's brands and competitors, with every spelling you know (Arabic, English, and Arabizi such as "asiacell", "asia cell", "آسيا سيل").
-6. **People.**
-   - *Default:* public figures (politicians, officials, celebrities) are tracked after you approve them. Private people, such as friends tagged in comments, are never stored.
-7. **Keeping comments forever.**
-   - Done as you decided: the collector now keeps comments forever.
-   - Note that there are now **two copies** of every comment kept forever: the collector's and the analysis service's.
-   - *Default:* keep both for now. *I recommend* keeping only the analysis copy later. Your call, with your lawyer.
-8. **The labeller.**
-   - Who, and when can they start? About 3-4 working days for 1,000 comments, 200 posts and some images.
-9. **Quality bar.**
-   - *Default:* the AI must agree with the labeller on at least 75% of sentiment (balanced score) and 65% of the opinion about tracked brands. The cheapest model that passes is chosen.
-10. **Backup AI company.**
-    - *Default:* none until you add a second key.
-    - *I recommend* adding Google (Gemini) or OpenAI, so analysis continues if Anthropic has an outage.
-11. **Legal flags: the line.**
-    - Criticism and opinions are flagged when they also contain hate speech, threats, incitement, defamation, misinformation or any other listed breach.
-    - Two things are not flagged on their own, even where Iraqi law punishes them: peaceful criticism of the government, officials or religion, and a person's sexuality or gender identity. Flagging them would make the tool a list of people to prosecute for speech or identity. If such content contains hate speech, threats, explicit sexual content, defamation or misinformation, it is flagged under those.
-12. **Bot flags and your clients.**
-    - *Default:* bot flags stay internal until you have reviewed a sample (`sb-analysis authors list`) and the thresholds are tuned on your data. Behaviour alone gives false alarms (super-fans, people who enter every contest).
-    - You can mark any account as bot or human yourself; your decision always wins.
-13. **New topics.**
-    - *Default:* a new topic joins the list after 10 items use it and the daily check approves it. You can approve, merge, rename or reject any topic yourself (`sb-analysis topics ...`).
-14. **Very large posts (optional saving).**
-    - *Default:* every comment is analysed.
-    - *Option (not built):* on posts with thousands of comments, analyse every comment that mentions a brand and only a sample of the others, and scale the counts up. This saves a lot on viral posts, but you can no longer see the analysis of every single comment. Tell me if you want it.
+**Why Google Gemini as the backup:**
+- its prices are confirmed on Google's official page (OpenAI's could not be checked);
+- Gemini 3.1 Flash-Lite is the cheapest capable backup ($0.25 / $1.50 per million tokens), and it handles Arabic well;
+- it is a different company with different servers, so an Anthropic outage does not affect it.
 
 ## For your lawyer (I flag these, I do not decide them)
 
@@ -102,78 +82,194 @@ Each has a default. If you do not answer, I continue with the default.
 
 ## Steps on the pilot server
 
-Run these on the DigitalOcean server, in the project folder:
+Everything below happens on the DigitalOcean server that runs the pilot. The collector keeps running the whole time.
+
+### What you need before you start
+
+- Your DigitalOcean login.
+- **An Anthropic API key:**
+  1. Go to console.anthropic.com and open **API keys**.
+  2. Click **Create key** and copy it (it starts with `sk-ant-`).
+  3. Also set a monthly spend limit under **Limits**.
+- **A Google Gemini API key** (optional, for the backup): go to aistudio.google.com, click **Get API key**, and use a paid project.
+- Never paste keys in chat or e-mail. You type them only into the file in step 5.
+
+### Step 1. Connect to the server
+
+**Easiest, in the browser:**
+1. Go to cloud.digitalocean.com and open **Droplets**.
+2. Click the pilot droplet.
+3. In the left menu, click **Access**, then **Launch Droplet Console**. A black terminal window opens, logged in as root.
+
+**Or from your computer:**
+1. On a Mac, open **Terminal**. On Windows, open **PowerShell**.
+2. Type the line below, replacing `SERVER_IP` with the address shown on the droplet's page as **ipv4**. The first time, answer `yes`.
+
+```bash
+ssh root@SERVER_IP
+```
+
+To paste a command into the terminal: right-click (Windows/PowerShell) or Cmd+V (Mac). Run the commands one at a time, and wait for each one to finish (the prompt comes back).
+
+### Step 2. Go to the project and check the pilot is running
 
 ```bash
 cd ~/securebrand-microservices
 ```
 
-First get this work onto the server (it is in the `securebrand-microservices-analysis` repository on GitHub, branch `claude/jolly-bell-mb5sct`):
-
 ```bash
-git fetch https://github.com/Abdullah95k/securebrand-microservices-analysis claude/jolly-bell-mb5sct && git checkout FETCH_HEAD
+docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/pilot.yml ps
 ```
 
-Then build the image with the new tools. This does **not** restart or change the running pilot:
+You should see `crawler`, `persister`, `scheduler` and the other services as **running** (or **Up**). If not, tell me before going on.
+
+Install `tmux`, so long steps keep running if your connection drops:
+
+```bash
+apt-get install -y tmux
+```
+
+```bash
+tmux new -s work
+```
+
+If you get disconnected later, reconnect (step 1) and type `tmux attach -t work` to return to where you were.
+
+### Step 3. Get this work and build it
+
+This version has the latest collector code plus the analysis service.
+
+```bash
+git fetch https://github.com/Abdullah95k/securebrand-microservices-analysis claude/jolly-bell-mb5sct
+```
+
+```bash
+git checkout FETCH_HEAD
+```
 
 ```bash
 make docker
 ```
 
-(Once this work is merged into the main repository, go back with `git checkout main && git pull --ff-only origin main`.)
+The build takes 5-15 minutes and ends with `naming to docker.io/library/fbs:dev`. It does not restart the running collector.
 
-**Step 1. Measure the pilot data (safe: counts only, no text).** Send me what it prints. It tells me how much Kurdish, Arabizi and duplicate text there is, how long comments are, and how active the most active accounts are (to set the bot thresholds).
+### Step 4. Measure the data (counts only, safe to share)
 
 ```bash
 make pilot-stats
 ```
 
-**Step 2. Answer the decisions above** (a short reply is enough, e.g. "1 yes after lawyer, 2 $5, 3 ok...").
+Copy everything it prints and send it to me. It contains only numbers.
 
-**Step 3. Put the API key on the server.** Never paste it in chat or e-mail.
-1. In the Anthropic Console (console.anthropic.com → API keys), create a key, and set a monthly spend limit there too.
-2. On the server, create the secret file. When the editor opens, type one line: `FBS_ANALYSIS__PROVIDERS__ANTHROPIC__API_KEY=` followed by your key, then save with Ctrl+O, Enter, and exit with Ctrl+X:
+### Step 5. Put the API keys on the server
 
 ```bash
 nano deploy/compose/analysis.env
 ```
 
-3. Make the file private (only you can read it):
+An editor opens. Type these lines, replacing the parts after `=` with your keys (leave out the second line if you have no Gemini key):
+
+```
+FBS_ANALYSIS__PROVIDERS__ANTHROPIC__API_KEY=sk-ant-your-key
+FBS_ANALYSIS__PROVIDERS__GEMINI__API_KEY=your-gemini-key
+```
+
+Save with **Ctrl+O**, then **Enter**, and close with **Ctrl+X**. Then make the file private:
 
 ```bash
 chmod 600 deploy/compose/analysis.env
 ```
 
-For a backup provider, add a second line in the same file: `FBS_ANALYSIS__PROVIDERS__GEMINI__API_KEY=...` or `FBS_ANALYSIS__PROVIDERS__OPENAI__API_KEY=...`.
+### Step 6. The automatic quality check (about $3-5 and 30-45 minutes)
 
-**Step 4. The labeller's test** (when the labeller is ready). Follow [docs/analysis/evaluation.md](../analysis/evaluation.md). In short:
+**1.** Create a private folder for the test data. It stays on this server and never goes to GitHub.
 
 ```bash
 mkdir -p /srv/securebrand/gold && chown 65532:65532 /srv/securebrand/gold && chmod 700 /srv/securebrand/gold
 ```
 
-```bash
-make eval-sample
-```
+**2.** Draw 1,000 comments and 200 posts from the pilot data:
 
 ```bash
-make eval-label
+make eval-sample EVAL_ARGS="--repeat 0"
 ```
 
-The labeller opens the page through an SSH tunnel; the guide for them is [docs/analysis/labelling-guide.md](../analysis/labelling-guide.md). Afterwards I give you the commands to compare the AI models. Their report contains only numbers, which you send me.
+**3.** The strongest AI (Opus) labels them (15-30 minutes):
 
-**Step 5. Switch the analysis on** (only after your answer to question 1):
+```bash
+make eval-silver
+```
+
+**4.** The everyday AI (Haiku) analyses the same items (a few minutes):
+
+```bash
+make eval-run MODEL=claude-haiku-5-5
+```
+
+**5.** Compare them:
+
+```bash
+make eval-report
+```
+
+Send me the tables it prints (numbers only). I then tell you whether Haiku is good enough or which part needs the stronger AI.
+
+### Step 7. Switch the analysis on
 
 ```bash
 make pilot-analysis-up
 ```
 
+It prints `analysis running`. From now on, comments are analysed within hours (brand mentions within a minute), up to $5 a day.
+
+To check progress and spending (in dollars per Iraq day), at any time:
+
 ```bash
 make pilot-analysis-status
 ```
 
-The status shows how many items are analysed and what was spent per day (in dollars, Iraq dates). To switch it off:
+To switch it off:
 
 ```bash
 make pilot-analysis-down
+```
+
+### Everyday commands (optional)
+
+**Accounts flagged as bots, with the reasons:**
+
+```bash
+make pilot-analysis-cmd ARGS="authors list"
+```
+
+**Mark an account as not a bot** (copy its key from the list; your name and the reason go into the log):
+
+```bash
+make pilot-analysis-cmd ARGS='authors mark --key PASTE_KEY --as human --by "Your name" --note "why"'
+```
+
+**The log of those decisions:**
+
+```bash
+make pilot-analysis-cmd ARGS="authors log"
+```
+
+**Find a topic and count its posts** (English or Arabic):
+
+```bash
+make pilot-analysis-cmd ARGS='topics find "electricity cuts"'
+```
+
+**Topics the system added:**
+
+```bash
+make pilot-analysis-cmd ARGS="topics list --status active"
+```
+
+### Later
+
+When this work is merged into the main repository, return the server to the main branch:
+
+```bash
+git checkout main && git pull --ff-only origin main
 ```

@@ -3,14 +3,14 @@
 //
 //	sb-analysis [run] [--roles ingest,pipeline,media,relay,rollup]
 //	sb-analysis migrate
-//	sb-analysis entities import [--file f.yaml] | review | resolve | merge | track
+//	sb-analysis entities import [--file f.yaml] | review | resolve | merge | track | curate
 //	sb-analysis sources monitor --client c --source fb:page:1
 //	sb-analysis reanalyze [filters] [--dry-run] [--max-usd N]
 //	sb-analysis replay-failed [--route r]
 //	sb-analysis agent-role --client c --name "Client" --role sb_agent_c --password-file f
 //	sb-analysis rollups recompute --day 2026-11-01
 //	sb-analysis topics find <words> | list | approve | rename | merge | reject | curate | import
-//	sb-analysis authors list | mark --key k --as bot|human|none | score
+//	sb-analysis authors list | mark --key k --as bot|human|none --by name [--note why] | log | score
 package main
 
 import (
@@ -86,7 +86,7 @@ const usage = `usage: sb-analysis [run|migrate|entities|sources|reanalyze|replay
   run            run the service (--roles ingest,pipeline,media,relay,rollup; default all)
   migrate        apply the analysis migrations
   entities       import [--file f] | review [--min-seen n] | resolve --norm n --type t --action accept|merge|reject [--entity-id id] [--name n]
-                 | merge --from id --into id | track --client c --entity id [--role own|competitor|watch]
+                 | merge --from id --into id | track --client c --entity id [--role own|competitor|watch] | curate (decide candidates now)
   sources        monitor --client c --source fb:page:123
   reanalyze      --since 2026-10-01 --until ... --platform --source --entity --model --taxonomy-not --sample 0.1 --limit n --route r [--dry-run] [--max-usd n]
   replay-failed  [--route r] [--limit n]
@@ -95,7 +95,8 @@ const usage = `usage: sb-analysis [run|migrate|entities|sources|reanalyze|replay
   topics         find <words, any language> | list [--status candidate|active|merged|rejected|all] [--min-seen n]
                  | approve --id t [--en --ar --parent p]
                  | rename --id t --en .. --ar .. | merge --from t --into t | reject --id t | curate | import --file f.yaml
-  authors        list [--all] [--limit n] | mark --key hex --as bot|human|none [--platform facebook] | score`
+  authors        list [--all] [--limit n] | mark --key hex --as bot|human|none --by name [--note why] [--platform facebook]
+                 | log [--key hex] | score`
 
 // withApp loads the config (flags parsed into fs first), opens the
 // analysis database and runs fn.
@@ -177,7 +178,7 @@ func trim(xs []string) []string {
 
 func entitiesCmd(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("entities: want import, review, resolve, merge or track")
+		return fmt.Errorf("entities: want import, review, resolve, merge, track or curate")
 	}
 	sub, args := args[0], args[1:]
 	fs := flag.NewFlagSet("entities "+sub, flag.ExitOnError)
@@ -232,6 +233,15 @@ func entitiesCmd(args []string) error {
 				return err
 			}
 			fmt.Println("merged")
+		case "curate":
+			if err := a.RefreshEntities(ctx); err != nil {
+				return err
+			}
+			n, err := a.EntityCurator().Run(ctx)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%d candidates decided\n", n)
 		case "track":
 			if *client == "" || *entityID == "" {
 				return fmt.Errorf("track needs --client and --entity-id")

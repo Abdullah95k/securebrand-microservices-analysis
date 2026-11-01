@@ -2,6 +2,7 @@ package pipeline_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -345,6 +346,48 @@ func TestAmbiguousTitles(t *testing.T) {
 	}
 	if n := e.count(t, `SELECT count(*) FROM analysis.entity_candidates`); n != 0 {
 		t.Fatal("a generic title went to the review queue")
+	}
+}
+
+// Names found often enough are decided by the curation model: a new
+// entity approved, a spelling merged into a known one, a private name
+// rejected; who decided is recorded.
+func TestEntityCuration(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) {
+		c.Topics.Curation = config.Route{Provider: "primary", Model: "curation-model", MaxTokens: 2000}
+	})
+	ctx := context.Background()
+	var cands []store.Candidate
+	for i := range 5 {
+		cands = append(cands, store.Candidate{Surface: "Toyota Iraq", Type: "brand", ContentID: fmt.Sprintf("x%d", i)},
+			store.Candidate{Surface: "اسيا سيل الجديدة", Type: "brand", ContentID: fmt.Sprintf("y%d", i)},
+			store.Candidate{Surface: "محمد علي", Type: "person_public", ContentID: fmt.Sprintf("z%d", i)})
+	}
+	cands = append(cands, store.Candidate{Surface: "Rare Brand", Type: "brand", ContentID: "r1"}) // seen once: waits
+	if err := e.s.AddCandidates(ctx, cands); err != nil {
+		t.Fatal(err)
+	}
+	cur := &curate.EntityCurator{Store: e.s, Providers: e.p.Providers, Pricing: e.p.Pricing, Route: e.p.Cfg.Topics.Curation, MinSeen: 5,
+		Registry: e.p.Entities}
+	n, err := cur.Run(ctx)
+	if err != nil || n != 3 {
+		t.Fatalf("decided %d %v", n, err)
+	}
+	if c := e.count(t, `SELECT count(*) FROM analysis.entities WHERE entity_id = 'toyota-iraq' AND type = 'brand'`); c != 1 {
+		t.Fatal("new brand not approved")
+	}
+	if c := e.count(t, `SELECT count(*) FROM analysis.entity_aliases WHERE entity_id = 'asiacell' AND alias = 'اسيا سيل الجديدة'`); c != 1 {
+		t.Fatal("spelling not merged into the known brand")
+	}
+	if c := e.count(t, `SELECT count(*) FROM analysis.entity_candidates WHERE surface = 'محمد علي' AND status = 'rejected'
+		AND resolved_by = 'curation-model' AND resolved_at IS NOT NULL`); c != 1 {
+		t.Fatal("private-looking name not rejected, or the decider not recorded")
+	}
+	if c := e.count(t, `SELECT count(*) FROM analysis.entity_candidates WHERE surface = 'Rare Brand' AND status = 'pending'`); c != 1 {
+		t.Fatal("a name seen once was decided")
+	}
+	if c := e.count(t, `SELECT count(*) FROM analysis.provider_requests WHERE route = 'curation'`); c != 1 {
+		t.Fatal("curation call not logged for the budget")
 	}
 }
 

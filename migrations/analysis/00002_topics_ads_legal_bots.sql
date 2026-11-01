@@ -6,6 +6,8 @@
 -- Generic aliases ("رئيس الوزراء", "وزارة الصحة") are hints for the model,
 -- never a link or an urgent match on their own.
 ALTER TABLE analysis.entity_aliases ADD COLUMN ambiguous boolean NOT NULL DEFAULT false;
+-- Who resolved a candidate entity (the curation model or the owner), when.
+ALTER TABLE analysis.entity_candidates ADD COLUMN resolved_by text, ADD COLUMN resolved_at timestamptz;
 
 -- Ads and possible breaches; the author on the analysis row, for bot flags
 -- without a join through the text table.
@@ -100,6 +102,21 @@ CREATE TABLE analysis.authors (
     PRIMARY KEY (platform, author_key)
 );
 CREATE INDEX authors_bot_idx ON analysis.authors (bot) WHERE bot IS NOT NULL;
+-- Every manual decision on an author ("not a bot", "is a bot", back to
+-- the score): who, when, why, and the level before and after.
+CREATE TABLE analysis.author_overrides (
+    id          bigserial PRIMARY KEY,
+    platform    text NOT NULL,
+    author_key  bytea NOT NULL,
+    override    text,            -- bot | human | NULL (back to the score)
+    bot_before  text,
+    bot_after   text,
+    decided_by  text NOT NULL,
+    note        text,
+    decided_at  timestamptz NOT NULL DEFAULT now()
+);
+-- Erasure and the log look an author up by key alone.
+CREATE INDEX author_overrides_author_idx ON analysis.author_overrides (author_key, decided_at);
 
 -- Rollups -------------------------------------------------------------------------
 ALTER TABLE analysis.rollup_source_daily
@@ -204,6 +221,7 @@ DROP VIEW agent.rollup_source_daily;
 DROP TABLE analysis.rollup_flag_daily;
 ALTER TABLE analysis.rollup_entity_daily DROP COLUMN bot_mentions;
 ALTER TABLE analysis.rollup_source_daily DROP COLUMN ads, DROP COLUMN legal, DROP COLUMN bot_items;
+DROP TABLE analysis.author_overrides;
 DROP TABLE analysis.authors;
 DROP TABLE analysis.taxonomy_versions;
 DROP TABLE analysis.topic_aliases;
@@ -214,6 +232,7 @@ DROP INDEX analysis.analyses_topics_idx;
 ALTER TABLE analysis.media_analyses DROP COLUMN ad_type, DROP COLUMN legal;
 ALTER TABLE analysis.analyses DROP COLUMN ad_type, DROP COLUMN legal, DROP COLUMN author_key;
 ALTER TABLE analysis.entity_aliases DROP COLUMN ambiguous;
+ALTER TABLE analysis.entity_candidates DROP COLUMN resolved_by, DROP COLUMN resolved_at;
 -- The views as 00001 created them (re-run agent-role to grant them again).
 CREATE VIEW agent.mentions WITH (security_barrier) AS
 SELECT m.day, m.created_at, m.platform, m.source_id, m.kind, m.content_id,

@@ -76,6 +76,9 @@ func (s *Store) Erase(ctx context.Context, e core.Erasure, consumer string) (map
 				return err
 			}
 			stats["authors"] = tag.RowsAffected()
+			if _, err := tx.Exec(ctx, `DELETE FROM analysis.author_overrides WHERE author_key = $1`, e.AuthorKey); err != nil {
+				return err
+			}
 		}
 		for k, v := range n {
 			stats[k] = v

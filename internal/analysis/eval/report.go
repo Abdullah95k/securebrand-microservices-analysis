@@ -20,8 +20,17 @@ func ReadRequests(path string) ([]Request, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
+	out, err := DecodeRequests(f)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return out, nil
+}
+
+// DecodeRequests reads results records, one JSON object per line.
+func DecodeRequests(rd io.Reader) ([]Request, error) {
 	var out []Request
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(rd)
 	sc.Buffer(make([]byte, 1<<20), 64<<20)
 	for sc.Scan() {
 		if len(sc.Bytes()) == 0 {
@@ -29,7 +38,7 @@ func ReadRequests(path string) ([]Request, error) {
 		}
 		var r Request
 		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
+			return nil, err
 		}
 		out = append(out, r)
 	}

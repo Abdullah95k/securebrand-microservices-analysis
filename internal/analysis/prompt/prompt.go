@@ -13,8 +13,8 @@ import (
 // Versions recorded with every result. Bump PromptVersion on any change to
 // the instructions and SchemaVersion on any change to the output schema.
 const (
-	PromptVersion = "p4"
-	SchemaVersion = "s4"
+	PromptVersion = "p5"
+	SchemaVersion = "s5"
 )
 
 // Allowed values of the output schema.
@@ -42,7 +42,7 @@ var (
 	// lists, flagged for human review (never a legal finding).
 	LegalFlags = []string{"incitement", "terrorism", "child_safety", "sexual_content", "graphic_violence", "self_harm", "drugs",
 		"weapons", "gambling", "regulated_goods", "fraud_scam", "unlicensed_finance", "counterfeit", "privacy", "defamation",
-		"misinformation", "extortion", "other_illegal"}
+		"misinformation", "extortion", "religious_offense", "other_illegal"}
 	// LegalCategories are every stored breach category: hate speech and
 	// threats come from the hate and threat signals, the rest from
 	// LegalFlags.
@@ -141,8 +141,9 @@ TOPICS AND SIGNALS
   - defamation: a specific accusation of a crime or serious wrongdoing against a named person (officials included) or company, stated as fact without evidence or a source;
   - misinformation: a claim presented as fact that is false or very likely false and can cause harm or panic: health and medicine, security incidents, disasters, elections, shortages, the dollar rate or prices, fabricated quotes or documents; flag only clear cases, not opinions or predictions;
   - extortion: blackmail, threats to publish private photos or information unless paid, sextortion;
+  - religious_offense: insults, mockery, ridicule or attacks on a religion or sect, a sacred text, a prophet, imam or saint, a religious symbol or rite, or a religious figure as a religious figure; desecration; calls to abandon or attack a faith (punished by Iraqi law, and a cause of unrest). Always flag these, whoever the target;
   - other_illegal: clearly illegal in Iraq and not covered above: human trafficking, bribery offers, vote buying, selling official documents or exam questions, organ trade.
-  Criticism, opinions, satire, complaints and news reporting are not breaches by themselves; flag them when they also do one of the above (criticism that states an unproven crime as fact is defamation; a complaint that calls for attacking a sect is incitement). Peaceful political or religious opinion, and a person's sexuality or gender identity, are never breaches by themselves.
+  Criticism, opinions, satire, complaints and news reporting are not breaches by themselves; flag them when they also do one of the above (criticism that states an unproven crime as fact is defamation; mocking a sacred figure is religious_offense; a complaint that calls for attacking a sect is incitement). Not breaches by themselves: peaceful political opinion; a respectful religious question, disagreement, or a person stating their own belief or doubt; criticism of a cleric's political actions (that is politics); a person's sexuality or gender identity.
 
 OUTPUT
 Answer only with the JSON object the schema requires. Never translate, quote or explain the items.
@@ -158,7 +159,7 @@ const mediaInstructions = `You analyse images (or key frames of a video, in orde
 - people: how many people are visible. Never identify anyone from their face; name a person only if the name is written in the image or spoken in the transcript.
 - sent, score, conf: the sentiment of the message the image or video conveys (positive, negative, neutral, mixed; a whole number from -100 to 100; a whole number from 0 to 100).
 - ents: brands, organisations, public persons, positions, places and events shown, written or spoken, with sentiment toward each (same rules as for text; never private persons). topics: every taxonomy id that applies (at most 10).
-- flags, usually []: ad_affiliate (affiliate links or codes for a commission), ad_own (a business promoting itself), ad_paid (disclosed paid promotion of another brand), ad_hidden (looks like undisclosed paid promotion), ad_sale (a private sale), and possible legal or platform-policy breaches for human review: incitement, terrorism, child_safety, sexual_content, graphic_violence, self_harm, drugs, weapons, gambling, regulated_goods, fraud_scam, unlicensed_finance, counterfeit, privacy, defamation, misinformation (fabricated or doctored images, false claims as fact), extortion, other_illegal (same meanings as for text; news images reporting such things are not breaches).
+- flags, usually []: ad_affiliate (affiliate links or codes for a commission), ad_own (a business promoting itself), ad_paid (disclosed paid promotion of another brand), ad_hidden (looks like undisclosed paid promotion), ad_sale (a private sale), and possible legal or platform-policy breaches for human review: incitement, terrorism, child_safety, sexual_content, graphic_violence, self_harm, drugs, weapons, gambling, regulated_goods, fraud_scam, unlicensed_finance, counterfeit, privacy, defamation, misinformation (fabricated or doctored images, false claims as fact), extortion, religious_offense (insulting or mocking a religion, sacred figure or symbol), other_illegal (same meanings as for text; news images reporting such things are not breaches).
 
 Answer only with the JSON object the schema requires.
 

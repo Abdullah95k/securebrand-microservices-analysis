@@ -1,6 +1,6 @@
 # Evaluating models on Iraqi content (sb-eval)
 
-No model is chosen without measurement. `sb-eval` runs any configured provider and model on a gold set labelled by an Iraqi native speaker. It uses the **same prompt, output schema and validation code as production**, and reports:
+No model is chosen without measurement. `sb-eval` runs any configured provider and model on a gold set, labelled by an Iraqi native speaker or, as the owner chose for the pilot, by the strongest model (Claude Opus 5.5, "silver" labels; section 2b). It uses the **same prompt, output schema and validation code as production**, and reports:
 - **per-task accuracy:**
   - sentiment macro-F1 with 95% bootstrap intervals;
   - aspect sentiment (overall and on tracked brands);
@@ -58,6 +58,19 @@ make eval-agreement
 ```
 
 A sentiment kappa above 0.6 is good and above 0.8 very good. Lower means the guide needs clarifying before the labels are trusted.
+
+## 2b. Labels from the strongest model instead (the owner's choice)
+
+Without a labeller, Claude Opus 5.5 (adaptive thinking, effort medium) labels the sample. Every other model is then measured by its agreement with Opus:
+
+```bash
+make eval-silver
+```
+
+- **Cost and time:** about $3-5 and 15-30 minutes for 1,200 items (4 requests at a time).
+- **Labels:** each label records `labeller: model:claude-opus-5-5`.
+- **What it measures:** agreement with Opus, not truth. It cannot show where Opus itself is wrong on Iraqi dialect (sarcasm, slang, local brands). A cheaper model scoring close to Opus is still a strong sign it is good enough. Production keeps checking the same way: the 0.02% audit sample is Opus too.
+- **Unanswered items:** items Opus refused or missed stay unlabelled and are left out of the scores.
 
 ## 3. Run models
 

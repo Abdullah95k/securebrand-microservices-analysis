@@ -337,12 +337,13 @@ func (w *Worker) video(ctx context.Context, j core.MediaJob, data []byte) (*Fram
 // primary is unavailable, fails or refuses.
 func (w *Worker) call(ctx context.Context, route string, rc config.Route, req provider.Request) (*provider.Response, string, string, bool, error) {
 	prov, model, fallback := rc.Provider, rc.Model, false
-	if !w.P.Providers.Available(prov) && rc.FallbackProvider != "" {
+	hasFallback := rc.FallbackProvider != "" && w.P.Providers.Has(rc.FallbackProvider)
+	if !w.P.Providers.Available(prov) && hasFallback {
 		prov, model, fallback = rc.FallbackProvider, rc.FallbackModel, true
 		req.Model = model
 	}
 	resp, err := w.P.Providers.Complete(ctx, prov, req)
-	if !fallback && rc.FallbackProvider != "" && ((err != nil && provider.Retryable(err)) || (err == nil && resp.Refused)) {
+	if !fallback && hasFallback && ((err != nil && provider.Retryable(err)) || (err == nil && resp.Refused)) {
 		ametrics.Fallbacks.WithLabelValues(route).Inc()
 		prov, model, fallback = rc.FallbackProvider, rc.FallbackModel, true
 		req.Model = model

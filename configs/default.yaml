@@ -480,9 +480,18 @@ analysis:
   # version). The taxonomy file is only the starting list.
   topics:
     dynamic: true
-    approve_min_items: 10
-    curate_every: 24h
+    approve_min_items: 5
+    curate_every: 6h
     curation: {provider: anthropic, model: claude-sonnet-5-5, thinking: "off", effort: low, max_tokens: 8000}
+  # New entities without a person: names the model found at least min_seen
+  # times (brands, organisations, public figures, positions, places...) go
+  # to the curation model, which merges spellings into known entities,
+  # approves new ones and rejects private persons and generic words. The
+  # owner can still decide by hand (sb-analysis entities review/resolve).
+  entities:
+    auto: true
+    min_seen: 5
+    curate_every: 6h
   # Bot and fake-account detection from behaviour (no profile data):
   # bursts, volume, the same text in many threads, the same text from many
   # authors, replies within a minute, round-the-clock posting, spam share.

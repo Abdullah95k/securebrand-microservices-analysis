@@ -41,6 +41,7 @@ type Analysis struct {
 	Rollups   Rollups               `koanf:"rollups"`
 	Limits    AnalysisLimits        `koanf:"limits"`
 	Topics    AnalysisTopics        `koanf:"topics"`
+	Entities  AnalysisEntities      `koanf:"entities"`
 	Bots      AnalysisBots          `koanf:"bots"`
 }
 
@@ -57,6 +58,15 @@ type AnalysisTopics struct {
 	// Curation: provider and model of the daily check ("" provider =
 	// approve candidates on the count alone).
 	Curation Route `koanf:"curation"`
+}
+
+// AnalysisEntities configures the automatic growth of the entity
+// registry: names found at least MinSeen times are decided by the
+// curation model (analysis.topics.curation) every CurateEvery.
+type AnalysisEntities struct {
+	Auto        bool          `koanf:"auto"`
+	MinSeen     int           `koanf:"min_seen"`
+	CurateEvery time.Duration `koanf:"curate_every"`
 }
 
 // AnalysisBots configures bot detection from behaviour.
@@ -324,6 +334,9 @@ func (a *Analysis) Validate() error {
 				errs = append(errs, errors.New("analysis.topics.curation.model is empty"))
 			}
 		}
+	}
+	if a.Entities.Auto && (a.Entities.MinSeen <= 0 || a.Topics.Curation.Provider == "") {
+		errs = append(errs, errors.New("analysis.entities.auto needs min_seen > 0 and analysis.topics.curation.provider"))
 	}
 	if b := a.Bots; b.Enabled {
 		if b.Window <= 0 || b.MinItems <= 0 || b.CoordinationAuthors < 2 {

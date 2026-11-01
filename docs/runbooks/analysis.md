@@ -95,7 +95,8 @@ Check with `SELECT * FROM analysis.erasures ORDER BY received_at DESC LIMIT 20;`
 
 - **Import the owner's brand list** (same format as `configs/analysis/entities.seed.yaml`): `sb-analysis entities import --file brands.yaml`.
 - **Track a client's brands:** `sb-analysis entities track --client acme --entity-id asiacell --role own` (own, competitor, watch). Tracked entities make items urgent (real-time lane) and eligible for escalation.
-- **Review names the model found:** `sb-analysis entities review --min-seen 20`, then for each candidate:
+- **New entities are added automatically** (`analysis.entities.auto`): every 6 hours the curation model decides the names seen 5+ times (merge a spelling, approve a new entity, reject a private person or generic word). Run it now with `sb-analysis entities curate`. Decisions record who made them (`entity_candidates.resolved_by`).
+- **Review names yourself** (optional): `sb-analysis entities review --min-seen 5`, then for each candidate:
   - **accept:** `sb-analysis entities resolve --norm <norm> --type brand --action accept --entity-id new-id --name "Name"`;
   - **merge into an existing entity:** `--action merge --entity-id asiacell`;
   - **reject:** `--action reject`.
@@ -122,7 +123,9 @@ The model proposes topics missing from the list. They are deduplicated at once (
 
 Once a day every author with 5+ items in 30 days is scored from behaviour (bursts, volume, the same text in many threads, the same text as many other authors on the same day, replies within a minute, round-the-clock activity, spam share). Smaller accounts (2+ items) are scored when they took part in coordination, so networks of accounts that each post a little are caught. Score ≥45 is `suspected`, ≥70 `likely`.
 - **Look:** `sb-analysis authors list` (flagged, highest score first, with reasons). The key is the pseudonymous author key, never a Facebook id.
-- **Decide:** `sb-analysis authors mark --key <hex> --as bot` (shows as `confirmed`), `--as human` (never flagged), `--as none` (back to the score). Every item of the author follows, earlier ones too.
+- **Decide:** `sb-analysis authors mark --key <hex> --as human --by "<your name>" --note "<why>"` ("not a bot"); `--as bot` (shows as `confirmed`); `--as none` (back to the score). Every item of the author follows, earlier ones too.
+- **The log of decisions:** `sb-analysis authors log [--key <hex>]`: who, when, why, the level before and after.
+- On the pilot, run these through `make pilot-analysis-cmd ARGS='...'` (example: `make pilot-analysis-cmd ARGS="authors list"`).
 - **Score now:** `sb-analysis authors score`.
 - **Tune:** `analysis.bots` (thresholds, window, minimum items). Before showing bot flags to clients, review a sample of flagged authors: false positives (super-fans, giveaway hunters) are expected.
 

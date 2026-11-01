@@ -503,7 +503,7 @@ func Sampled(contentID string, rate float64) bool {
 
 func (p *Pipeline) fallbackFor(s sent) (sent, bool) {
 	rc := p.Cfg.Routes[s.route]
-	if s.fallback || rc.FallbackProvider == "" {
+	if s.fallback || rc.FallbackProvider == "" || !p.Providers.Has(rc.FallbackProvider) {
 		return sent{}, false
 	}
 	return sent{id: s.id, route: s.route, lane: core.LaneRealtime, provider: rc.FallbackProvider, model: rc.FallbackModel,

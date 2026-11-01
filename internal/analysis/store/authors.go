@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -176,11 +177,16 @@ func (s *Store) ScoreAuthors(ctx context.Context, window time.Duration, minItems
 	return run, err
 }
 
-// OverrideAuthor records the owner's decision on an author: "bot",
-// "human", or "" (back to the score).
-func (s *Store) OverrideAuthor(ctx context.Context, platform string, key []byte, override string) error {
+// OverrideAuthor records a person's decision on an author: "bot",
+// "human" (not a bot), or "" (back to the score). Every decision is
+// logged in author_overrides with who made it, when, why and the level
+// before and after, whether or not it changed the level.
+func (s *Store) OverrideAuthor(ctx context.Context, platform string, key []byte, override, by, note string) error {
 	if override != "" && override != "bot" && override != "human" {
 		return fmt.Errorf("override %q: want bot, human or none", override)
+	}
+	if strings.TrimSpace(by) == "" {
+		return errors.New("override: say who decides (by)")
 	}
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var before *string
@@ -194,6 +200,11 @@ func (s *Store) OverrideAuthor(ctx context.Context, platform string, key []byte,
 		if err := tx.QueryRow(ctx, `INSERT INTO analysis.authors (platform, author_key, override) VALUES ($1, $2, NULLIF($3, ''))
 			ON CONFLICT (platform, author_key) DO UPDATE SET override = EXCLUDED.override
 			RETURNING bot, score, reasons`, platform, key, override).Scan(&after, &score, &reasons); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO analysis.author_overrides (platform, author_key, override, bot_before, bot_after, decided_by, note)
+			VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, NULLIF($7, ''))`, platform, key, override, before, after, strings.TrimSpace(by),
+			strings.TrimSpace(note)); err != nil {
 			return err
 		}
 		if deref(before) == deref(after) {
@@ -261,6 +272,36 @@ func (s *Store) Authors(ctx context.Context, flaggedOnly bool, limit int) ([]Aut
 			return nil, err
 		}
 		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// OverrideRow is one logged decision on an author.
+type OverrideRow struct {
+	Platform                string
+	Key                     []byte
+	Override, Before, After string
+	By, Note                string
+	At                      time.Time
+}
+
+// AuthorOverrides lists the decision log, newest first; key filters one
+// author (nil for all).
+func (s *Store) AuthorOverrides(ctx context.Context, key []byte, limit int) ([]OverrideRow, error) {
+	rows, err := s.DB.Query(ctx, `SELECT platform, author_key, coalesce(override, ''), coalesce(bot_before, ''), coalesce(bot_after, ''),
+		decided_by, coalesce(note, ''), decided_at FROM analysis.author_overrides
+		WHERE $1::bytea IS NULL OR author_key = $1 ORDER BY decided_at DESC, id DESC LIMIT $2`, key, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OverrideRow
+	for rows.Next() {
+		var o OverrideRow
+		if err := rows.Scan(&o.Platform, &o.Key, &o.Override, &o.Before, &o.After, &o.By, &o.Note, &o.At); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
 	}
 	return out, rows.Err()
 }

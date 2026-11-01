@@ -290,6 +290,13 @@ func TestRegistryAndCandidates(t *testing.T) {
 	if err := s.ResolveCandidate(ctx, rows[0].Norm, "brand", "accept", "najma", "Najma"); err != nil {
 		t.Fatal(err)
 	}
+	// A second decision (the curator after a person) would duplicate it.
+	if err := s.DecideCandidate(ctx, rows[0].Norm, "brand", EntityDecision{Action: "approve", ID: "najma", Name: "Najma", By: "model"}); err == nil {
+		t.Fatal("a decided candidate was decided again")
+	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.entities WHERE entity_id LIKE 'najma%'`); n != 1 {
+		t.Fatalf("%d najma entities, want 1", n)
+	}
 	if err := s.TrackEntity(ctx, "c1", "asiacell", "own"); err == nil {
 		t.Fatal("tracking for an unknown client should fail")
 	}
