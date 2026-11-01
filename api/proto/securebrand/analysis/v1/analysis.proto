@@ -1,0 +1,128 @@
+syntax = "proto3";
+
+package securebrand.analysis.v1;
+
+import "google/protobuf/timestamp.proto";
+import "securebrand/content/v1/content.proto";
+
+option go_package = "github.com/abdullah95k/securebrand-microservices/gen/go/securebrand/analysis/v1;analysisv1";
+
+// Provenance records how a result was produced, so results are traceable and
+// re-analysis can be selective.
+message Provenance {
+  string provider = 1;
+  string model = 2;
+  string prompt_version = 3;
+  string taxonomy_version = 4;
+  string schema_version = 5;
+  // comment | post | image | video | escalation | audit
+  string route = 6;
+  // batch | realtime
+  string lane = 7;
+  google.protobuf.Timestamp analyzed_at = 8;
+  // SHA-256 of the analysis input; equal hashes are never analysed twice.
+  bytes input_hash = 9;
+  // Increments with every re-analysis of the same content id; consumers
+  // keep the highest.
+  uint32 analysis_version = 10;
+  // current | audit
+  string purpose = 11;
+  // True when the result came from a route's fallback provider.
+  bool fallback = 12;
+}
+
+message Sentiment {
+  // positive | negative | neutral | mixed
+  string label = 1;
+  // -1 (very negative) .. 1 (very positive).
+  float score = 2;
+  // As reported by the model, 0..1.
+  float confidence = 3;
+  // Mapped through the calibration of the model and route, 0..1.
+  float calibrated_confidence = 4;
+}
+
+message EntityMention {
+  // Registry id; empty when the entity is not (yet) in the registry.
+  string entity_id = 1;
+  // Canonical name from the registry, or the surface form when unlinked.
+  string name = 2;
+  // brand | product | organization | person_public | place | event | media_outlet | other
+  string type = 3;
+  // Sentiment toward this entity (aspect-based).
+  Sentiment sentiment = 4;
+  // What the sentiment is about: price, network, customer_service, ...
+  string aspect = 5;
+  // text | image | video
+  string origin = 6;
+}
+
+message Toxicity {
+  // none | mild | severe
+  string level = 1;
+  bool hate = 2;
+  bool threat = 3;
+  bool harassment = 4;
+}
+
+// ItemAnalysis is published on analysis.result.v1, keyed by content_id.
+message ItemAnalysis {
+  string event_id = 1;
+  string content_id = 2;
+  securebrand.content.v1.Platform platform = 3;
+  securebrand.content.v1.ContentKind kind = 4;
+  string source_id = 5;
+  string thread_id = 6;
+  bytes author_key = 7;
+  google.protobuf.Timestamp created_at = 8;
+  // ISO 639 code: ar, ckb, kmr, en, ...; "none" when there is no language.
+  string lang = 9;
+  // iraqi | gulf | levantine | egyptian | msa | other | none
+  string dialect = 10;
+  // arabic | latin | mixed | none
+  string script = 11;
+  bool code_switch = 12;
+  Sentiment sentiment = 13;
+  repeated EntityMention entities = 14;
+  repeated string topics = 15;
+  repeated string keywords = 16;
+  string intent = 17;
+  string emotion = 18;
+  Toxicity toxicity = 19;
+  bool spam = 20;
+  bool sarcasm = 21;
+  bool urgent = 22;
+  // Private persons mentioned (never stored as entities).
+  int32 private_person_mentions = 23;
+  // True when every provider refused to analyse the item.
+  bool refused = 24;
+  Provenance provenance = 25;
+}
+
+message Logo {
+  string entity_id = 1;
+  string name = 2;
+  float confidence = 3;
+}
+
+// MediaAnalysis is published on analysis.media.v1, keyed by media_id.
+message MediaAnalysis {
+  string event_id = 1;
+  string media_id = 2;
+  string owner_content_id = 3;
+  securebrand.content.v1.Platform platform = 4;
+  string source_id = 5;
+  securebrand.content.v1.MediaKind kind = 6;
+  repeated Logo logos = 7;
+  string text_in_image = 8;
+  string description = 9;
+  repeated string labels = 10;
+  int32 people_count = 11;
+  Sentiment sentiment = 12;
+  repeated EntityMention entities = 13;
+  repeated string topics = 14;
+  // Speech-to-text of a video's audio.
+  string transcript = 15;
+  string transcript_lang = 16;
+  Provenance provenance = 17;
+}

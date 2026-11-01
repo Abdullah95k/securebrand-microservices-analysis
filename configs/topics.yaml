@@ -30,3 +30,11 @@ topics:
   - {name: fb.media.deleted.v1,   partitions: 12, retention: 168h}
   - {name: fb.job.v1,             partitions: 12, retention: 168h}
   - {name: fb.erasure.v1,         partitions: 6,  retention: 720h}
+  # Canonical content contract (securebrand.content.v1), published by the
+  # normalisation services, and analysis results (securebrand.analysis.v1).
+  - {name: content.item.v1,            partitions: 96, retention: 168h}
+  - {name: content.media.ready.v1,     partitions: 24, retention: 168h}
+  - {name: content.media.processed.v1, partitions: 24, retention: 168h}
+  - {name: content.erasure.v1,         partitions: 6,  retention: 720h}
+  - {name: analysis.result.v1,         partitions: 96, retention: 168h}
+  - {name: analysis.media.v1,          partitions: 24, retention: 168h}
