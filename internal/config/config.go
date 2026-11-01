@@ -33,6 +33,8 @@ type Config struct {
 	Privacy   Privacy   `koanf:"privacy"`
 	// RegistrySync follows Facebook's doc_id rotations (fbs-registry-sync).
 	RegistrySync RegistrySync `koanf:"registry_sync"`
+	// Analysis configures sb-analysis, the content analysis service.
+	Analysis Analysis `koanf:"analysis"`
 }
 
 // RegistrySync configures the service that discovers rotated doc_ids on
@@ -448,6 +450,9 @@ func (c *Config) Validate() error {
 	}
 	if c.RegistrySync.Interval <= 0 || c.RegistrySync.Timeout <= 0 {
 		errs = append(errs, errors.New("registry_sync.interval and registry_sync.timeout must be > 0"))
+	}
+	if err := c.Analysis.Validate(); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }

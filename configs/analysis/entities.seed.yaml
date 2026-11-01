@@ -1,0 +1,57 @@
+# Seed of the entity registry: public Iraqi brands, organisations and places
+# with Arabic, English and Arabizi spellings. Loaded by `sb-analysis
+# entities import` (also on first start); the owner's brand list extends or
+# replaces it. Aliases are matched after normalisation (alef/yaa/taa forms,
+# diacritics, clitics و/ب/ل/ال). Never alias a common word: "زين" alone means
+# "good" in Iraqi Arabic, so Zain Iraq is aliased only in longer forms.
+# Only public organisations and places here; public figures are added by
+# review (docs/design/analysis-service.md, people policy).
+entities:
+  # Telecom and internet
+  - {id: asiacell, name: Asiacell, name_ar: آسياسيل, type: brand, aliases: [آسياسيل, اسياسيل, آسيا سيل, اسيا سيل, asiacell, asia cell, asiasell, asyasel]}
+  - {id: zain-iraq, name: Zain Iraq, name_ar: زين العراق, type: brand, aliases: [زين العراق, شركة زين, شبكة زين, zain iraq, zainiraq]}
+  - {id: korek, name: Korek Telecom, name_ar: كورك, type: brand, aliases: [كورك, كورك تليكوم, korek, korektel]}
+  - {id: earthlink, name: Earthlink, name_ar: إيرثلنك, type: brand, aliases: [ايرثلنك, ارثلنك, ايرث لنك, earthlink, earth link]}
+  - {id: fastlink, name: Fastlink, name_ar: فاست لنك, type: brand, aliases: [فاست لنك, فاستلنك, fastlink]}
+  - {id: newroz-telecom, name: Newroz Telecom, name_ar: نوروز تيليكوم, type: brand, aliases: [نوروز تيليكوم, نوروز تليكوم, newroz telecom, newroz]}
+  - {id: cmc-iraq, name: Communications and Media Commission, name_ar: هيئة الإعلام والاتصالات, type: organization, aliases: [هيئة الاعلام والاتصالات, هيئة الإعلام والاتصالات, cmc iraq]}
+  # Banking and payments
+  - {id: zaincash, name: ZainCash, name_ar: زين كاش, type: brand, aliases: [زين كاش, زينكاش, zain cash, zaincash]}
+  - {id: qi-card, name: Qi Card, name_ar: كي كارد, type: brand, aliases: [كي كارد, كيكارد, ماستر كي, qi card, qicard, master qi]}
+  - {id: asiahawala, name: AsiaHawala, name_ar: آسيا حوالة, type: brand, aliases: [اسيا حوالة, آسيا حوالة, asiahawala, asia hawala]}
+  - {id: fastpay, name: FastPay, name_ar: فاست باي, type: brand, aliases: [فاست باي, fastpay, fast pay]}
+  - {id: fib, name: First Iraqi Bank, name_ar: المصرف العراقي الأول, type: brand, aliases: [المصرف العراقي الاول, first iraqi bank, fib bank]}
+  - {id: rafidain-bank, name: Rafidain Bank, name_ar: مصرف الرافدين, type: organization, aliases: [مصرف الرافدين, rafidain bank]}
+  - {id: rasheed-bank, name: Rasheed Bank, name_ar: مصرف الرشيد, type: organization, aliases: [مصرف الرشيد, rasheed bank]}
+  - {id: tbi, name: Trade Bank of Iraq, name_ar: المصرف العراقي للتجارة, type: organization, aliases: [المصرف العراقي للتجارة, trade bank of iraq]}
+  - {id: cbi, name: Central Bank of Iraq, name_ar: البنك المركزي العراقي, type: organization, aliases: [البنك المركزي العراقي, البنك المركزي, central bank of iraq]}
+  # Transport and delivery
+  - {id: iraqi-airways, name: Iraqi Airways, name_ar: الخطوط الجوية العراقية, type: brand, aliases: [الخطوط الجوية العراقية, الخطوط العراقية, iraqi airways]}
+  - {id: fly-baghdad, name: Fly Baghdad, name_ar: فلاي بغداد, type: brand, aliases: [فلاي بغداد, fly baghdad, flybaghdad]}
+  - {id: toters, name: Toters, name_ar: توترز, type: brand, aliases: [توترز, toters]}
+  - {id: careem, name: Careem, name_ar: كريم, type: brand, aliases: [تطبيق كريم, careem]}
+  - {id: baly, name: Baly, name_ar: بلي, type: brand, aliases: [تطبيق بلي, baly app, baly]}
+  - {id: lezzoo, name: Lezzoo, name_ar: ليزو, type: brand, aliases: [ليزو, lezzoo]}
+  # Public bodies
+  - {id: ministry-electricity, name: Ministry of Electricity, name_ar: وزارة الكهرباء, type: organization, aliases: [وزارة الكهرباء, ministry of electricity]}
+  - {id: ministry-health, name: Ministry of Health, name_ar: وزارة الصحة, type: organization, aliases: [وزارة الصحة, ministry of health]}
+  - {id: ministry-education, name: Ministry of Education, name_ar: وزارة التربية, type: organization, aliases: [وزارة التربية, ministry of education]}
+  # Places (governorates)
+  - {id: baghdad, name: Baghdad, name_ar: بغداد, type: place, aliases: [بغداد, baghdad]}
+  - {id: basra, name: Basra, name_ar: البصرة, type: place, aliases: [البصرة, بصرة, basra, basrah]}
+  - {id: erbil, name: Erbil, name_ar: أربيل, type: place, aliases: [اربيل, أربيل, هولير, erbil, hawler]}
+  - {id: mosul, name: Mosul, name_ar: الموصل, type: place, aliases: [الموصل, موصل, mosul]}
+  - {id: najaf, name: Najaf, name_ar: النجف, type: place, aliases: [النجف, najaf]}
+  - {id: karbala, name: Karbala, name_ar: كربلاء, type: place, aliases: [كربلاء, كربلا, karbala]}
+  - {id: sulaymaniyah, name: Sulaymaniyah, name_ar: السليمانية, type: place, aliases: [السليمانية, سليمانية, sulaymaniyah, slemani]}
+  - {id: kirkuk, name: Kirkuk, name_ar: كركوك, type: place, aliases: [كركوك, kirkuk]}
+  - {id: duhok, name: Duhok, name_ar: دهوك, type: place, aliases: [دهوك, duhok]}
+  - {id: anbar, name: Anbar, name_ar: الأنبار, type: place, aliases: [الانبار, الأنبار, anbar]}
+  - {id: diyala, name: Diyala, name_ar: ديالى, type: place, aliases: [ديالى, diyala]}
+  - {id: babil, name: Babil, name_ar: بابل, type: place, aliases: [بابل, الحلة, babil, hillah]}
+  - {id: dhi-qar, name: Dhi Qar, name_ar: ذي قار, type: place, aliases: [ذي قار, الناصرية, dhi qar, nasiriyah]}
+  - {id: maysan, name: Maysan, name_ar: ميسان, type: place, aliases: [ميسان, العمارة, maysan]}
+  - {id: wasit, name: Wasit, name_ar: واسط, type: place, aliases: [واسط, الكوت, wasit, kut]}
+  - {id: diwaniyah, name: Al-Qadisiyyah, name_ar: الديوانية, type: place, aliases: [الديوانية, القادسية, diwaniyah]}
+  - {id: muthanna, name: Muthanna, name_ar: المثنى, type: place, aliases: [المثنى, السماوة, muthanna, samawah]}
+  - {id: saladin, name: Saladin, name_ar: صلاح الدين, type: place, aliases: [صلاح الدين, تكريت, saladin, tikrit]}

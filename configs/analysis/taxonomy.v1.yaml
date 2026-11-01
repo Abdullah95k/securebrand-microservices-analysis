@@ -1,0 +1,172 @@
+# Topic taxonomy for Iraqi news and brand pages. Proposed from domain
+# knowledge (the pilot's content was not read); the owner edits or replaces
+# it. Any change must bump `version`: results record it, and items can be
+# re-analysed selectively. Ids are stable: never reuse a removed id.
+version: "tax-v1"
+topics:
+  - id: politics
+    en: Politics
+    ar: سياسة
+    children:
+      - {id: politics.government, en: Government and ministries, ar: الحكومة والوزارات}
+      - {id: politics.parliament, en: Parliament and laws, ar: البرلمان والقوانين}
+      - {id: politics.elections, en: Elections and parties, ar: الانتخابات والأحزاب}
+      - {id: politics.foreign, en: Foreign relations, ar: العلاقات الخارجية}
+      - {id: politics.corruption, en: Corruption and accountability, ar: الفساد والمحاسبة}
+      - {id: politics.protests, en: Protests and demonstrations, ar: الاحتجاجات والتظاهرات}
+      - {id: politics.kurdistan, en: Kurdistan Region affairs, ar: شؤون إقليم كردستان}
+  - id: security
+    en: Security
+    ar: الأمن
+    children:
+      - {id: security.military, en: Military and armed forces, ar: الجيش والقوات المسلحة}
+      - {id: security.terrorism, en: Terrorism and attacks, ar: الإرهاب والهجمات}
+      - {id: security.crime, en: Crime and police, ar: الجريمة والشرطة}
+      - {id: security.border, en: Borders, ar: الحدود}
+  - id: economy
+    en: Economy
+    ar: الاقتصاد
+    children:
+      - {id: economy.prices, en: Prices and cost of living, ar: الأسعار وغلاء المعيشة}
+      - {id: economy.dollar_rate, en: Dollar exchange rate, ar: سعر صرف الدولار}
+      - {id: economy.salaries, en: Salaries and pensions, ar: الرواتب والتقاعد}
+      - {id: economy.jobs, en: Jobs and unemployment, ar: التوظيف والبطالة}
+      - {id: economy.oil_energy, en: Oil and energy, ar: النفط والطاقة}
+      - {id: economy.investment, en: Investment and business, ar: الاستثمار والأعمال}
+      - {id: economy.budget, en: State budget and taxes, ar: الموازنة والضرائب}
+  - id: services
+    en: Public services
+    ar: الخدمات العامة
+    children:
+      - {id: services.electricity, en: Electricity supply, ar: الكهرباء}
+      - {id: services.water, en: Water and sewage, ar: الماء والمجاري}
+      - {id: services.roads, en: Roads, bridges and traffic, ar: الطرق والجسور والمرور}
+      - {id: services.municipal, en: Municipal services and cleanliness, ar: الخدمات البلدية والنظافة}
+      - {id: services.housing, en: Housing, ar: السكن}
+      - {id: services.government_paperwork, en: Official documents and paperwork, ar: المعاملات والوثائق الرسمية}
+  - id: telecom
+    en: Telecom and internet
+    ar: الاتصالات والإنترنت
+    children:
+      - {id: telecom.network, en: Network coverage and call quality, ar: التغطية وجودة الاتصال}
+      - {id: telecom.internet, en: Mobile and home internet speed, ar: سرعة الإنترنت}
+      - {id: telecom.pricing, en: Packages, prices and balance, ar: الباقات والأسعار والرصيد}
+      - {id: telecom.customer_service, en: Customer service and stores, ar: خدمة العملاء والمراكز}
+      - {id: telecom.billing, en: Billing and unexpected deductions, ar: الفواتير والاستقطاعات}
+      - {id: telecom.sim, en: SIM cards and numbers, ar: الشرائح والأرقام}
+      - {id: telecom.outage, en: Outages and internet cuts, ar: انقطاع الشبكة والإنترنت}
+  - id: banking
+    en: Banking and payments
+    ar: المصارف والدفع
+    children:
+      - {id: banking.cards, en: Cards and ATMs, ar: البطاقات والصرافات}
+      - {id: banking.wallets, en: Mobile wallets and e-payment, ar: المحافظ الإلكترونية والدفع الإلكتروني}
+      - {id: banking.loans, en: Loans and advances, ar: القروض والسلف}
+      - {id: banking.fees, en: Fees and commissions, ar: الرسوم والعمولات}
+      - {id: banking.salary_localisation, en: Salary localisation and transfers, ar: توطين الرواتب والتحويلات}
+  - id: retail
+    en: Retail and consumer products
+    ar: التجزئة والمنتجات
+    children:
+      - {id: retail.product_quality, en: Product quality, ar: جودة المنتج}
+      - {id: retail.availability, en: Availability and stock, ar: التوفر}
+      - {id: retail.pricing, en: Prices and value, ar: السعر والقيمة}
+      - {id: retail.delivery, en: Delivery and shipping, ar: التوصيل والشحن}
+      - {id: retail.customer_service, en: Customer service, ar: خدمة العملاء}
+      - {id: retail.offers, en: Offers and discounts, ar: العروض والتخفيضات}
+      - {id: retail.warranty, en: Returns and warranty, ar: الإرجاع والضمان}
+      - {id: retail.counterfeit, en: Counterfeit and fraud, ar: التقليد والاحتيال}
+  - id: food
+    en: Food and restaurants
+    ar: الطعام والمطاعم
+    children:
+      - {id: food.taste_quality, en: Taste and quality, ar: الطعم والجودة}
+      - {id: food.hygiene, en: Hygiene and food safety, ar: النظافة وسلامة الغذاء}
+      - {id: food.service, en: Restaurant service, ar: خدمة المطعم}
+      - {id: food.delivery_apps, en: Delivery apps, ar: تطبيقات التوصيل}
+  - id: automotive
+    en: Automotive and fuel
+    ar: السيارات والوقود
+    children:
+      - {id: automotive.cars, en: Cars and dealers, ar: السيارات والوكلاء}
+      - {id: automotive.fuel, en: Fuel and stations, ar: الوقود والمحطات}
+      - {id: automotive.maintenance, en: Maintenance and spare parts, ar: الصيانة وقطع الغيار}
+  - id: real_estate
+    en: Real estate
+    ar: العقارات
+    children:
+      - {id: real_estate.projects, en: Residential projects, ar: المشاريع السكنية}
+      - {id: real_estate.prices, en: Property prices and rent, ar: أسعار العقارات والإيجار}
+  - id: travel
+    en: Travel and transport
+    ar: السفر والنقل
+    children:
+      - {id: travel.airlines, en: Airlines and flights, ar: الطيران والرحلات}
+      - {id: travel.airports, en: Airports and border crossings, ar: المطارات والمنافذ}
+      - {id: travel.tourism, en: Tourism and pilgrimage travel, ar: السياحة والسفر الديني}
+      - {id: travel.public_transport, en: Public transport and taxis, ar: النقل العام والتكسي}
+  - id: health
+    en: Health
+    ar: الصحة
+    children:
+      - {id: health.hospitals, en: Hospitals and clinics, ar: المستشفيات والعيادات}
+      - {id: health.medicine, en: Medicines and pharmacies, ar: الأدوية والصيدليات}
+      - {id: health.disease, en: Diseases and outbreaks, ar: الأمراض والأوبئة}
+  - id: education
+    en: Education
+    ar: التعليم
+    children:
+      - {id: education.schools, en: Schools, ar: المدارس}
+      - {id: education.exams, en: Exams and results, ar: الامتحانات والنتائج}
+      - {id: education.universities, en: Universities, ar: الجامعات}
+  - id: religion
+    en: Religion and occasions
+    ar: الدين والمناسبات
+    children:
+      - {id: religion.occasions, en: Religious occasions and holidays, ar: المناسبات والأعياد الدينية}
+      - {id: religion.pilgrimage, en: Pilgrimage and visits, ar: الزيارات والحج}
+      - {id: religion.condolences, en: Condolences and prayers, ar: التعازي والدعاء}
+  - id: sports
+    en: Sports
+    ar: الرياضة
+    children:
+      - {id: sports.football_iraq, en: Iraqi football and national team, ar: الكرة العراقية والمنتخب}
+      - {id: sports.football_world, en: International football, ar: الكرة العالمية}
+      - {id: sports.other, en: Other sports, ar: رياضات أخرى}
+  - id: entertainment
+    en: Entertainment and media
+    ar: الترفيه والإعلام
+    children:
+      - {id: entertainment.tv, en: TV and series, ar: التلفزيون والمسلسلات}
+      - {id: entertainment.music, en: Music and artists, ar: الموسيقى والفنانون}
+      - {id: entertainment.events, en: Events and concerts, ar: الفعاليات والحفلات}
+      - {id: entertainment.media_outlets, en: News outlets and journalism, ar: وسائل الإعلام والصحافة}
+  - id: social
+    en: Social issues
+    ar: قضايا اجتماعية
+    children:
+      - {id: social.family, en: Family and marriage, ar: الأسرة والزواج}
+      - {id: social.women, en: Women, ar: المرأة}
+      - {id: social.youth, en: Youth, ar: الشباب}
+      - {id: social.tribal, en: Tribal affairs, ar: الشؤون العشائرية}
+      - {id: social.humanitarian, en: Charity and humanitarian aid, ar: الأعمال الخيرية والإنسانية}
+      - {id: social.weather, en: Weather and environment, ar: الطقس والبيئة}
+  - id: technology
+    en: Technology
+    ar: التكنولوجيا
+    children:
+      - {id: technology.devices, en: Phones and devices, ar: الهواتف والأجهزة}
+      - {id: technology.apps, en: Apps and platforms, ar: التطبيقات والمنصات}
+      - {id: technology.scams, en: Online scams and hacking, ar: الاحتيال الإلكتروني والاختراق}
+  - id: brand
+    en: Brand engagement
+    ar: التفاعل مع العلامات التجارية
+    children:
+      - {id: brand.giveaway, en: Giveaways and competitions, ar: المسابقات والسحوبات}
+      - {id: brand.advertising, en: Ads and campaigns, ar: الإعلانات والحملات}
+      - {id: brand.sponsorship, en: Sponsorships and CSR, ar: الرعايات والمسؤولية الاجتماعية}
+      - {id: brand.greetings, en: Greetings and congratulations, ar: التهاني والتبريكات}
+      - {id: brand.jobs, en: Jobs at the company, ar: التوظيف في الشركة}
+  - id: other
+    en: Other
+    ar: أخرى

@@ -1,0 +1,380 @@
+package pipeline_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/core"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/entities"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/pipeline"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/provider"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/provider/fake"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/provider/registry"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/store"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/taxonomy"
+	"github.com/abdullah95k/securebrand-microservices/internal/config"
+	"github.com/abdullah95k/securebrand-microservices/internal/testenv"
+)
+
+type env struct {
+	s        *store.Store
+	p        *pipeline.Pipeline
+	primary  *fake.Provider
+	fallback *fake.Provider
+}
+
+// setup builds a pipeline over a fresh database, with fake primary and
+// fallback providers on every route.
+func setup(t *testing.T, edit func(*config.Analysis)) *env {
+	t.Helper()
+	db := testenv.Postgres(t)
+	ctx := context.Background()
+	if err := store.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	full, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := full.Analysis
+	for name, r := range cfg.Routes {
+		r.Provider, r.FallbackProvider, r.FallbackModel = "primary", "", ""
+		cfg.Routes[name] = r
+	}
+	cfg.Realtime.Wait = 0
+	if edit != nil {
+		edit(&cfg)
+	}
+	loc, _ := time.LoadLocation(cfg.Timezone)
+	st := store.New(db, loc)
+	tax, err := taxonomy.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, _ := registry.New(nil)
+	e := &env{s: st, primary: fake.New("primary"), fallback: fake.New("fallback")}
+	reg.Add("primary", e.primary, true, 0)
+	reg.Add("fallback", e.fallback, true, 0)
+	e.p = pipeline.New(st, reg, tax, cfg, nil)
+	seed, err := entities.LoadSeed("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SeedIfEmpty(ctx, seed); err != nil {
+		t.Fatal(err)
+	}
+	r, err := st.LoadRegistry(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.p.SetEntities(r)
+	return e
+}
+
+func (e *env) ingest(t *testing.T, items ...*core.Item) {
+	t.Helper()
+	if _, err := e.s.Ingest(context.Background(), items, e.p.Plan); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (e *env) count(t *testing.T, q string, args ...any) int {
+	t.Helper()
+	var n int
+	if err := e.s.DB.QueryRow(context.Background(), q, args...).Scan(&n); err != nil {
+		t.Fatalf("%s: %v", q, err)
+	}
+	return n
+}
+
+var at = time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Second)
+
+func post() *core.Item {
+	return &core.Item{ContentID: "fb:post:1", Platform: "facebook", Kind: core.KindPost, SourceID: "fb:page:1", SourceName: "Asiacell Iraq",
+		CreatedAt: at.Add(-time.Hour), ObservedAt: at, Text: "عرض جديد على باقات الانترنت", Status: core.StatusVisible}
+}
+
+func comment(n int, text string) *core.Item {
+	id := "fb:comment:" + string(rune('0'+n))
+	return &core.Item{ContentID: id, Platform: "facebook", Kind: core.KindComment, SourceID: "fb:page:1", ThreadID: "fb:post:1",
+		ParentID: "fb:post:1", AuthorKey: []byte{byte(n)}, CreatedAt: at, ObservedAt: at, Text: text, Status: core.StatusVisible}
+}
+
+func TestBatchLaneEndToEnd(t *testing.T) {
+	e := setup(t, nil)
+	ctx := context.Background()
+	e.ingest(t, post(), comment(1, "شبكة اسياسيل خايسة"), comment(2, "شكرا الكم"), comment(3, "@someone"))
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'in_progress'`); n != 1 {
+		t.Fatalf("batches %d", n)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE is_current`); n != 4 {
+		t.Fatalf("analyses %d, want 4 (post + 3 comments)", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE content_id = 'fb:comment:1' AND sentiment = 'negative' AND lane = 'batch'`); n != 1 {
+		t.Fatal("comment 1 not negative on the batch lane")
+	}
+	// The alias matcher's hint makes the model's entity link to the registry.
+	if n := e.count(t, `SELECT count(*) FROM analysis.entity_mentions WHERE content_id = 'fb:comment:1' AND entity_id = 'asiacell'`); n != 1 {
+		t.Fatal("asiacell not linked")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_requests WHERE status = 'done'`); n != 2 {
+		t.Fatalf("requests done %d (one per route)", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue`); n != 0 {
+		t.Fatal("queue not empty")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.outbox WHERE topic = 'analysis.result.v1'`); n != 4 {
+		t.Fatal("outbox")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'ended'`); n != 1 {
+		t.Fatal("batch not ended")
+	}
+	// Polling again finds nothing to do.
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUrgentItemsGoRealtimeWithContext(t *testing.T) {
+	e := setup(t, nil)
+	ctx := context.Background()
+	if _, err := e.s.DB.Exec(ctx, `INSERT INTO analysis.clients VALUES ('c1', 'Client', now())`); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.TrackEntity(ctx, "c1", "asiacell", "own"); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := e.s.LoadRegistry(ctx)
+	e.p.SetEntities(r)
+	e.ingest(t, post(), comment(1, "آسياسيل النت واقف من الصبح"), comment(2, "صباح الخير"))
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE lane = 'realtime' AND priority = 0`); n != 1 {
+		t.Fatal("tracked-entity comment not urgent")
+	}
+	n, err := e.p.RealtimeOnce(ctx)
+	if err != nil || n != 1 {
+		t.Fatalf("realtime processed %d %v", n, err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE content_id = 'fb:comment:1' AND lane = 'realtime'`); n != 1 {
+		t.Fatal("urgent comment not analysed in real time")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE lane = 'batch'`); n != 2 {
+		t.Fatal("the other items should wait for the batch lane")
+	}
+}
+
+func TestMissingItemsAreRetriedAlone(t *testing.T) {
+	e := setup(t, nil)
+	ctx := context.Background()
+	e.primary.Drop = func(i int) bool { return i == 1 }
+	e.ingest(t, comment(1, "حلو"), comment(2, "سيء"), comment(3, "عادي"))
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses`); n != 2 {
+		t.Fatalf("analyses %d, want 2", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE attempts = 1 AND lease_until IS NULL AND last_error LIKE '%missing%'`); n != 1 {
+		t.Fatal("missing item not released")
+	}
+	e.primary.Drop = nil
+	if _, err := e.s.DB.Exec(ctx, `UPDATE analysis.analysis_queue SET not_before = now() - interval '1s'`); err != nil {
+		t.Fatal(err)
+	}
+	calls := e.primary.Calls()
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses`); n != 3 {
+		t.Fatal("retried item not analysed")
+	}
+	if e.primary.Calls()-calls != 1 {
+		t.Fatal("retry should be one request with the item alone")
+	}
+}
+
+func TestRefusalIsolatedThenFallback(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) {
+		r := c.Routes[core.RouteComment]
+		r.Lane, r.FallbackProvider, r.FallbackModel = core.LaneRealtime, "fallback", "fallback-model"
+		c.Routes[core.RouteComment] = r
+	})
+	ctx := context.Background()
+	// The primary refuses anything containing the word "تهديد".
+	e.primary.Refuse = func(req provider.Request) bool { return contains(req.User, "تهديد") }
+	e.ingest(t, comment(1, "عادي"), comment(2, "تهديد"))
+	if _, err := e.p.RealtimeOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses`); n != 0 {
+		t.Fatal("a refused group stored results")
+	}
+	// Retried one by one: the clean item on the primary, the refused one on
+	// the fallback.
+	if _, err := e.s.DB.Exec(ctx, `UPDATE analysis.analysis_queue SET not_before = now() - interval '1s'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.p.RealtimeOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE content_id = 'fb:comment:1' AND NOT fallback AND provider = 'primary'`); n != 1 {
+		t.Fatal("clean item not analysed by the primary")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE content_id = 'fb:comment:2' AND fallback AND model = 'fallback-model'`); n != 1 {
+		t.Fatal("refused item not analysed by the fallback")
+	}
+	if e.fallback.Calls() != 1 {
+		t.Fatalf("fallback calls %d", e.fallback.Calls())
+	}
+}
+
+func TestRefusedEverywhereIsStoredAsRefused(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) {
+		r := c.Routes[core.RouteComment]
+		r.Lane = core.LaneRealtime
+		c.Routes[core.RouteComment] = r
+	})
+	e.primary.Refuse = func(provider.Request) bool { return true }
+	e.ingest(t, comment(1, "نص"))
+	if _, err := e.p.RealtimeOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE refused AND sentiment = 'neutral'`); n != 1 {
+		t.Fatal("refused item not stored as refused")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue`); n != 0 {
+		t.Fatal("refused item still queued")
+	}
+}
+
+func TestProviderOutageFallsBackInRealtime(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) {
+		r := c.Routes[core.RouteComment]
+		r.Lane, r.FallbackProvider, r.FallbackModel = core.LaneRealtime, "fallback", "fallback-model"
+		c.Routes[core.RouteComment] = r
+	})
+	e.primary.Fail = func(provider.Request) error { return &provider.Error{Status: 529, Retryable: true, Err: errOverloaded} }
+	e.ingest(t, comment(1, "حلو"))
+	if _, err := e.p.RealtimeOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE fallback`); n != 1 {
+		t.Fatal("not served by the fallback")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_requests WHERE fallback AND provider = 'fallback' AND status = 'done'`); n != 1 {
+		t.Fatal("request does not record the fallback")
+	}
+}
+
+func TestBudgetHoldsBatchWork(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) {
+		c.Budget.DailyUSD = 0.0000001
+		c.Pricing["claude-haiku-5-5"] = config.ModelPrice{Input: 1, Output: 1}
+	})
+	ctx := context.Background()
+	e.ingest(t, comment(1, "حلو"))
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if e.primary.Calls() != 0 {
+		t.Fatal("budget did not hold the request")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE attempts = 0 AND not_before > now()`); n != 1 {
+		t.Fatal("held item not released for later without an attempt")
+	}
+}
+
+func TestEscalationAndAudit(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) {
+		esc := c.Routes[core.RouteEscalation]
+		esc.MinConfidence = 0.95 // the fake answers 0.8
+		esc.Model = "strong-model"
+		c.Routes[core.RouteEscalation] = esc
+		au := c.Routes[core.RouteAudit]
+		au.SampleRate = 1
+		au.Model = "audit-model"
+		c.Routes[core.RouteAudit] = au
+	})
+	ctx := context.Background()
+	if _, err := e.s.DB.Exec(ctx, `INSERT INTO analysis.clients VALUES ('c1', 'Client', now())`); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.TrackEntity(ctx, "c1", "korek", "competitor"); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := e.s.LoadRegistry(ctx)
+	e.p.SetEntities(r)
+	e.ingest(t, comment(1, "كورك احسن"), comment(2, "صباح الخير"))
+	// Urgent (tracked) comment goes real time; the other one batch.
+	if _, err := e.p.RealtimeOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Follow-ups were queued and processed by the next batch round.
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE content_id = 'fb:comment:1' AND is_current AND route = 'escalation' AND model = 'strong-model'`); n != 1 {
+		t.Fatal("escalated result is not current")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE content_id = 'fb:comment:2' AND route = 'escalation'`); n != 0 {
+		t.Fatal("untracked item escalated")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE purpose = 'audit' AND NOT is_current AND model = 'audit-model'`); n != 2 {
+		t.Fatal("audit results")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.entity_mentions WHERE content_id = 'fb:comment:1'`); n != 1 {
+		t.Fatal("mentions should follow the current (escalated) analysis only")
+	}
+}
+
+func TestSampled(t *testing.T) {
+	n := 0
+	for i := 0; i < 100000; i++ {
+		if pipeline.Sampled("fb:comment:"+itoa(i), 0.01) {
+			n++
+		}
+	}
+	if n < 800 || n > 1200 {
+		t.Fatalf("sampled %d of 100000 at 1%%", n)
+	}
+	if pipeline.Sampled("x", 0) || !pipeline.Sampled("x", 1) {
+		t.Fatal("bounds")
+	}
+	if pipeline.Sampled("fb:comment:42", 0.5) != pipeline.Sampled("fb:comment:42", 0.5) {
+		t.Fatal("not deterministic")
+	}
+}
+
+func TestCalibration(t *testing.T) {
+	c := &pipeline.Calibration{Points: [][2]float64{{0.5, 0.3}, {0.9, 0.7}, {1, 0.8}}}
+	for raw, want := range map[float64]float64{0.1: 0.3, 0.5: 0.3, 0.7: 0.5, 0.9: 0.7, 0.95: 0.75, 1.2: 0.8} {
+		if got := c.Apply(raw); got < want-1e-9 || got > want+1e-9 {
+			t.Errorf("Apply(%v) = %v, want %v", raw, got, want)
+		}
+	}
+	var none *pipeline.Calibration
+	if none.Apply(0.42) != 0.42 {
+		t.Fatal("nil calibration must be identity")
+	}
+}
