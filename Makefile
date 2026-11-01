@@ -54,9 +54,7 @@ infra-down:
 
 ## Integration tests against real Postgres/Redpanda/Valkey (make infra-up first).
 test-integration:
-	$(PILOT_COMPOSE) --profile analysis down -v
-	@# No pilot left: the local targets may run again (NOT_PILOT).
-	rm -f $(PILOT_OUT)/pilot-run.yaml
+	$(TEST_ENV) $(GO) test -count=1 -timeout 25m ./...
 
 ## Load tests against fakefb (opt-in; prints a report). Size with
 ## FBS_LOADTEST_PAGES, _POSTS, _COMMENTS, _ROWS, _LATENCY; FBS_LOADTEST_OUT=file.
