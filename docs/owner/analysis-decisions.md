@@ -8,12 +8,14 @@ A new service, **sb-analysis**, reads every post and comment the collector saves
 - the language and dialect;
 - whether the author is positive, negative, neutral or mixed;
 - which brands, organisations, public people, positions (such as "the Prime Minister") and places are mentioned, and what the author thinks of each one;
-- every topic it is about. **The topic list grows by itself:** when content is about something missing from the list, the AI proposes it, the system checks it is not a duplicate (in Arabic and English), and once a day new topics join the list. Brands, people, positions and places become topics automatically too;
+- every topic it is about, said directly or only implied ("الوطنية طافية" is about electricity). Each topic has one id, so it works the same in every language, and topics have sub-topics ("Electricity cuts" under "Electricity supply"): asking for electricity also finds the cuts. `sb-analysis topics find "electrical cuts"` (or in Arabic) shows the topics and how many items carry them. **The topic list grows by itself:** when content is about something missing from the list, the AI proposes it, the system checks it is not a duplicate (in Arabic and English), and once a day new topics join the list. Brands, people, positions and places become topics automatically too;
 - whether it is a complaint, a question, praise, spam, toxic, or urgent;
-- **whether a post is an ad:** a brand promoting itself, a disclosed paid ad, a hidden ad (an influencer promoting without saying so), or a private sale;
-- **possible legal or policy breaches**, for a person to review: incitement, terrorism, child abuse, sexual content, graphic violence, self-harm, drugs, weapons, gambling, restricted goods, scams, unlicensed finance, fake goods, privacy violations, defamation.
+- **whether a post is an ad:** affiliate marketing (links or codes that earn a commission), a brand promoting itself, a disclosed paid ad, a hidden ad (an influencer promoting without saying so), or a private sale;
+- **possible legal or policy breaches**, for a person to review: hate speech, threats, incitement, terrorism, child abuse, sexual content, graphic violence, self-harm, drugs, weapons, gambling, restricted goods, scams, unlicensed finance, fake goods, privacy violations, defamation (officials included), misinformation, extortion, and other crimes under Iraqi law (trafficking, bribery, vote buying, selling exam questions...).
 
-Separately, once a day, every account is scored for **bot or fake-account behaviour** (posting in bursts, copying the same text everywhere, the same text as many other accounts, replying within seconds, posting day and night, mostly spam). Flagged accounts, and everything they ever posted, carry the flag.
+Separately, once a day, every account with 5 or more comments in the last 30 days is scored for **bot or fake-account behaviour** (posting in bursts, copying the same text everywhere, the same text as many other accounts on the same day, replying within seconds, posting day and night, mostly spam). Small accounts with only 2 or 3 comments are flagged too when they post the same text as a group of other accounts on the same day, which is how networks of fake accounts work. Flagged accounts, and everything they ever posted, carry the flag.
+
+**Generic titles are checked for the country.** "رئيس الوزراء" alone could be any country's prime minister. The system links it to Iraq's Prime Minister only when the context is Iraqi; "رئيس الوزراء العراقي" always links, "رئيس الوزراء البريطاني" never does. The same applies to ministers, the speaker, the central bank and ministries.
 
 It does the same for images and videos (logos, text in the picture, what is shown, and speech turned into text). The files are deleted afterwards; only the results are kept.
 
@@ -76,9 +78,9 @@ Each has a default. If you do not answer, I continue with the default.
 10. **Backup AI company.**
     - *Default:* none until you add a second key.
     - *I recommend* adding Google (Gemini) or OpenAI, so analysis continues if Anthropic has an outage.
-11. **Legal flags: what is never flagged.**
-    - *Default:* criticism of the government, officials, companies or religion, political opinions, insults, news about crimes, and discussion of sexuality or identity are **never** flagged as breaches. Iraqi law has been used against critics and against LGBT content; flagging those would turn the tool against ordinary users.
-    - Change this only with your lawyer.
+11. **Legal flags: the line.**
+    - Criticism and opinions are flagged when they also contain hate speech, threats, incitement, defamation, misinformation or any other listed breach.
+    - Two things are not flagged on their own, even where Iraqi law punishes them: peaceful criticism of the government, officials or religion, and a person's sexuality or gender identity. Flagging them would make the tool a list of people to prosecute for speech or identity. If such content contains hate speech, threats, explicit sexual content, defamation or misinformation, it is flagged under those.
 12. **Bot flags and your clients.**
     - *Default:* bot flags stay internal until you have reviewed a sample (`sb-analysis authors list`) and the thresholds are tuned on your data. Behaviour alone gives false alarms (super-fans, people who enter every contest).
     - You can mark any account as bot or human yourself; your decision always wins.

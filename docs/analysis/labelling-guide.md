@@ -79,7 +79,7 @@ Up to six entities per item; most comments have none or one.
 
 ## 4. Topics (every one that applies)
 
-Pick **every** topic from the list that applies, the most specific ones (it is grouped by area, with Arabic names). Most items have one to three. If nothing fits, pick `other` and write the missing topic in the notes (for example "missing topic: water shortage"). Brands, people and places are entities, not topics: they become topics automatically.
+Pick **every** topic from the list that the item is about, whether it says it directly or only implies it ("الوطنية طافية" is about electricity supply), the most specific ones (it is grouped by area, with Arabic names; some topics have sub-topics, shown indented). Most items have one to three. If nothing fits, pick `other` and write the missing topic in the notes (for example "missing topic: water shortage"). Brands, people and places are entities, not topics: they become topics automatically.
 
 Examples:
 - "النت واقف من الصبح": `telecom.outage`.
@@ -121,6 +121,7 @@ Examples:
 | Choice | When |
 |---|---|
 | `none` | Not an ad |
+| `affiliate` | Affiliate marketing: links or codes that earn the poster a commission ("استخدم كودي", "الرابط بالبايو", Temu, Shein or AliExpress codes) |
 | `own` | A brand, shop or business promoting its own products, services or offers |
 | `paid` | Disclosed paid promotion of another brand ("إعلان", "برعاية", "sponsored") |
 | `hidden` | Reads like paid promotion but is not marked as such: an influencer or news page praising a product with prices, discount codes, links or "order now" |
@@ -130,7 +131,9 @@ Examples:
 
 | Category | When |
 |---|---|
-| `incitement` | Calls for violence or for hatred against a group (sect, ethnicity, religion, nationality) |
+| `hate_speech` | Attacks or dehumanises people for their sect, ethnicity, religion, tribe, nationality, gender or disability |
+| `threat` | Threatens someone with harm (including tribal threats) |
+| `incitement` | Calls for violence against anyone, for revenge or tribal attacks, or for hatred against a sect, ethnicity, religion, tribe or nationality |
 | `terrorism` | Praises, supports or spreads propaganda for terrorist or armed extremist groups |
 | `child_safety` | Sexualises, abuses or exploits children |
 | `sexual_content` | Explicit sexual content, nudity, offers of sexual services |
@@ -144,9 +147,12 @@ Examples:
 | `unlicensed_finance` | Currency trading, investment or loan offers promising returns |
 | `counterfeit` | Fake branded goods, pirated content, accounts for sale |
 | `privacy` | Publishes someone's phone number, address, ID, private photos or messages |
-| `defamation` | Accuses a named company or private person of a crime or serious wrongdoing, as a fact |
+| `defamation` | Accuses a named person (officials included) or company of a crime or serious wrongdoing, as a fact, without evidence or a source |
+| `misinformation` | States as fact something false or very likely false that can cause harm or panic (health, security, disasters, elections, shortages, the dollar rate, fake quotes or documents). Only clear cases |
+| `extortion` | Blackmail, threatening to publish private photos or information unless paid |
+| `other_illegal` | Clearly illegal in Iraq and not listed above: trafficking, bribery offers, vote buying, selling official documents or exam questions, organ trade |
 
-**Never a breach:** criticism of the government, officials, institutions, companies or religion; political opinions; complaints; insults (that is toxicity); news about crimes; discussion of sexuality or identity.
+Criticism, opinions, satire and complaints are not breaches by themselves; tick a category only when they also do it (criticism that states an unproven crime as fact is defamation). Peaceful political or religious opinion and a person's sexuality or gender identity are never breaches by themselves.
 
 ## 6. Images (only when an image is shown)
 

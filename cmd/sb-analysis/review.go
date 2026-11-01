@@ -17,7 +17,7 @@ import (
 // topicsCmd reviews and edits the dynamic topic list.
 func topicsCmd(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("topics: want list, approve, rename, merge, reject, curate or import")
+		return fmt.Errorf("topics: want find, list, approve, rename, merge, reject, curate or import")
 	}
 	sub, args := args[0], args[1:]
 	fs := flag.NewFlagSet("topics "+sub, flag.ExitOnError)
@@ -36,6 +36,36 @@ func topicsCmd(args []string) error {
 		}
 		var d store.TopicDecision
 		switch sub {
+		case "find":
+			q := strings.Join(fs.Args(), " ")
+			hits, err := a.Store.FindTopics(ctx, q)
+			if err != nil {
+				return err
+			}
+			if len(hits) == 0 {
+				fmt.Println("no topic matches", q)
+				return nil
+			}
+			ids := make([]string, len(hits))
+			w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
+			_, _ = fmt.Fprintln(w, "ID\tENGLISH\tARABIC\tMATCH")
+			for i, h := range hits {
+				ids[i] = h.ID
+				how := fmt.Sprintf("%.0f%%", 100*h.Score)
+				if h.Under != "" {
+					how = "sub-topic of " + h.Under
+				}
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", h.ID, h.EN, h.AR, how)
+			}
+			if err := w.Flush(); err != nil {
+				return err
+			}
+			n, err := a.Store.TopicItems(ctx, ids)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("\n%d analysed items carry one of these topics. In SQL: WHERE topics && ARRAY['%s']\n", n, strings.Join(ids, "','"))
+			return nil
 		case "list":
 			st := *status
 			if st == "all" {

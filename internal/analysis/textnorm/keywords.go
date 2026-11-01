@@ -184,3 +184,28 @@ func latinWord(s string) bool {
 	}
 	return s != ""
 }
+
+// Similarity is the Jaccard similarity of two words' character trigrams
+// (padded): "electrical" and "electricity" score 0.5, unrelated words 0.
+func Similarity(a, b string) float64 {
+	ta, tb := trigrams(a), trigrams(b)
+	if len(ta) == 0 || len(tb) == 0 {
+		return 0
+	}
+	inter := 0
+	for g := range ta {
+		if tb[g] {
+			inter++
+		}
+	}
+	return float64(inter) / float64(len(ta)+len(tb)-inter)
+}
+
+func trigrams(w string) map[string]bool {
+	rs := []rune(" " + w + " ")
+	out := map[string]bool{}
+	for i := 0; i+3 <= len(rs); i++ {
+		out[string(rs[i:i+3])] = true
+	}
+	return out
+}

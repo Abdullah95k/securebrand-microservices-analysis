@@ -241,7 +241,7 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	hintText := postText + " " + j.AltText
 	var hints []prompt.Hint
 	for _, m := range reg.Find(hintText) {
-		hints = append(hints, prompt.Hint{ID: m.EntityID, Name: m.Name})
+		hints = append(hints, prompt.Hint{ID: m.EntityID, Name: m.Name, Ambiguous: m.Ambiguous})
 	}
 	req := provider.Request{
 		ID:         uuid.NewString(),

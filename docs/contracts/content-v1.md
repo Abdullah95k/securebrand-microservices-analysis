@@ -62,5 +62,6 @@ The same lifecycle as Facebook's [media handoff](media-handoff.md):
   - private persons are never included; only `private_person_mentions` counts them.
 - **`author_key`** is included so stores can apply erasure. Treat records as personal data.
 - **`topics`** holds topic ids of the dynamic list and `@<entity_id>` for every linked brand, organisation, public figure, position, place or event the item is about. The list changes: on `analysis.topic.v1`, a `merged` topic's id now means `merged_into`, and a `rejected` id should be dropped. `TopicUpdate` records are keyed by topic id, so the latest one per key is the current state.
-- **`ad_type`** (`own`, `paid`, `hidden`, `sale`) and **`legal`** (possible breaches) are leads for review, not findings.
+- **`ad_type`** (`affiliate`, `own`, `paid`, `hidden`, `sale`) and **`legal`** (possible breaches, `hate_speech` to `other_illegal`) are leads for review, not findings.
+- **Topic ids are hierarchical:** a sub-topic's id starts with its parent's id and a dot, so a query for a topic should include `topic_id LIKE '<id>.%'`.
 - **`author_bot`** is the author's bot level when the item was analysed (`suspected`, `likely`, `confirmed`). The current level arrives on `analysis.author.v1`: apply it to every record with that `author_key`, also earlier ones. An empty `bot` clears the flag.

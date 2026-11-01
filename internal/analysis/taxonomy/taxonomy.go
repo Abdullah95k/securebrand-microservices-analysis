@@ -63,23 +63,35 @@ func New(version string, topics []Topic) (*Taxonomy, error) {
 	return &t, nil
 }
 
+// MaxDepth is the deepest topic level: area, topic, sub-topic
+// ("services", "services.electricity", "services.electricity.cuts").
+const MaxDepth = 3
+
 func (t *Taxonomy) validate() error {
 	if t.Version == "" {
 		return errors.New("taxonomy: version is required")
 	}
 	t.ids = map[string]bool{}
-	for _, top := range t.Topics {
-		if err := t.add(top.ID); err != nil {
-			return err
-		}
-		for _, c := range top.Children {
-			if !strings.HasPrefix(c.ID, top.ID+".") {
-				return fmt.Errorf("taxonomy: %s must start with %s and a dot", c.ID, top.ID)
+	var walk func(ts []Topic, parent string, depth int) error
+	walk = func(ts []Topic, parent string, depth int) error {
+		for _, c := range ts {
+			if parent != "" && !strings.HasPrefix(c.ID, parent+".") {
+				return fmt.Errorf("taxonomy: %s must start with %s and a dot", c.ID, parent)
+			}
+			if depth > MaxDepth {
+				return fmt.Errorf("taxonomy: %s is deeper than %d levels", c.ID, MaxDepth)
 			}
 			if err := t.add(c.ID); err != nil {
 				return err
 			}
+			if err := walk(c.Children, c.ID, depth+1); err != nil {
+				return err
+			}
 		}
+		return nil
+	}
+	if err := walk(t.Topics, "", 1); err != nil {
+		return err
 	}
 	if len(t.ids) == 0 {
 		return errors.New("taxonomy: no topics")
@@ -98,38 +110,57 @@ func (t *Taxonomy) add(id string) error {
 	return nil
 }
 
-// Get returns a topic (top-level or child) by id.
-func (t *Taxonomy) Get(id string) (Topic, bool) {
-	for _, top := range t.Topics {
-		if top.ID == id {
-			return top, true
-		}
-		for _, c := range top.Children {
-			if c.ID == id {
-				return c, true
-			}
+// each visits every topic in document order with its depth (1 = area).
+func (t *Taxonomy) each(fn func(Topic, int)) {
+	var walk func(ts []Topic, depth int)
+	walk = func(ts []Topic, depth int) {
+		for _, c := range ts {
+			fn(c, depth)
+			walk(c.Children, depth+1)
 		}
 	}
-	return Topic{}, false
+	walk(t.Topics, 1)
+}
+
+// Get returns a topic (at any level) by id.
+func (t *Taxonomy) Get(id string) (Topic, bool) {
+	var out Topic
+	found := false
+	t.each(func(c Topic, _ int) {
+		if !found && c.ID == id {
+			out, found = c, true
+		}
+	})
+	return out, found
 }
 
 // Valid reports whether id is a topic of this taxonomy.
 func (t *Taxonomy) Valid(id string) bool { return t.ids[id] }
 
-// Len is the number of topics (top-level and children).
+// Len is the number of topics (all levels).
 func (t *Taxonomy) Len() int { return len(t.ids) }
 
 // IDs lists every topic id in document order.
 func (t *Taxonomy) IDs() []string {
 	var out []string
-	for _, top := range t.Topics {
-		out = append(out, top.ID)
-		for _, c := range top.Children {
-			out = append(out, c.ID)
-		}
-	}
+	t.each(func(c Topic, _ int) { out = append(out, c.ID) })
 	return out
 }
+
+// ParentIDs lists the ids a new topic may be placed under: areas and
+// topics (not sub-topics, the deepest level).
+func (t *Taxonomy) ParentIDs() []string {
+	var out []string
+	t.each(func(c Topic, depth int) {
+		if depth < MaxDepth {
+			out = append(out, c.ID)
+		}
+	})
+	return out
+}
+
+// Depth is the level of a topic id (1 for an area).
+func Depth(id string) int { return strings.Count(id, ".") + 1 }
 
 // TopIDs lists the top-level topic ids in document order.
 func (t *Taxonomy) TopIDs() []string {
@@ -141,14 +172,11 @@ func (t *Taxonomy) TopIDs() []string {
 }
 
 // Prompt renders the taxonomy compactly for the system prompt: one line per
-// topic, "id: English / Arabic".
+// topic, "id: English / Arabic", indented by level.
 func (t *Taxonomy) Prompt() string {
 	var b strings.Builder
-	for _, top := range t.Topics {
-		fmt.Fprintf(&b, "%s: %s / %s\n", top.ID, top.EN, top.AR)
-		for _, c := range top.Children {
-			fmt.Fprintf(&b, "  %s: %s / %s\n", c.ID, c.EN, c.AR)
-		}
-	}
+	t.each(func(c Topic, depth int) {
+		fmt.Fprintf(&b, "%s%s: %s / %s\n", strings.Repeat("  ", depth-1), c.ID, c.EN, c.AR)
+	})
 	return b.String()
 }

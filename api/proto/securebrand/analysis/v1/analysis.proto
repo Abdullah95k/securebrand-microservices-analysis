@@ -84,8 +84,10 @@ message ItemAnalysis {
   bool code_switch = 12;
   Sentiment sentiment = 13;
   repeated EntityMention entities = 14;
-  // Taxonomy topic ids, and "@<entity_id>" for each linked entity the item
-  // is about (brands, organisations, public figures, positions, places).
+  // Taxonomy topic ids (hierarchical: a sub-topic's id starts with its
+  // parent's id and a dot), and "@<entity_id>" for each linked entity the
+  // item is about (brands, organisations, public figures, positions,
+  // places).
   repeated string topics = 15;
   repeated string keywords = 16;
   string intent = 17;
@@ -99,12 +101,14 @@ message ItemAnalysis {
   // True when every provider refused to analyse the item.
   bool refused = 24;
   Provenance provenance = 25;
-  // Advertising: own | paid | hidden | sale, "" when the item is not an ad.
+  // Advertising: affiliate | own | paid | hidden | sale, "" when the item
+  // is not an ad.
   string ad_type = 26;
   // Possible legal or platform-policy breaches, for human review:
-  // incitement, terrorism, child_safety, sexual_content, graphic_violence,
-  // self_harm, drugs, weapons, gambling, regulated_goods, fraud_scam,
-  // unlicensed_finance, counterfeit, privacy, defamation.
+  // hate_speech, threat, incitement, terrorism, child_safety,
+  // sexual_content, graphic_violence, self_harm, drugs, weapons, gambling,
+  // regulated_goods, fraud_scam, unlicensed_finance, counterfeit, privacy,
+  // defamation, misinformation, extortion, other_illegal.
   repeated string legal = 27;
   // The author's bot level when the item was analysed: "" | suspected |
   // likely | confirmed. Later changes arrive on analysis.author.v1.
@@ -153,7 +157,7 @@ message AuthorFlag {
   string bot = 4;
   int32 score = 5;
   // Behaviour behind the score: burst, volume, repetition, coordinated,
-  // fast_replies, spam, breadth, no_sleep.
+  // network, fast_replies, spam, breadth, no_sleep.
   repeated string reasons = 6;
   google.protobuf.Timestamp scored_at = 7;
 }

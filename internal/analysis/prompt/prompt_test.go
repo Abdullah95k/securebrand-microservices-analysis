@@ -131,7 +131,7 @@ const good = `{"items":[
   "new_topics":[{"en":" Water shortage ","ar":"شح المياه","parent":"services"},{"en":"","ar":"","parent":"services"},
     {"en":"Fuel queues","ar":"","parent":"made.up"},{"en":"c","ar":"","parent":"other"},{"en":"d","ar":"","parent":"other"}],
   "kw":["نت","","a","b","c","d","e"],"intent":"complaint","emotion":"anger","tox":"none",
-  "flags":["sarcasm","urgent","cs","bogus","ad_own","ad_hidden","ad_sale","fraud_scam","incitement","fraud_scam"],"ppl":1},
+  "flags":["sarcasm","urgent","cs","bogus","ad_own","ad_hidden","ad_sale","fraud_scam","incitement","fraud_scam","misinformation"],"ppl":1},
  {"i":1,"lng":"klingon","sent":"positive","score":300,"conf":-1,"ents":[],
   "topics":[],"intent":"praise","emotion":"joy","tox":"none","flags":["spam","hate","threat","harass"],"ppl":-2},
  {"i":1,"lng":"ar","sent":"neutral"},
@@ -167,7 +167,7 @@ func TestParseText(t *testing.T) {
 		t.Fatalf("keywords %v", r.Keywords)
 	}
 	// The most specific ad type wins; breaches listed once each.
-	if r.AdType != "hidden" || strings.Join(r.Legal, ",") != "fraud_scam,incitement" {
+	if r.AdType != "hidden" || strings.Join(r.Legal, ",") != "fraud_scam,incitement,misinformation" {
 		t.Fatalf("ad %q legal %v", r.AdType, r.Legal)
 	}
 	// Proposals: trimmed, empty ones dropped, unknown parent -> other, at
@@ -179,7 +179,7 @@ func TestParseText(t *testing.T) {
 	r1 := got[1]
 	if r1.Lang != "other" || r1.Dialect != "none" || r1.Score != 1 || r1.Confidence != 0 || r1.PrivatePersonMentions != 0 ||
 		!r1.Spam || !r1.Hate || !r1.Threat || !r1.Harassment || r1.Sarcasm || len(r1.Keywords) != 0 || r1.AdType != "" ||
-		r1.Legal != nil || r1.NewTopics != nil {
+		strings.Join(r1.Legal, ",") != "hate_speech,threat" || r1.NewTopics != nil {
 		t.Fatalf("repairs %+v", r1)
 	}
 	if p.DuplicateItems != 1 || p.UnexpectedItems != 1 || p.FixedValues < 4 {
@@ -187,6 +187,34 @@ func TestParseText(t *testing.T) {
 	}
 	if r.CalibratedConfidence != r.Confidence {
 		t.Fatal("calibrated defaults to raw")
+	}
+}
+
+func TestNewTopicParents(t *testing.T) {
+	got := NewTopics([]newTopic{
+		{EN: "Electricity cuts", Parent: "services.electricity"}, // a topic: a sub-topic under it
+		{EN: "Night cuts", Parent: "services.electricity.cuts"},  // below a sub-topic: moved up
+		{EN: "Something", Parent: "nowhere.at.all"},              // unknown: other
+	}, tax(t))
+	if len(got) != 3 || got[0].Parent != "services.electricity" || got[1].Parent != "services.electricity" || got[2].Parent != "other" {
+		t.Fatalf("parents %+v", got)
+	}
+}
+
+func TestAffiliateWins(t *testing.T) {
+	raw := `{"items":[{"i":0,"lng":"ar-iq","sent":"positive","score":50,"conf":80,"ents":[],"topics":["other"],"new_topics":[],
+		"intent":"recommendation","emotion":"joy","tox":"none","flags":["ad_hidden","ad_affiliate","extortion","other_illegal"],"ppl":0}]}`
+	got, _, _, err := ParseText(raw, []int{0}, tax(t), reg())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := got[0]; r.AdType != "affiliate" || strings.Join(r.Legal, ",") != "extortion,other_illegal" {
+		t.Fatalf("ad %q legal %v", r.AdType, r.Legal)
+	}
+	for _, c := range []string{"hate_speech", "threat", "misinformation", "defamation"} {
+		if !oneOf(c, LegalCategories) {
+			t.Fatalf("%s missing from LegalCategories", c)
+		}
 	}
 }
 

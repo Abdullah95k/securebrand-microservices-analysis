@@ -106,6 +106,7 @@ Check with `SELECT * FROM analysis.erasures ORDER BY received_at DESC LIMIT 20;`
 ## Topics: the growing list
 
 The model proposes topics missing from the list. They are deduplicated at once (same words in English or Arabic, or a brand or person name, which becomes an `@entity` topic) and kept as candidates on the items. Once a day, candidates used by `analysis.topics.approve_min_items` items go to the curation model: synonyms are merged, names rejected, the rest approved, and a new taxonomy version is recorded.
+- **Find a topic from words** (English or Arabic): `sb-analysis topics find "electrical cuts"`. It prints the topics, their sub-topics, the number of items and the SQL condition.
 - **Look:** `sb-analysis topics list` (candidates, most used first); `--status active|merged|rejected|all`.
 - **Decide yourself:**
   - `sb-analysis topics approve --id services.water_shortage [--en "Water shortages" --ar "شح المياه" --parent services]`;
@@ -119,7 +120,7 @@ The model proposes topics missing from the list. They are deduplicated at once (
 
 ## Bots: flagged authors
 
-Once a day every author with 10+ items in 30 days is scored from behaviour (bursts, volume, the same text in many threads, the same text from many authors, replies within a minute, round-the-clock activity, spam share). Score ≥45 is `suspected`, ≥70 `likely`.
+Once a day every author with 5+ items in 30 days is scored from behaviour (bursts, volume, the same text in many threads, the same text as many other authors on the same day, replies within a minute, round-the-clock activity, spam share). Smaller accounts (2+ items) are scored when they took part in coordination, so networks of accounts that each post a little are caught. Score ≥45 is `suspected`, ≥70 `likely`.
 - **Look:** `sb-analysis authors list` (flagged, highest score first, with reasons). The key is the pseudonymous author key, never a Facebook id.
 - **Decide:** `sb-analysis authors mark --key <hex> --as bot` (shows as `confirmed`), `--as human` (never flagged), `--as none` (back to the score). Every item of the author follows, earlier ones too.
 - **Score now:** `sb-analysis authors score`.

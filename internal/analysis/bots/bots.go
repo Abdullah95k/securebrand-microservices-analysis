@@ -43,6 +43,9 @@ var rules = []rule{
 	{reason: "volume", value: func(s core.AuthorSignals) float64 { return s.PerDay() }, weak: 20, strong: 50, weakP: 10, strongP: 20},
 	{reason: "repetition", value: func(s core.AuthorSignals) float64 { return s.Repeated }, weak: 0.25, strong: 0.5, weakP: 10, strongP: 25},
 	{reason: "coordinated", value: func(s core.AuthorSignals) float64 { return s.Coordinated }, weak: 0.1, strong: 0.3, weakP: 15, strongP: 35},
+	// A network account: two or more coordinated posts, however few posts
+	// it has in all (with a strong coordination share: suspected).
+	{reason: "network", value: func(s core.AuthorSignals) float64 { return float64(s.CoordinatedItems) }, weak: 2, strong: 2, weakP: 15, strongP: 15},
 	{reason: "fast_replies", value: func(s core.AuthorSignals) float64 { return s.Fast }, weak: 0.3, strong: 0.5, weakP: 5, strongP: 15,
 		applies: func(s core.AuthorSignals) bool { return s.FastBase >= 10 }},
 	{reason: "spam", value: func(s core.AuthorSignals) float64 { return s.Spammy }, weak: 0.25, strong: 0.5, weakP: 10, strongP: 20},

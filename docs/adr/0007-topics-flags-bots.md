@@ -1,6 +1,6 @@
 # ADR 0007: A self-growing topic list, ad and breach flags in the same call, behaviour-based bot detection
 
-Status: accepted (2026-11-01). Design: [docs/design/analysis-service.md](../design/analysis-service.md) sections 6.1-6.3.
+Status: accepted (2026-11-01; revised the same day after the owner's review: wider breach categories, affiliate marketing, sub-topics and topic search, network detection, ambiguous aliases). Design: [docs/design/analysis-service.md](../design/analysis-service.md) sections 6.1-6.3.
 
 ## Context
 
@@ -19,10 +19,14 @@ Constraints:
 ## Decision
 
 1. **Ads and breaches are flags in the same call.** They join the existing `flags` list (usually `[]`), so they add no output tokens when absent:
-   - ad types: `ad_own`, `ad_paid`, `ad_hidden`, `ad_sale`;
-   - 15 breach categories, stored as `ad_type` and `legal[]`.
-   - **Breaches are leads for human review.** Criticism of the government, officials, institutions, companies or religion, political opinions, insults, crime reporting and discussion of sexuality or identity are never breaches.
-2. **The topic list moves to the database and grows:**
+   - ad types: `ad_affiliate`, `ad_own`, `ad_paid`, `ad_hidden`, `ad_sale`;
+   - 20 breach categories (hate speech and threats come from the existing signals), stored as `ad_type` and `legal[]`.
+   - **Breaches are leads for human review.** They cover what is illegal in Iraq and what causes social harm, including hate speech, misinformation, and defamation of anyone, officials included.
+   - **Criticism, opinions and satire** are flagged only when they also do one of those things.
+   - **Not flagged on their own:** peaceful political or religious opinion and a person's sexuality or gender identity, even where Iraqi law criminalises them. They are speech and identity, not harm to others.
+2. **The topic list moves to the database, nests three levels, and grows:**
+   - **Ids across languages:** items store topic ids, so a topic works the same in every language. Sub-topic ids start with their parent's, so asking for a topic fetches its sub-topics.
+   - **Search:** `topics find` turns words in any language into ids, using trigram similarity over all names and aliases.
    - **Proposals:** the model proposes missing themes (`new_topics`).
    - **Deduplication:** proposals are deduplicated at once against every known name, English and Arabic, with a word-order-, clitic- and plural-insensitive key and against the entity registry. New ones are kept as candidates on the items.
    - **Daily curation:** a Sonnet 5.5 call merges synonyms, rejects names and approves candidates used by ≥10 items.
@@ -30,10 +34,13 @@ Constraints:
    - **Limits:** up to 10 model topics per item.
 3. **People, positions, companies and places are topics through the entity registry:** `@<entity id>` is derived from linked entities, not from free text. Duplicates across spellings are already solved there (آسياسيل = Asiacell). Positions are a new entity type (an office independent of its holder), and 14 Iraqi offices are seeded.
 4. **Bot detection is behavioural, daily, explainable:**
-   - **Score:** a rule-based score over 30 days from eight signals, with stored reasons and two levels (suspected ≥45, likely ≥70).
+   - **Score:** a rule-based score over 30 days from nine signals, with stored reasons and two levels (suspected ≥45, likely ≥70).
+   - **Who is scored:** authors with 5+ items, and smaller accounts (2+ items) that took part in coordination, meaning the same long text as 4+ other accounts on the same day. This catches networks of accounts that each post a little.
    - **Formulaic texts** never count as repetition or coordination.
    - **Owner override:** `confirmed` or `human`.
    - **Flags on items:** every item takes its author's current level through the views; results carry the level at analysis time; `AuthorFlag` events announce changes; rollups count bot items.
+
+5. **Generic names are ambiguous aliases.** Bare titles and ministry names ("رئيس الوزراء", "وزارة الصحة") are hints the model resolves from context. They never link by name and never make an item urgent; qualified forms link directly.
 
 ## Alternatives considered
 

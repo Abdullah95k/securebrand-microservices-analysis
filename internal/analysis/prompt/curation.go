@@ -11,9 +11,9 @@ import (
 // CurationSystem instructs the model that keeps the topic list clean.
 const CurationSystem = `You maintain the topic list of a service that monitors Iraqi social media (news pages and brand pages) for brands and media analysts. The analysis model proposed new topics (candidates) for items that no listed topic covered. Decide for every candidate:
 
-- merge, with "into" set to a listed topic id or another candidate id, when it means the same as that topic: a synonym, a translation, a near-identical wording, a spelling variant, or something so close or so narrow that an analyst would not need it separately ("power outages" into "Electricity cuts").
+- merge, with "into" set to a listed topic id or another candidate id, when it means the same as that topic: a synonym, a translation, a near-identical wording, a spelling variant ("power outages" into "Electricity cuts").
 - reject when it is not a topic: a name of a person, company, brand, position or place (those are tracked as entities), a one-off detail of a single event, too vague ("issues", "news"), or not about Iraqi public or brand matters.
-- approve when it is a genuinely new, reusable theme. Give a clean English name (2 to 4 words, title case), an Arabic name, and the right parent among the top-level ids.
+- approve when it is a reusable theme. Give a clean English name (2 to 4 words, title case), an Arabic name, and the right parent: an area, or the listed topic it narrows, so that asking for the broader topic also finds it ("Electricity cuts" under services.electricity).
 
 Prefer merging over approving near-duplicates; the list must not contain two topics with the same meaning. Answer only with the JSON object the schema requires, one decision per candidate.`
 
@@ -46,7 +46,7 @@ func CurationSchema(tax *taxonomy.Taxonomy) map[string]any {
 		"into":   str(),
 		"en":     str(),
 		"ar":     str(),
-		"parent": enum(tax.TopIDs()),
+		"parent": enum(tax.ParentIDs()),
 	}, []string{"id", "action", "into", "en", "ar", "parent"})
 	return object(map[string]any{"decisions": array(d)}, []string{"decisions"})
 }
@@ -86,7 +86,7 @@ func ParseCuration(raw string, tax *taxonomy.Taxonomy, cands []CurationCandidate
 			}
 		case "approve":
 			d.EN, d.AR = cut(strings.TrimSpace(d.EN), maxTopicRunes), cut(strings.TrimSpace(d.AR), maxTopicRunes)
-			if !oneOf(d.Parent, tax.TopIDs()) {
+			if !oneOf(d.Parent, tax.ParentIDs()) {
 				d.Parent = ""
 			}
 		case "reject":

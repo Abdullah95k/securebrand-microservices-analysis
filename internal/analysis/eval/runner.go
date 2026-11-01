@@ -113,13 +113,13 @@ func (r *Runner) groups(items []Item, cfg RunConfig) []group {
 				schema = commentSchema
 			}
 			for _, h := range r.Entities.Find(c.Page) {
-				c.PageHints = append(c.PageHints, prompt.Hint{ID: h.EntityID, Name: h.Name})
+				c.PageHints = append(c.PageHints, prompt.Hint{ID: h.EntityID, Name: h.Name, Ambiguous: h.Ambiguous})
 			}
 			inputs := make([]prompt.ItemInput, len(chunk))
 			for i, it := range chunk {
 				in := prompt.ItemInput{I: i, Kind: it.Kind, Text: mask(it.Text), ReplyTo: -1, ParentText: mask(textnorm.Truncate(it.Parent, 300))}
 				for _, h := range r.Entities.Find(it.Text) {
-					in.Hints = append(in.Hints, prompt.Hint{ID: h.EntityID, Name: h.Name})
+					in.Hints = append(in.Hints, prompt.Hint{ID: h.EntityID, Name: h.Name, Ambiguous: h.Ambiguous})
 				}
 				inputs[i] = in
 			}

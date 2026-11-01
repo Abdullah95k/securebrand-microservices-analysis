@@ -124,7 +124,7 @@ func (p *Pipeline) Plan(it *core.Item) store.Plan {
 
 func (p *Pipeline) trackedHit(text string) bool {
 	for _, m := range p.Entities().Find(text) {
-		if m.Tracked {
+		if m.Tracked && !m.Ambiguous {
 			return true
 		}
 	}
@@ -234,7 +234,7 @@ func (p *Pipeline) mask(s string) string {
 func hints(ms []entities.Match) []prompt.Hint {
 	out := make([]prompt.Hint, 0, len(ms))
 	for _, m := range ms {
-		out = append(out, prompt.Hint{ID: m.EntityID, Name: m.Name})
+		out = append(out, prompt.Hint{ID: m.EntityID, Name: m.Name, Ambiguous: m.Ambiguous})
 	}
 	return out
 }
@@ -606,9 +606,12 @@ const maxTopics = 24
 // candidates sends unlinked entity names to the review queue (best effort).
 func (p *Pipeline) candidates(ctx context.Context, rs []store.ItemResult) {
 	var cs []store.Candidate
+	reg := p.Entities()
 	for _, r := range rs {
 		for _, e := range r.Result.Entities {
-			if e.ID == "" && e.Type != "person_private" && e.Type != "other" {
+			// A generic name ("رئيس الوزراء" meaning another country's) is
+			// not a new entity to review.
+			if e.ID == "" && e.Type != "person_private" && e.Type != "other" && !reg.Ambiguous(e.Name) {
 				cs = append(cs, store.Candidate{Surface: e.Name, Type: e.Type, ContentID: r.Item.ContentID})
 			}
 		}

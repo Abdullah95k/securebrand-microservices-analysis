@@ -415,8 +415,10 @@ type ItemAnalysis struct {
 	CodeSwitch bool             `protobuf:"varint,12,opt,name=code_switch,json=codeSwitch,proto3" json:"code_switch,omitempty"`
 	Sentiment  *Sentiment       `protobuf:"bytes,13,opt,name=sentiment,proto3" json:"sentiment,omitempty"`
 	Entities   []*EntityMention `protobuf:"bytes,14,rep,name=entities,proto3" json:"entities,omitempty"`
-	// Taxonomy topic ids, and "@<entity_id>" for each linked entity the item
-	// is about (brands, organisations, public figures, positions, places).
+	// Taxonomy topic ids (hierarchical: a sub-topic's id starts with its
+	// parent's id and a dot), and "@<entity_id>" for each linked entity the
+	// item is about (brands, organisations, public figures, positions,
+	// places).
 	Topics   []string  `protobuf:"bytes,15,rep,name=topics,proto3" json:"topics,omitempty"`
 	Keywords []string  `protobuf:"bytes,16,rep,name=keywords,proto3" json:"keywords,omitempty"`
 	Intent   string    `protobuf:"bytes,17,opt,name=intent,proto3" json:"intent,omitempty"`
@@ -430,12 +432,14 @@ type ItemAnalysis struct {
 	// True when every provider refused to analyse the item.
 	Refused    bool        `protobuf:"varint,24,opt,name=refused,proto3" json:"refused,omitempty"`
 	Provenance *Provenance `protobuf:"bytes,25,opt,name=provenance,proto3" json:"provenance,omitempty"`
-	// Advertising: own | paid | hidden | sale, "" when the item is not an ad.
+	// Advertising: affiliate | own | paid | hidden | sale, "" when the item
+	// is not an ad.
 	AdType string `protobuf:"bytes,26,opt,name=ad_type,json=adType,proto3" json:"ad_type,omitempty"`
 	// Possible legal or platform-policy breaches, for human review:
-	// incitement, terrorism, child_safety, sexual_content, graphic_violence,
-	// self_harm, drugs, weapons, gambling, regulated_goods, fraud_scam,
-	// unlicensed_finance, counterfeit, privacy, defamation.
+	// hate_speech, threat, incitement, terrorism, child_safety,
+	// sexual_content, graphic_violence, self_harm, drugs, weapons, gambling,
+	// regulated_goods, fraud_scam, unlicensed_finance, counterfeit, privacy,
+	// defamation, misinformation, extortion, other_illegal.
 	Legal []string `protobuf:"bytes,27,rep,name=legal,proto3" json:"legal,omitempty"`
 	// The author's bot level when the item was analysed: "" | suspected |
 	// likely | confirmed. Later changes arrive on analysis.author.v1.
@@ -933,7 +937,7 @@ type AuthorFlag struct {
 	Bot   string `protobuf:"bytes,4,opt,name=bot,proto3" json:"bot,omitempty"`
 	Score int32  `protobuf:"varint,5,opt,name=score,proto3" json:"score,omitempty"`
 	// Behaviour behind the score: burst, volume, repetition, coordinated,
-	// fast_replies, spam, breadth, no_sleep.
+	// network, fast_replies, spam, breadth, no_sleep.
 	Reasons       []string               `protobuf:"bytes,6,rep,name=reasons,proto3" json:"reasons,omitempty"`
 	ScoredAt      *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=scored_at,json=scoredAt,proto3" json:"scored_at,omitempty"`
 	unknownFields protoimpl.UnknownFields

@@ -13,7 +13,7 @@ Owner-facing summary: [docs/owner/analysis-decisions.md](../owner/analysis-decis
 - **One LLM call per group of items returns every field** (language, sentiment, per-entity sentiment, topics, entities, intent, emotion, toxicity, spam, sarcasm). Comments are grouped by post, with the post as context: one request carries one post and up to 40 of its comments.
 - **Models are chosen per content type and set in config.** The starting point is Claude Haiku 5.5 through the Batch API for comments and posts, with a stronger model only where the evaluation shows Haiku fails. Two further uses of a stronger model: escalation of low-confidence items that mention a client's tracked brand, and a 0.02% audit sample for drift monitoring.
 - **What is not paid for:** answers use a compact format (most of the cost is the model's output), identical comments of a thread are sent once, and the script and comment keywords are computed locally (section 16.1).
-- **Also in the same call, at no extra cost when absent:** ad detection (own, paid, hidden, private sale) and possible legal or platform-policy breaches (15 categories, for human review; criticism of the government is never a breach).
+- **Also in the same call, at no extra cost when absent:** ad detection (affiliate, own, paid, hidden, private sale) and possible legal or platform-policy breaches (20 categories, including hate speech, misinformation and defamation, for human review; section 6.3).
 - **The topic list grows by itself** (section 6.1): the model proposes missing topics, the service deduplicates them, and a daily check merges synonyms before they join the list. Brands, people, positions and places the item is about become topics too ("@asiacell").
 - **Bot and fake-account detection** (section 6.2): a daily behaviour score per author; every item of a flagged author carries the flag.
 - **Postgres is the work queue and the system of record.** Text, analyses, entity mentions and daily rollups live there, partitioned by month. Results are also published on `analysis.result.v1`, so ClickHouse can be added for the future chat/analytics agent without changing the service.
@@ -161,8 +161,8 @@ One result per item. The model answers in a compact JSON format enforced by JSON
 | `emotion` | `anger`, `joy`, `sadness`, `fear`, `surprise`, `disgust`, `trust`, `anticipation`, `none`. |
 | `toxicity` | `none`/`mild`/`severe`, plus flags `hate`, `threat`, `harassment`. |
 | `spam`, `sarcasm`, `urgent` | Booleans. `urgent` means a safety, outage or fraud allegation (crisis signal). |
-| `ad_type` | `own` (a brand or shop promoting itself), `paid` (disclosed paid promotion of another brand), `hidden` (looks like paid promotion but is not disclosed), `sale` (a private sale, classifieds); empty when not an ad. Mainly posts and images; comments use `spam`. |
-| `legal[]` | Possible legal or platform-policy breaches, for human review (section 6.3): `incitement`, `terrorism`, `child_safety`, `sexual_content`, `graphic_violence`, `self_harm`, `drugs`, `weapons`, `gambling`, `regulated_goods`, `fraud_scam`, `unlicensed_finance`, `counterfeit`, `privacy`, `defamation`. |
+| `ad_type` | `affiliate` (affiliate marketing: commission links or referral codes), `own` (a brand or shop promoting itself), `paid` (disclosed paid promotion of another brand), `hidden` (looks like paid promotion but is not disclosed), `sale` (a private sale, classifieds); empty when not an ad. Mainly posts and images; comments use `spam`. |
+| `legal[]` | Possible legal or platform-policy breaches, for human review (section 6.3): `hate_speech`, `threat`, `incitement`, `terrorism`, `child_safety`, `sexual_content`, `graphic_violence`, `self_harm`, `drugs`, `weapons`, `gambling`, `regulated_goods`, `fraud_scam`, `unlicensed_finance`, `counterfeit`, `privacy`, `defamation`, `misinformation`, `extortion`, `other_illegal`. |
 | `author_bot` | The author's bot level: empty, `suspected`, `likely`, or `confirmed` by the owner (section 6.2). Not asked of the model. |
 
 **Signals worth their cost** (they come free in the same call): intent (complaint/praise/question is what brand teams act on), emotion, toxicity, spam, sarcasm (an explicit flag lowers the weight of mis-read praise), and urgency.
@@ -202,20 +202,27 @@ The taxonomy file (`configs/analysis/taxonomy.v1.yaml`) is only the starting lis
 4. **A change is a version.** Each change of the active list records a taxonomy version (`tax-v1.1`, `tax-v1.2`...), which results carry. Merges and rejections re-point or remove the topic in stored analyses and mentions (GIN indexes on the topic arrays), rebuild their rollup days, and publish a `TopicUpdate` on `analysis.topic.v1` so downstream stores follow. Every replica reloads the list each minute. The system prompt changes only with the version, so the prompt cache breaks at most once per change.
 5. **The owner decides last:** `sb-analysis topics list | approve | rename | merge | reject | curate | import`.
 
+**One id per topic, every language.** Items store topic ids, never words: an Iraqi-dialect comment, an MSA news post, a Kurdish or an English comment about power cuts all carry the same id. The model tags a topic whether the item names it or only implies it ("الوطنية طافية", "امبيرات المولدة" are about electricity supply). Topics nest three levels (area, topic, sub-topic: `services` → `services.electricity` → `services.electricity.electricity_cuts`): a sub-topic's id starts with its parent's, so asking for a topic also fetches its sub-topics. New topics can be proposed and approved under a listed topic, not only under an area.
+
+**Finding a topic from words.** `sb-analysis topics find "electrical cuts"` (or Arabic, "انقطاع الكهرباء") compares the words with every name and alias of every topic (trigram similarity, so "electrical" finds "electricity"; an ambiguous word such as "قطع", cuts or spare parts, returns every reading). It prints the matching topics with their sub-topics, the number of items, and the SQL condition (`topics && ARRAY[...]`). The analytics agent reads `agent.topics` and `agent.topic_aliases` to choose ids itself.
+
 **Entity topics.** Every linked entity of an item becomes a topic `@<entity id>` at no cost: one spelling-independent topic per brand, organisation, public figure, position (`@pos-iraq-pm`), place or event. Linking a candidate entity later adds the topic to its earlier items; merging two entities re-points it.
 
-**Limits:** up to 10 model topics per item, at most 3 proposals per item, 24 topics per item in all.
+**Limits:** up to 10 model topics per item, at most 3 proposals per item, 24 topics per item in all; three levels; a topic with sub-topics cannot be merged or rejected before them.
 
 ### 6.2 Bot and fake-account detection
 
-The service has no profile data (author ids are pseudonymous HMACs, by design), so detection is behavioural. Once a day (role `rollup`, `bots.every`), `store.ScoreAuthors` computes, for every author with at least `bots.min_items` (10) items in the last `bots.window` (30 days), excluding pages replying on their own page:
+The service has no profile data (author ids are pseudonymous HMACs, by design), so detection is behavioural. Once a day (role `rollup`, `bots.every`), `store.ScoreAuthors` computes the signals below over the last `bots.window` (30 days), excluding pages replying on their own page, for:
+- every author with at least `bots.min_items` (5) items: fewer than that is too little evidence for the volume and repetition signals, and most real people comment less;
+- **smaller accounts (2+ items) that took part in coordination:** networks of fake accounts that each post only a little are caught by what they share, not by how much each posts.
 
 | Signal | Points (weak / strong) |
 |---|---|
 | Burst: most items in one clock hour (≥15 / ≥30) | 10 / 25 |
 | Volume: items per active day (≥20 / ≥50) | 10 / 20 |
 | Repetition: share of items whose text (15+ characters) the author posted in 3+ threads (≥25% / ≥50%) | 10 / 25 |
-| Coordination: share of items whose long text (30+ characters, 5+ words) at least `bots.coordination_authors` (5) authors posted (≥10% / ≥30%) | 15 / 35 |
+| Coordination: share of items whose long text (30+ characters, 5+ words) at least `bots.coordination_authors` (5) authors posted **on the same day** (≥10% / ≥30%). The same quote spread over weeks does not count. | 15 / 35 |
+| Network: two or more such coordinated items, however few items the account has | 15 |
 | Fast replies: share of comments within 60 s of their post, with 10+ comments (≥30% / ≥50%) | 5 / 15 |
 | Spam: share flagged spam, ad or scam by the analysis (≥25% / ≥50%) | 10 / 20 |
 | Breadth: sources per active day (≥10 / ≥20) | 5 / 10 |
@@ -234,9 +241,17 @@ The service has no profile data (author ids are pseudonymous HMACs, by design), 
 
 ### 6.3 Legal and platform-policy flags
 
-The model flags possible breaches in the same call, for **human review, never as a legal finding**. Categories follow Iraqi law where it is clear and common platform policies (Meta's Community Standards): incitement to violence or hatred, terrorism and armed-extremist propaganda, child safety, explicit sexual content, graphic violence, self-harm, drugs, weapons, gambling, regulated goods (alcohol, prescription medicines), fraud and scams (including impersonating brand or official pages), unlicensed finance, counterfeit goods, privacy violations (doxxing), and defamation of companies and private persons.
+The model flags possible breaches in the same call, for **human review, never as a legal finding**. The categories cover what is illegal in Iraq and what common platform policies (Meta's Community Standards) forbid, with a focus on what causes social harm:
+- **speech that harms others:** hate speech (from the `hate` signal: attacks on people for sect, ethnicity, religion, tribe, nationality, gender or disability), threats (from the `threat` signal, including tribal threats), incitement to violence, revenge or sectarian hatred, terrorism and armed-extremist propaganda, defamation, misinformation, extortion and sextortion, privacy violations (doxxing);
+- **harmful content:** child sexual abuse or exploitation, explicit sexual content, graphic violence, encouragement of self-harm;
+- **illegal trade and fraud:** drugs, weapons, gambling, regulated goods (alcohol, prescription medicines), fraud and scams (including impersonating brand or official pages), unlicensed finance, counterfeit goods;
+- **other clear crimes under Iraqi law** (`other_illegal`): human trafficking, bribery offers, vote buying, selling official documents or exam questions, organ trade.
 
-**Deliberately not breaches** (the prompt says so): criticism of the government, officials, institutions, companies or religion; political opinions; complaints; insults (that is toxicity); news reporting about crimes; discussion of sexuality or identity. Iraqi law has been used against government critics and against LGBT content, so flagging those would turn a monitoring tool into a reporting tool against users. Changing this boundary is the owner's decision, with their lawyer.
+How the hard cases are drawn:
+- **Defamation:** a specific accusation of a crime or serious wrongdoing against a named person (officials included) or company, stated as fact without evidence or a source. Corruption allegations are common in Iraqi comments; reported ones with a source are not flagged.
+- **Misinformation:** a claim presented as fact that is false or very likely false and can cause harm or panic (health, security incidents, disasters, elections, shortages, the dollar rate, fabricated quotes or documents). Only clear cases; opinions and predictions are not. The model cannot verify breaking news, so this category has the most false positives and false negatives. The evaluation measures it, and a person reviews every flag.
+- **Criticism, opinions, satire and complaints** are not breaches by themselves. They are flagged when they also do one of the above: criticism that states an unproven crime as fact is defamation; a complaint that calls for attacking a sect is incitement.
+- **Not flagged on their own, even where Iraqi law criminalises them:** peaceful political or religious opinion (criticism of the government, officials or religion), and a person's sexuality or gender identity. They are speech and identity, not harm to others. Flagging them would turn a monitoring tool into a list of people to prosecute, under laws (insulting officials or institutions, the 2024 amendment on homosexuality) that UN human-rights bodies have criticised. Content in these areas is still flagged when it contains hate speech, threats, explicit sexual content, defamation or misinformation.
 
 Breaches are stored per item (`legal[]`), counted per day and source (`rollup_flag_daily`), and measured in the evaluation (the labeller marks them too).
 
@@ -412,9 +427,13 @@ Re-analysis uses priority `low` and the batch lane, and stops at the budget. Typ
   - map Arabic-Indic digits to ASCII; lower-case Latin; collapse repeated letters ("حلوووو" → "حلو");
   - strip the clitics و، ب، ل، ال، بال، وال at word starts.
   The matcher is a token n-gram dictionary over normalised text, rebuilt on registry change.
+- **Ambiguous aliases.** A generic name that can mean other entities (bare titles such as "رئيس الوزراء", "وزير الصحة", "رئيس البرلمان"; "البنك المركزي"; "وزارة الصحة") is marked `ambiguous` in the registry (`entity_aliases.ambiguous`, `ambiguous:` in the seed).
+  - It is offered to the model as a hint marked ambiguous, and the model uses its id only in an Iraqi context: "رئيس الوزراء البريطاني" is another entity.
+  - It never links a name on its own, never makes an item urgent, and never enters the review queue.
+  - Qualified forms ("رئيس الوزراء العراقي", "وزارة الصحة العراقية") link directly.
 - **Linking:** the model returns `id` when an entity matches a hint; otherwise a name and type. The writer links in order:
   1. a valid hint id;
-  2. an exact normalised alias match;
+  2. an exact normalised alias match that is not ambiguous;
   3. otherwise an `entity_candidates` row (surface, type, count, first/last seen, up to 5 example content ids).
 - **Review queue:** candidates seen ≥ N times (default 20) appear in `sb-analysis entities review`, which can accept as new, merge into an existing entity, or reject (adds a stop-alias). A merge re-points mentions in SQL and marks rollups dirty. `person_public` candidates always need review; private persons never become candidates.
 
@@ -749,7 +768,7 @@ Result: lean **$3.7k / $9.2k / $25.9k** at 100M / 300M / 1B (taking the cheaper 
   - the existing fbs suites still pass;
   - a mutation check of the new tests: 16 of 16 deliberate faults caught, and 11 of 11 for the cost revision (compact format, local script and keywords, duplicate collapsing).
 
-- **Ads, legal and policy flags, dynamic topics, bot detection** (sections 6.1-6.3): prompt `p3` / schema `s3`; migration `00002`; `store.ResolveTopics`, `ApplyTopicDecisions`, `ScoreAuthors`; `internal/analysis/curate`, `internal/analysis/bots`; `sb-analysis topics` and `authors`; `AuthorFlag` and `TopicUpdate` events; agent views with `ad_type`, `legal`, `author_bot`, `agent.topics`, `agent.rollup_flag_daily`; ad and breach labels in the labelling tool and the report; positions in the brand list (14 Iraqi offices seeded).
+- **Ads (affiliate included), legal and policy flags, dynamic topics with sub-topics and search, bot and network detection, ambiguous aliases** (sections 6.1-6.3, 11): prompt `p4` / schema `s4`; migration `00002`; `store.ResolveTopics`, `ApplyTopicDecisions`, `ScoreAuthors`; `internal/analysis/curate`, `internal/analysis/bots`; `sb-analysis topics` and `authors`; `AuthorFlag` and `TopicUpdate` events; agent views with `ad_type`, `legal`, `author_bot`, `agent.topics`, `agent.rollup_flag_daily`; ad and breach labels in the labelling tool and the report; positions in the brand list (14 Iraqi offices seeded).
 
 **Not built:** ClickHouse, embeddings and `sb-eval retrieval`, the agent itself, the speech-to-text evaluation, and the own Whisper server's deployment (added only if it passes that evaluation).
 

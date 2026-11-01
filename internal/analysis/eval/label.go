@@ -139,7 +139,7 @@ func (s *LabelServer) show(w http.ResponseWriter, r *http.Request) {
 	v := view{I: i, Total: len(s.items), Done: done, Item: s.items[i], Label: s.items[i].Label, Tax: s.Tax, Entities: s.Entities,
 		Langs: prompt.Langs, Dialects: prompt.Dialects, Sentiments: prompt.Sentiments, Types: labelTypes(), Intents: prompt.Intents,
 		Emotions: prompt.Emotions, Toxicities: prompt.Toxicities, Aspects: prompt.Aspects, Labeller: labeller, Saved: r.URL.Query().Get("saved") != "",
-		Legal: prompt.LegalFlags, Ads: []string{"none", "own", "paid", "hidden", "sale"}}
+		Legal: prompt.LegalCategories, Ads: []string{"none", "affiliate", "own", "paid", "hidden", "sale"}}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.Execute(w, v); err != nil {
 		slog.Error("label page", "err", err)
@@ -301,7 +301,7 @@ button{font-size:1.1em;padding:8px 22px}
 <fieldset><legend>Topics (every one that applies; hold Ctrl or Cmd to pick several)</legend>
 <select name="topics" multiple size="14" style="width:100%">
 {{range .Tax.Topics}}<optgroup label="{{.EN}} / {{.AR}}"><option value="{{.ID}}" {{if and $l (has $l.Topics .ID)}}selected{{end}}>{{.ID}} (general)</option>
-{{range .Children}}<option value="{{.ID}}" {{if and $l (has $l.Topics .ID)}}selected{{end}}>{{.EN}} / {{.AR}}</option>{{end}}</optgroup>{{end}}
+{{range .Children}}<option value="{{.ID}}" {{if and $l (has $l.Topics .ID)}}selected{{end}}>{{.EN}} / {{.AR}}</option>{{range .Children}}<option value="{{.ID}}" {{if and $l (has $l.Topics .ID)}}selected{{end}}>&nbsp;&nbsp;&nbsp;– {{.EN}} / {{.AR}}</option>{{end}}{{end}}</optgroup>{{end}}
 </select></fieldset>
 <fieldset><legend>Signals</legend>
 Intent <select name="intent">{{range .Intents}}<option {{if and $l (eq $l.Intent .)}}selected{{end}}>{{.}}</option>{{end}}</select>

@@ -83,8 +83,9 @@ type item struct {
 	Kind  string `json:"kind"`
 	Text  string `json:"text"`
 	Hints []struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		Ambiguous bool   `json:"ambiguous"`
 	} `json:"hints"`
 }
 
@@ -128,6 +129,14 @@ func (p *Provider) textAnswer(req provider.Request) string {
 		}
 		ents := []map[string]any{}
 		for _, h := range it.Hints {
+			if h.Ambiguous {
+				// Like the model: a generic title without Iraqi context is
+				// someone else, listed as written without the id.
+				if strings.Contains(it.Text, "رئيس الوزراء") {
+					ents = append(ents, map[string]any{"name": "رئيس الوزراء", "type": "position", "id": "", "sent": sent, "score": score, "aspect": "general"})
+				}
+				continue
+			}
 			ents = append(ents, map[string]any{"name": h.Name, "type": "brand", "id": h.ID, "sent": sent, "score": score, "aspect": "general"})
 		}
 		lng := "ar-iq"

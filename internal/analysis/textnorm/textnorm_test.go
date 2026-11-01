@@ -179,3 +179,15 @@ func TestTopicKey(t *testing.T) {
 		t.Fatalf("short words: %q %q", TopicKey("Gas"), TopicKey("of the"))
 	}
 }
+
+func TestSimilarity(t *testing.T) {
+	if s := Similarity("electrical", "electricity"); s < 0.45 || s > 0.55 {
+		t.Fatalf("electrical/electricity %.2f", s)
+	}
+	if Similarity("cut", "cut") != 1 || Similarity("cut", "supply") != 0 || Similarity("", "x") != 0 {
+		t.Fatal("similarity bounds")
+	}
+	if s := Similarity("كهرباء", "الكهرباء"); s < 0.5 {
+		t.Fatalf("arabic %.2f", s)
+	}
+}

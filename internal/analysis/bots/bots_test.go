@@ -21,6 +21,10 @@ func TestScore(t *testing.T) {
 			Likely, "burst,volume,repetition,spam,breadth"},
 		{"part of a network", core.AuthorSignals{Items: 40, ActiveDays: 4, MaxPerHour: 5, Sources: 8, ActiveHours: 10, Coordinated: 0.4, Repeated: 0.3},
 			Suspected, "repetition,coordinated"},
+		// A small network account: two posts, both copies of a campaign text.
+		{"network account", core.AuthorSignals{Items: 2, ActiveDays: 1, MaxPerHour: 1, Sources: 2, ActiveHours: 1, Coordinated: 1, CoordinatedItems: 2},
+			Suspected, "coordinated,network"},
+		{"one shared post", core.AuthorSignals{Items: 6, ActiveDays: 3, Coordinated: 1.0 / 6, CoordinatedItems: 1}, "", "coordinated"},
 		// Fast replies need enough comments to mean something.
 		{"few fast replies", core.AuthorSignals{Items: 12, ActiveDays: 6, Fast: 1, FastBase: 5}, "", ""},
 		{"first-comment bot", core.AuthorSignals{Items: 60, ActiveDays: 3, MaxPerHour: 16, Fast: 0.9, FastBase: 60, Spammy: 0.3, Repeated: 0.3},

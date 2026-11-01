@@ -214,6 +214,28 @@ func TestAdsLegalAndBotScoring(t *testing.T) {
 		it.ThreadID, it.ParentID = fmt.Sprintf("fb:post:g%d", i), fmt.Sprintf("fb:post:g%d", i)
 		items = append(items, it)
 	}
+	// A network: five accounts posting the same campaign text twice each on
+	// one day, in different threads. Each has only two posts.
+	campaign := "الحكومة الحالية افضل حكومة مرت على العراق والكل يشهد بانجازاتها"
+	for a := range 5 {
+		for k := range 2 {
+			it := comment(fmt.Sprintf("fb:comment:n%d-%d", a, k), campaign, base.Add(time.Duration(a*10+k)*time.Minute), fmt.Sprintf("net-%d", a))
+			it.ThreadID, it.ParentID = fmt.Sprintf("fb:post:n%d", k), fmt.Sprintf("fb:post:n%d", k)
+			items = append(items, it)
+		}
+	}
+	// A coincidence: the same long quote by five people on five different
+	// days is not coordination.
+	quote := "قال الشاعر العراقي الكبير ان الوطن ليس فندقا نغادره حين تسوء الخدمة"
+	for a := range 5 {
+		for k := range 2 {
+			it := comment(fmt.Sprintf("fb:comment:q%d-%d", a, k), quote+fmt.Sprint(k), base.Add(-time.Duration(a)*24*time.Hour+time.Duration(k)*time.Minute), fmt.Sprintf("quote-%d", a))
+			if k == 1 {
+				it.Text = quote
+			}
+			items = append(items, it)
+		}
+	}
 	if _, err := s.Ingest(ctx, items, plan); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +261,9 @@ func TestAdsLegalAndBotScoring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run.Scored != 3 || run.Flagged != 1 || run.Changed != 1 {
+	// bot-1, human-1, fan-1 (5+ items) and the five network accounts; the
+	// quoting people are neither busy nor coordinated.
+	if run.Scored != 8 || run.Flagged != 6 || run.Changed != 6 {
 		t.Fatalf("run %+v", run)
 	}
 	var level string
@@ -256,9 +280,20 @@ func TestAdsLegalAndBotScoring(t *testing.T) {
 	if n := count(t, s, `SELECT count(*) FROM analysis.authors WHERE author_key = $1 AND repeated = 0`, []byte("fan-1")); n != 1 {
 		t.Fatal("contest entries counted as repetition")
 	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.authors WHERE bot = 'suspected' AND 'network' = ANY(reasons)
+		AND encode(author_key, 'escape') LIKE 'net-%'`); n != 5 {
+		t.Fatalf("network accounts flagged: %d, want 5", n)
+	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.authors WHERE encode(author_key, 'escape') LIKE 'quote-%'`); n != 0 {
+		t.Fatal("people quoting a poem on different days were scored as coordinated")
+	}
 	flags := outboxOf(t, s, topics.AnalysisAuthor, func() *analysisv1.AuthorFlag { return &analysisv1.AuthorFlag{} })
-	if len(flags) != 1 || flags[0].Bot != bots.Likely || string(flags[0].AuthorKey) != bot {
-		t.Fatalf("author events %v", flags)
+	byKey := map[string]string{}
+	for _, f := range flags {
+		byKey[string(f.AuthorKey)] = f.Bot
+	}
+	if len(flags) != 6 || byKey[bot] != bots.Likely || byKey["net-0"] != bots.Suspected {
+		t.Fatalf("author events %v", byKey)
 	}
 	// A second run changes nothing and publishes nothing.
 	if run, _ = s.ScoreAuthors(ctx, 30*24*time.Hour, 10, 5, scorer); run.Changed != 0 {
@@ -297,7 +332,8 @@ func TestAdsLegalAndBotScoring(t *testing.T) {
 	if err := s.OverrideAuthor(ctx, "facebook", []byte(bot), "maybe"); err == nil {
 		t.Fatal("unknown override accepted")
 	}
-	if rows, err := s.Authors(ctx, true, 10); err != nil || len(rows) != 1 || rows[0].Bot != "confirmed" {
+	rows, err := s.Authors(ctx, true, 10)
+	if err != nil || len(rows) != 6 || rows[len(rows)-1].Bot != "confirmed" || string(rows[len(rows)-1].Key) != "human-1" {
 		t.Fatalf("flagged authors %+v %v", rows, err)
 	}
 	// Erasing the author removes the profile.
@@ -306,5 +342,81 @@ func TestAdsLegalAndBotScoring(t *testing.T) {
 	}
 	if n := count(t, s, `SELECT count(*) FROM analysis.authors WHERE author_key = $1`, []byte(bot)); n != 0 {
 		t.Fatal("author profile survived erasure")
+	}
+}
+
+func TestSubTopicsAndFindTopics(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	file, _ := taxonomy.Load("")
+	if _, err := s.SeedTopicsIfEmpty(ctx, file); err != nil {
+		t.Fatal(err)
+	}
+	// A narrower topic under a listed topic (not an area): a sub-topic.
+	ids, err := s.ResolveTopics(ctx, [][]core.TopicProposal{{{EN: "Electricity cuts", AR: "انقطاع الكهرباء", Parent: "services.electricity"}}}, nil)
+	if err != nil || len(ids[0]) != 1 {
+		t.Fatalf("resolve: %v %v", ids, err)
+	}
+	cuts := ids[0][0]
+	if cuts != "services.electricity.electricity_cuts" {
+		t.Fatalf("sub-topic id %s", cuts)
+	}
+	if _, err := s.ApplyTopicDecisions(ctx, []TopicDecision{{ID: cuts, Action: "approve"}}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	tax, err := s.LoadTaxonomy(ctx)
+	if err != nil || !tax.Valid(cuts) || taxonomy.Depth(cuts) != 3 || !strings.Contains(tax.Prompt(), "    "+cuts+":") {
+		t.Fatalf("three levels: %v", err)
+	}
+	// A sub-topic cannot get sub-topics, and a topic with sub-topics is not
+	// merged away from under them.
+	if _, err := s.ApplyTopicDecisions(ctx, []TopicDecision{{ID: cuts, Action: "approve", Parent: cuts}}, "x"); err == nil {
+		t.Fatal("fourth level accepted")
+	}
+	if _, err := s.ApplyTopicDecisions(ctx, []TopicDecision{{ID: "services.electricity", Action: "merge", Into: "services.water"}}, "x"); err == nil {
+		t.Fatal("parent merged away from its sub-topics")
+	}
+	find := func(q string) map[string]string {
+		t.Helper()
+		hits, err := s.FindTopics(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]string{}
+		for _, h := range hits {
+			out[h.ID] = h.Under
+		}
+		return out
+	}
+	// English with another word form, Arabic with or without the article:
+	// the sub-topic itself.
+	for _, q := range []string{"electrical cuts", "انقطاع الكهرباء", "power cuts electricity"} {
+		if got := find(q); len(got) != 1 || got[cuts] != "" {
+			t.Errorf("find(%q) = %v, want only %s", q, got, cuts)
+		}
+	}
+	// An ambiguous word ("قطع" is also spare parts) returns every reading,
+	// the right one included.
+	if got := find("قطع كهرباء"); len(got) < 2 {
+		t.Errorf("find(قطع كهرباء) = %v", got)
+	} else if _, ok := got[cuts]; !ok {
+		t.Errorf("find(قطع كهرباء) misses %s: %v", cuts, got)
+	}
+	// The broader topic brings its sub-topics.
+	if got := find("electricity supply"); len(got) != 2 || got["services.electricity"] != "" || got[cuts] != "services.electricity" {
+		t.Fatalf("find(electricity supply) = %v", got)
+	}
+	if got := find("zzzz qqqq"); len(got) != 0 {
+		t.Fatalf("nonsense found %v", got)
+	}
+	// Items carrying any of the ids are counted.
+	at := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	c := comment("fb:comment:1", "الوطنية طافية", at, "a1")
+	if _, err := s.Ingest(ctx, []*core.Item{c}, plan); err != nil {
+		t.Fatal(err)
+	}
+	write(t, s, c, core.Result{Topics: []string{cuts}})
+	if n, err := s.TopicItems(ctx, []string{"services.electricity", cuts}); err != nil || n != 1 {
+		t.Fatalf("topic items %d %v", n, err)
 	}
 }

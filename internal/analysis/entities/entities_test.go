@@ -111,3 +111,39 @@ func TestLoadSeed(t *testing.T) {
 		t.Fatalf("korek: %+v", m)
 	}
 }
+
+func TestAmbiguousAliases(t *testing.T) {
+	r := New([]Entity{
+		{ID: "pos-iraq-pm", Name: "Prime Minister of Iraq", NameAR: "رئيس مجلس الوزراء", Type: "position", Tracked: true},
+		{ID: "asiacell", Name: "Asiacell", Type: "brand", Tracked: true},
+	}, []Alias{
+		{Alias: "رئيس الوزراء العراقي", EntityID: "pos-iraq-pm"},
+		{Alias: "رئيس الوزراء", EntityID: "pos-iraq-pm", Ambiguous: true},
+		{Alias: "رئيس مجلس الوزراء", EntityID: "pos-iraq-pm", Ambiguous: true},
+	}, nil)
+	// A generic title: a hint marked ambiguous.
+	m := r.Find("رئيس الوزراء البريطاني يزور بغداد")
+	if len(m) != 1 || m[0].EntityID != "pos-iraq-pm" || !m[0].Ambiguous {
+		t.Fatalf("generic title: %+v", m)
+	}
+	// The qualified form settles it, even next to the generic one.
+	m = r.Find("رئيس الوزراء العراقي قال ... ورئيس الوزراء وعد")
+	if len(m) != 1 || m[0].Ambiguous {
+		t.Fatalf("qualified title: %+v", m)
+	}
+	// The Arabic name itself is generic here: no link by name alone.
+	for _, n := range []string{"رئيس الوزراء", "رئيس مجلس الوزراء", "ورئيس الوزراء"} {
+		if id := r.Link("", n); id != "" {
+			t.Errorf("Link(%q) = %q, want no link", n, id)
+		}
+		if !r.Ambiguous(n) {
+			t.Errorf("Ambiguous(%q) = false", n)
+		}
+	}
+	// The model's id (chosen from the context) still links, and
+	// unambiguous names link by name.
+	if r.Link("pos-iraq-pm", "رئيس الوزراء") != "pos-iraq-pm" || r.Link("", "رئيس الوزراء العراقي") != "pos-iraq-pm" ||
+		r.Link("", "Prime Minister of Iraq") != "pos-iraq-pm" || r.Ambiguous("Asiacell") || r.Ambiguous("unknown") {
+		t.Fatal("unambiguous linking broken")
+	}
+}

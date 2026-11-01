@@ -87,7 +87,7 @@ func TextSchema(tax *taxonomy.Taxonomy, keywords bool) map[string]any {
 		"conf":   integer(),
 		"ents":   array(entitySchema()),
 		"topics": array(enum(tax.IDs())),
-		"new_topics": array(object(map[string]any{"en": str(), "ar": str(), "parent": enum(tax.TopIDs())},
+		"new_topics": array(object(map[string]any{"en": str(), "ar": str(), "parent": enum(tax.ParentIDs())},
 			[]string{"en", "ar", "parent"})),
 		"intent":  enum(Intents),
 		"emotion": enum(Emotions),

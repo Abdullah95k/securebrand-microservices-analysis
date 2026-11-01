@@ -3,6 +3,10 @@
 -- topic list, and bot detection (docs/design/analysis-service.md sections
 -- 6, 6.1 and 6.2).
 
+-- Generic aliases ("رئيس الوزراء", "وزارة الصحة") are hints for the model,
+-- never a link or an urgent match on their own.
+ALTER TABLE analysis.entity_aliases ADD COLUMN ambiguous boolean NOT NULL DEFAULT false;
+
 -- Ads and possible breaches; the author on the analysis row, for bot flags
 -- without a join through the text table.
 ALTER TABLE analysis.analyses
@@ -166,9 +170,16 @@ SELECT * FROM analysis.rollup_source_daily x WHERE EXISTS (SELECT 1 FROM analysi
 CREATE VIEW agent.rollup_flag_daily WITH (security_barrier) AS
 SELECT * FROM analysis.rollup_flag_daily x WHERE EXISTS (SELECT 1 FROM analysis.client_roles r JOIN analysis.client_sources cs ON cs.client_id = r.client_id
                  WHERE r.role_name = current_user AND cs.source_id = x.source_id);
--- The topic list is not client data: every agent role may read it.
+-- The topic list is not client data: every agent role may read it, with
+-- every name of each topic, to turn a question in any language into topic
+-- ids. A topic's sub-topics are the ids that start with its id and a dot:
+--   WHERE topics && ARRAY(SELECT topic_id FROM agent.topics
+--                          WHERE topic_id = 'services.electricity' OR topic_id LIKE 'services.electricity.%')
 CREATE VIEW agent.topics AS
-SELECT topic_id, parent_id, name_en, name_ar, status, merged_into FROM analysis.topics WHERE status IN ('active', 'merged');
+SELECT topic_id, parent_id, name_en, name_ar, status, merged_into FROM analysis.topics WHERE status IN ('active', 'candidate', 'merged');
+CREATE VIEW agent.topic_aliases AS
+SELECT a.topic_id, a.alias FROM analysis.topic_aliases a JOIN analysis.topics t ON t.topic_id = a.topic_id
+WHERE t.status IN ('active', 'candidate');
 
 -- Agent roles created before this migration: grant the new views.
 -- +goose StatementBegin
@@ -176,12 +187,13 @@ DO $$
 DECLARE r text;
 BEGIN
   FOR r IN SELECT role_name FROM analysis.client_roles JOIN pg_roles ON rolname = role_name LOOP
-    EXECUTE format('GRANT SELECT ON agent.rollup_flag_daily, agent.topics TO %I', r);
+    EXECUTE format('GRANT SELECT ON agent.rollup_flag_daily, agent.topics, agent.topic_aliases TO %I', r);
   END LOOP;
 END $$;
 -- +goose StatementEnd
 
 -- +goose Down
+DROP VIEW agent.topic_aliases;
 DROP VIEW agent.topics;
 DROP VIEW agent.rollup_flag_daily;
 DROP VIEW agent.mentions;
@@ -201,6 +213,7 @@ DROP INDEX analysis.entity_mentions_topics_idx;
 DROP INDEX analysis.analyses_topics_idx;
 ALTER TABLE analysis.media_analyses DROP COLUMN ad_type, DROP COLUMN legal;
 ALTER TABLE analysis.analyses DROP COLUMN ad_type, DROP COLUMN legal, DROP COLUMN author_key;
+ALTER TABLE analysis.entity_aliases DROP COLUMN ambiguous;
 -- The views as 00001 created them (re-run agent-role to grant them again).
 CREATE VIEW agent.mentions WITH (security_barrier) AS
 SELECT m.day, m.created_at, m.platform, m.source_id, m.kind, m.content_id,

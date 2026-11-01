@@ -296,6 +296,58 @@ func TestNewTopicsEntityTopicsAndFlags(t *testing.T) {
 	}
 }
 
+// "رئيس الوزراء" alone is any country's prime minister: a hint marked
+// ambiguous, never urgent, never linked by name; the qualified form links.
+func TestAmbiguousTitles(t *testing.T) {
+	e := setup(t, nil)
+	ctx := context.Background()
+	if _, err := e.s.DB.Exec(ctx, `INSERT INTO analysis.clients (client_id, name) VALUES ('c1', 'Client')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.TrackEntity(ctx, "c1", "pos-iraq-pm", "watch"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := e.s.LoadRegistry(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.p.SetEntities(r)
+	foreign, iraqi := comment(1, "رئيس الوزراء البريطاني زار بغداد اليوم"), comment(2, "رئيس الوزراء العراقي وعد بحل ازمة الكهرباء")
+	if pl := e.p.Plan(foreign); pl.Lane != core.LaneBatch {
+		t.Fatal("a generic title made the item urgent")
+	}
+	if pl := e.p.Plan(iraqi); pl.Lane != core.LaneRealtime {
+		t.Fatal("the qualified title of a tracked position is not urgent")
+	}
+	var users []string
+	e.primary.Fail = func(req provider.Request) error {
+		users = append(users, req.User)
+		return nil
+	}
+	e.ingest(t, foreign, iraqi)
+	if _, err := e.p.RealtimeOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(users, "\n"), `"ambiguous":true`) {
+		t.Fatal("the generic title was not offered as an ambiguous hint")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.entity_mentions WHERE content_id = 'fb:comment:1' AND entity_id = 'pos-iraq-pm'`); n != 0 {
+		t.Fatal("the British prime minister was linked to the Iraqi one")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE content_id = 'fb:comment:2' AND topics @> ARRAY['@pos-iraq-pm']`); n != 1 {
+		t.Fatal("the Iraqi prime minister was not linked")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.entity_candidates`); n != 0 {
+		t.Fatal("a generic title went to the review queue")
+	}
+}
+
 // A leader the model leaves out fails with its followers; they are retried
 // together and analysed.
 func TestDuplicatesFailWithTheirLeader(t *testing.T) {

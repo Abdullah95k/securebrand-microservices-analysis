@@ -237,8 +237,10 @@ type AuthorSignals struct {
 	ActiveHours int
 	// Repeated: the same substantial text posted in three or more threads.
 	Repeated float64
-	// Coordinated: a substantial text that several other authors posted too.
-	Coordinated float64
+	// Coordinated: a substantial text that several other authors posted on
+	// the same day; CoordinatedItems counts them.
+	Coordinated      float64
+	CoordinatedItems int
 	// Fast: comments within a minute of their post (of FastBase comments
 	// whose post is known).
 	Fast     float64

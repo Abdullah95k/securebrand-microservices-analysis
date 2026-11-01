@@ -25,7 +25,7 @@ entities:
   - {id: rafidain-bank, name: Rafidain Bank, name_ar: مصرف الرافدين, type: organization, aliases: [مصرف الرافدين, rafidain bank]}
   - {id: rasheed-bank, name: Rasheed Bank, name_ar: مصرف الرشيد, type: organization, aliases: [مصرف الرشيد, rasheed bank]}
   - {id: tbi, name: Trade Bank of Iraq, name_ar: المصرف العراقي للتجارة, type: organization, aliases: [المصرف العراقي للتجارة, trade bank of iraq]}
-  - {id: cbi, name: Central Bank of Iraq, name_ar: البنك المركزي العراقي, type: organization, aliases: [البنك المركزي العراقي, البنك المركزي, central bank of iraq]}
+  - {id: cbi, name: Central Bank of Iraq, name_ar: البنك المركزي العراقي, type: organization, aliases: [البنك المركزي العراقي, central bank of iraq], ambiguous: [البنك المركزي, central bank]}
   # Transport and delivery
   - {id: iraqi-airways, name: Iraqi Airways, name_ar: الخطوط الجوية العراقية, type: brand, aliases: [الخطوط الجوية العراقية, الخطوط العراقية, iraqi airways]}
   - {id: fly-baghdad, name: Fly Baghdad, name_ar: فلاي بغداد, type: brand, aliases: [فلاي بغداد, fly baghdad, flybaghdad]}
@@ -34,22 +34,24 @@ entities:
   - {id: baly, name: Baly, name_ar: بلي, type: brand, aliases: [تطبيق بلي, baly app, baly]}
   - {id: lezzoo, name: Lezzoo, name_ar: ليزو, type: brand, aliases: [ليزو, lezzoo]}
   # Public bodies
-  - {id: ministry-electricity, name: Ministry of Electricity, name_ar: وزارة الكهرباء, type: organization, aliases: [وزارة الكهرباء, ministry of electricity]}
-  - {id: ministry-health, name: Ministry of Health, name_ar: وزارة الصحة, type: organization, aliases: [وزارة الصحة, ministry of health]}
-  - {id: ministry-education, name: Ministry of Education, name_ar: وزارة التربية, type: organization, aliases: [وزارة التربية, ministry of education]}
-  # Positions (offices)
-  - {id: pos-iraq-pm, name: Prime Minister of Iraq, name_ar: رئيس مجلس الوزراء, type: position, aliases: [رئيس الوزراء, رئيس مجلس الوزراء, رئيس الحكومة, رئيس الوزراء العراقي, iraqi prime minister, iraq pm, prime minister of iraq]}
-  - {id: pos-iraq-president, name: President of Iraq, name_ar: رئيس الجمهورية, type: position, aliases: [رئيس الجمهورية, رئيس جمهورية العراق, president of iraq, iraqi president]}
-  - {id: pos-iraq-speaker, name: Speaker of the Council of Representatives, name_ar: رئيس مجلس النواب, type: position, aliases: [رئيس مجلس النواب, رئيس البرلمان, speaker of parliament, parliament speaker]}
-  - {id: pos-cbi-governor, name: Governor of the Central Bank of Iraq, name_ar: محافظ البنك المركزي, type: position, aliases: [محافظ البنك المركزي, محافظ البنك المركزي العراقي, cbi governor]}
-  - {id: pos-minister-electricity, name: Minister of Electricity, name_ar: وزير الكهرباء, type: position, aliases: [وزير الكهرباء, minister of electricity]}
-  - {id: pos-minister-oil, name: Minister of Oil, name_ar: وزير النفط, type: position, aliases: [وزير النفط, minister of oil]}
-  - {id: pos-minister-health, name: Minister of Health, name_ar: وزير الصحة, type: position, aliases: [وزير الصحة, minister of health]}
-  - {id: pos-minister-education, name: Minister of Education, name_ar: وزير التربية, type: position, aliases: [وزير التربية, minister of education]}
-  - {id: pos-minister-interior, name: Minister of Interior, name_ar: وزير الداخلية, type: position, aliases: [وزير الداخلية, minister of interior]}
-  - {id: pos-minister-finance, name: Minister of Finance, name_ar: وزير المالية, type: position, aliases: [وزير المالية, minister of finance]}
-  - {id: pos-minister-communications, name: Minister of Communications, name_ar: وزير الاتصالات, type: position, aliases: [وزير الاتصالات, minister of communications]}
-  - {id: pos-krg-pm, name: Prime Minister of the Kurdistan Region, name_ar: رئيس حكومة إقليم كردستان, type: position, aliases: [رئيس حكومة اقليم كردستان, رئيس حكومة الاقليم, krg prime minister]}
+  - {id: ministry-electricity, name: Ministry of Electricity, name_ar: وزارة الكهرباء, type: organization, aliases: [وزارة الكهرباء العراقية, iraqi ministry of electricity], ambiguous: [وزارة الكهرباء, ministry of electricity]}
+  - {id: ministry-health, name: Ministry of Health, name_ar: وزارة الصحة, type: organization, aliases: [وزارة الصحة العراقية, iraqi ministry of health], ambiguous: [وزارة الصحة, ministry of health]}
+  - {id: ministry-education, name: Ministry of Education, name_ar: وزارة التربية, type: organization, aliases: [وزارة التربية العراقية, iraqi ministry of education], ambiguous: [وزارة التربية, ministry of education]}
+  # Positions (offices). Bare titles ("رئيس الوزراء", "وزير الصحة") are
+  # ambiguous: any country has one. They are hints for the model, which
+  # links them only in an Iraqi context; the qualified forms link directly.
+  - {id: pos-iraq-pm, name: Prime Minister of Iraq, name_ar: رئيس مجلس الوزراء, type: position, aliases: [رئيس الوزراء العراقي, رئيس مجلس الوزراء العراقي, رئيس الحكومة العراقية, iraqi prime minister, iraq pm, prime minister of iraq], ambiguous: [رئيس مجلس الوزراء, رئيس الوزراء, رئيس الحكومة, prime minister]}
+  - {id: pos-iraq-president, name: President of Iraq, name_ar: رئيس الجمهورية, type: position, aliases: [رئيس جمهورية العراق, الرئيس العراقي, president of iraq, iraqi president], ambiguous: [رئيس الجمهورية]}
+  - {id: pos-iraq-speaker, name: Speaker of the Council of Representatives, name_ar: رئيس مجلس النواب, type: position, aliases: [رئيس مجلس النواب العراقي, رئيس البرلمان العراقي, speaker of the iraqi parliament], ambiguous: [رئيس مجلس النواب, رئيس البرلمان, speaker of parliament]}
+  - {id: pos-cbi-governor, name: Governor of the Central Bank of Iraq, name_ar: محافظ البنك المركزي العراقي, type: position, aliases: [محافظ البنك المركزي العراقي, cbi governor], ambiguous: [محافظ البنك المركزي]}
+  - {id: pos-minister-electricity, name: Minister of Electricity, name_ar: وزير الكهرباء, type: position, aliases: [وزير الكهرباء العراقي], ambiguous: [وزير الكهرباء, minister of electricity]}
+  - {id: pos-minister-oil, name: Minister of Oil, name_ar: وزير النفط, type: position, aliases: [وزير النفط العراقي], ambiguous: [وزير النفط, minister of oil]}
+  - {id: pos-minister-health, name: Minister of Health, name_ar: وزير الصحة, type: position, aliases: [وزير الصحة العراقي], ambiguous: [وزير الصحة, minister of health]}
+  - {id: pos-minister-education, name: Minister of Education, name_ar: وزير التربية, type: position, aliases: [وزير التربية العراقي], ambiguous: [وزير التربية, minister of education]}
+  - {id: pos-minister-interior, name: Minister of Interior, name_ar: وزير الداخلية, type: position, aliases: [وزير الداخلية العراقي], ambiguous: [وزير الداخلية, minister of interior]}
+  - {id: pos-minister-finance, name: Minister of Finance, name_ar: وزير المالية, type: position, aliases: [وزير المالية العراقي], ambiguous: [وزير المالية, minister of finance]}
+  - {id: pos-minister-communications, name: Minister of Communications, name_ar: وزير الاتصالات, type: position, aliases: [وزير الاتصالات العراقي], ambiguous: [وزير الاتصالات, minister of communications]}
+  - {id: pos-krg-pm, name: Prime Minister of the Kurdistan Region, name_ar: رئيس حكومة إقليم كردستان, type: position, aliases: [رئيس حكومة اقليم كردستان, krg prime minister], ambiguous: [رئيس حكومة الاقليم]}
   - {id: pos-governor-baghdad, name: Governor of Baghdad, name_ar: محافظ بغداد, type: position, aliases: [محافظ بغداد, governor of baghdad]}
   - {id: pos-governor-basra, name: Governor of Basra, name_ar: محافظ البصرة, type: position, aliases: [محافظ البصرة, governor of basra]}
   # Places (governorates)

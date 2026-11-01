@@ -9,7 +9,7 @@
 //	sb-analysis replay-failed [--route r]
 //	sb-analysis agent-role --client c --name "Client" --role sb_agent_c --password-file f
 //	sb-analysis rollups recompute --day 2026-11-01
-//	sb-analysis topics list | approve | rename | merge | reject | curate | import
+//	sb-analysis topics find <words> | list | approve | rename | merge | reject | curate | import
 //	sb-analysis authors list | mark --key k --as bot|human|none | score
 package main
 
@@ -92,7 +92,8 @@ const usage = `usage: sb-analysis [run|migrate|entities|sources|reanalyze|replay
   replay-failed  [--route r] [--limit n]
   agent-role     --client id --name "Name" --role sb_agent_x --password-file /run/secrets/f
   rollups        recompute --day YYYY-MM-DD
-  topics         list [--status candidate|active|merged|rejected|all] [--min-seen n] | approve --id t [--en --ar --parent p]
+  topics         find <words, any language> | list [--status candidate|active|merged|rejected|all] [--min-seen n]
+                 | approve --id t [--en --ar --parent p]
                  | rename --id t --en .. --ar .. | merge --from t --into t | reject --id t | curate | import --file f.yaml
   authors        list [--all] [--limit n] | mark --key hex --as bot|human|none [--platform facebook] | score`
 

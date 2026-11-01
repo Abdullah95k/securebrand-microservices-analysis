@@ -28,7 +28,8 @@ type BotRun struct {
 }
 
 // authorSignals computes the behaviour of every author with at least
-// minItems items since since (pages replying on their own page excluded).
+// minItems items since since, and of smaller accounts that took part in
+// coordination (pages replying on their own page excluded).
 // Formulaic texts (contest entries, prayers, tags) never count as
 // repetition or coordination: thousands of people write the same "تم".
 const authorSignals = `
@@ -36,6 +37,7 @@ WITH w AS MATERIALIZED (
   SELECT c.platform, c.author_key, c.created_at, c.content_id, c.kind, c.source_id,
          coalesce(c.thread_id, c.content_id) AS thread,
          md5(lower(regexp_replace(btrim(c.text), '\s+', ' ', 'g'))) AS th,
+         (c.created_at AT TIME ZONE $3)::date AS day,
          char_length(c.text) AS len,
          coalesce(array_length(regexp_split_to_array(btrim(c.text), '\s+'), 1), 0) AS words,
          coalesce(a.intent IN ('giveaway_entry', 'greeting_religious', 'tagging'), false) AS formulaic,
@@ -44,14 +46,27 @@ WITH w AS MATERIALIZED (
   LEFT JOIN analysis.analyses a ON a.created_at = c.created_at AND a.content_id = c.content_id AND a.is_current
   WHERE c.created_at >= $1 AND c.author_key IS NOT NULL AND NOT c.author_is_source AND c.text IS NOT NULL AND c.status <> 'redacted'
 ),
-act AS (SELECT platform, author_key FROM w GROUP BY 1, 2 HAVING count(*) >= $2),
-aw AS MATERIALIZED (SELECT w.* FROM w JOIN act USING (platform, author_key)),
+-- Coordination: the same substantial text from at least $4 authors on
+-- the same (Iraq) day. Long quotes repeated over weeks do not count.
+ct AS (
+  SELECT platform, th, day FROM w WHERE len >= 30 AND words >= 5 AND NOT formulaic
+  GROUP BY 1, 2, 3 HAVING count(DISTINCT author_key) >= $4),
+wc AS MATERIALIZED (
+  SELECT w.*, (ct.th IS NOT NULL) AS coord FROM w LEFT JOIN ct USING (platform, th, day)),
+-- Scored: authors with at least $2 items, and low-volume accounts (2+
+-- items) that took part in coordination (networks of accounts that each
+-- post a little).
+act AS (
+  SELECT platform, author_key FROM wc GROUP BY 1, 2
+  HAVING count(*) >= $2 OR (count(*) >= 2 AND bool_or(coord))),
+aw AS MATERIALIZED (SELECT wc.* FROM wc JOIN act USING (platform, author_key)),
 base AS (
   SELECT platform, author_key, count(*) AS items,
-         count(DISTINCT (created_at AT TIME ZONE $3)::date) AS active_days,
+         count(DISTINCT day) AS active_days,
          count(DISTINCT source_id) AS sources,
          count(DISTINCT extract(hour FROM created_at AT TIME ZONE $3)) AS active_hours,
          count(*) FILTER (WHERE spammy) AS spammy,
+         count(*) FILTER (WHERE coord) AS coordinated,
          min(created_at) AS first_seen, max(created_at) AS last_seen
   FROM aw GROUP BY 1, 2),
 hourly AS (
@@ -63,24 +78,17 @@ rep AS (
     SELECT platform, author_key, th, count(*) AS n, count(DISTINCT thread) AS threads
     FROM aw WHERE len >= 15 AND NOT formulaic GROUP BY 1, 2, 3) x
   WHERE threads >= 3 GROUP BY 1, 2),
-ct AS (
-  SELECT platform, th FROM w WHERE len >= 30 AND words >= 5 AND NOT formulaic
-  GROUP BY 1, 2 HAVING count(DISTINCT author_key) >= $4),
-coord AS (
-  SELECT aw.platform, aw.author_key, count(*) AS coordinated FROM aw JOIN ct USING (platform, th)
-  WHERE aw.len >= 30 AND aw.words >= 5 AND NOT aw.formulaic GROUP BY 1, 2),
 fast AS (
   SELECT aw.platform, aw.author_key, count(*) AS base,
          count(*) FILTER (WHERE aw.created_at - ci.created_at BETWEEN interval '0' AND interval '60 seconds') AS fast
   FROM aw JOIN analysis.content_index ci ON ci.content_id = aw.thread
   WHERE aw.kind <> 'post' AND aw.thread <> aw.content_id GROUP BY 1, 2)
 SELECT b.platform, b.author_key, b.items, b.active_days, coalesce(h.max_per_hour, 0), b.sources, b.active_hours,
-       coalesce(r.repeated, 0), coalesce(c.coordinated, 0), coalesce(f.fast, 0), coalesce(f.base, 0), b.spammy,
+       coalesce(r.repeated, 0), b.coordinated, coalesce(f.fast, 0), coalesce(f.base, 0), b.spammy,
        b.first_seen, b.last_seen
 FROM base b
 LEFT JOIN hourly h USING (platform, author_key)
 LEFT JOIN rep r USING (platform, author_key)
-LEFT JOIN coord c USING (platform, author_key)
 LEFT JOIN fast f USING (platform, author_key)`
 
 // AuthorSignals returns the behaviour of the authors active since since.
@@ -100,6 +108,7 @@ func (s *Store) AuthorSignals(ctx context.Context, since time.Time, minItems, co
 		}
 		n := float64(max(a.Items, 1))
 		a.Repeated, a.Coordinated, a.Spammy = float64(repeated)/n, float64(coordinated)/n, float64(spammy)/n
+		a.CoordinatedItems = coordinated
 		if a.FastBase > 0 {
 			a.Fast = float64(fast) / float64(a.FastBase)
 		}

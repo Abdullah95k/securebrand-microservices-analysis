@@ -475,7 +475,10 @@ analysis:
     enabled: true
     every: 24h
     window: 720h             # 30 days
-    min_items: 10
+    # Authors with at least min_items items are scored on every signal;
+    # smaller accounts (2+ items) are scored when they took part in
+    # coordination (networks of accounts that each post a little).
+    min_items: 5
     suspected_score: 45
     likely_score: 70
     coordination_authors: 5

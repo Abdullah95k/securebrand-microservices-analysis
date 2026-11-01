@@ -38,7 +38,7 @@ func (s *Store) LoadRegistry(ctx context.Context) (*entities.Registry, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	arows, err := s.DB.Query(ctx, `SELECT a.alias, a.entity_id FROM analysis.entity_aliases a
+	arows, err := s.DB.Query(ctx, `SELECT a.alias, a.entity_id, a.ambiguous FROM analysis.entity_aliases a
 		JOIN analysis.entities e ON e.entity_id = a.entity_id AND e.status = 'active'`)
 	if err != nil {
 		return nil, err
@@ -47,7 +47,7 @@ func (s *Store) LoadRegistry(ctx context.Context) (*entities.Registry, error) {
 	var aliases []entities.Alias
 	for arows.Next() {
 		var a entities.Alias
-		if err := arows.Scan(&a.Alias, &a.EntityID); err != nil {
+		if err := arows.Scan(&a.Alias, &a.EntityID, &a.Ambiguous); err != nil {
 			return nil, err
 		}
 		aliases = append(aliases, a)
@@ -71,13 +71,19 @@ func (s *Store) ImportSeed(ctx context.Context, seed *entities.Seed, source stri
 				e.ID, e.Name, e.NameAR, e.Type, e.PublicFigure); err != nil {
 				return fmt.Errorf("entity %s: %w", e.ID, err)
 			}
-			for _, a := range append([]string{e.Name, e.NameAR}, e.Aliases...) {
+			generic := map[string]bool{}
+			for _, a := range e.Ambiguous {
+				generic[textnorm.Normalize(a)] = true
+			}
+			names := append(append([]string{e.Name, e.NameAR}, e.Aliases...), e.Ambiguous...)
+			for _, a := range names {
 				norm := textnorm.Normalize(a)
 				if norm == "" {
 					continue
 				}
-				if _, err := tx.Exec(ctx, `INSERT INTO analysis.entity_aliases (alias_norm, entity_id, alias, source)
-					VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, norm, e.ID, a, source); err != nil {
+				if _, err := tx.Exec(ctx, `INSERT INTO analysis.entity_aliases (alias_norm, entity_id, alias, source, ambiguous)
+					VALUES ($1, $2, $3, $4, $5) ON CONFLICT (alias_norm, entity_id) DO UPDATE SET ambiguous = EXCLUDED.ambiguous`,
+					norm, e.ID, a, source, generic[norm]); err != nil {
 					return err
 				}
 			}

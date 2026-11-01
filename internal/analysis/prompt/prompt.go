@@ -13,8 +13,8 @@ import (
 // Versions recorded with every result. Bump PromptVersion on any change to
 // the instructions and SchemaVersion on any change to the output schema.
 const (
-	PromptVersion = "p3"
-	SchemaVersion = "s3"
+	PromptVersion = "p4"
+	SchemaVersion = "s4"
 )
 
 // Allowed values of the output schema.
@@ -33,14 +33,20 @@ var (
 	// SignalFlags, AdFlags and LegalFlags are the yes/no signals the model
 	// lists only when they apply (usually none, so they cost nothing).
 	SignalFlags = []string{"cs", "sarcasm", "spam", "hate", "threat", "harass", "urgent"}
-	// AdFlags: a brand or business promoting itself, paid promotion of
-	// another brand (disclosed), promotion that looks paid but is not
-	// disclosed, and private sales (classifieds).
-	AdFlags = []string{"ad_own", "ad_paid", "ad_hidden", "ad_sale"}
-	// LegalFlags are possible legal or platform-policy breaches, flagged for
-	// human review (never a legal finding).
+	// AdFlags: affiliate marketing (commission links or codes), a brand or
+	// business promoting itself, paid promotion of another brand
+	// (disclosed), promotion that looks paid but is not disclosed, and
+	// private sales (classifieds).
+	AdFlags = []string{"ad_affiliate", "ad_own", "ad_paid", "ad_hidden", "ad_sale"}
+	// LegalFlags are possible legal or platform-policy breaches the model
+	// lists, flagged for human review (never a legal finding).
 	LegalFlags = []string{"incitement", "terrorism", "child_safety", "sexual_content", "graphic_violence", "self_harm", "drugs",
-		"weapons", "gambling", "regulated_goods", "fraud_scam", "unlicensed_finance", "counterfeit", "privacy", "defamation"}
+		"weapons", "gambling", "regulated_goods", "fraud_scam", "unlicensed_finance", "counterfeit", "privacy", "defamation",
+		"misinformation", "extortion", "other_illegal"}
+	// LegalCategories are every stored breach category: hate speech and
+	// threats come from the hate and threat signals, the rest from
+	// LegalFlags.
+	LegalCategories = concat([]string{"hate_speech", "threat"}, LegalFlags)
 	// Flags is every flag of the text routes; MediaFlags those of images
 	// and videos.
 	Flags      = concat(SignalFlags, AdFlags, LegalFlags)
@@ -94,12 +100,13 @@ ENTITIES
 - Positions are offices, independent of who holds them: "رئيس الوزراء", "رئيس الحكومة" and "the PM" are the position "Prime Minister of Iraq"; also ministers ("وزير الكهرباء"), governors, the Speaker, the President, heads of bodies. Type position, name in English as "<office> of <country or body>". When the item also names or clearly means the person holding the office, list the person too.
 - For each: name as written (or the canonical name from a hint), type, id, sentiment toward that entity with its score (-100 to 100), and aspect (what the sentiment is about).
 - Hints list registry entities found in the text or the page name: when an entity is a hinted one, copy its id exactly; otherwise id is "".
+- A hint marked ambiguous matched only a generic name ("رئيس الوزراء", "وزير الصحة", "البنك المركزي"). Use its id only when the item clearly means that entity: Iraqi context, no other country named. "رئيس الوزراء البريطاني" or "وزير الصحة اللبناني" is another entity: list it without the id ("Prime Minister of the United Kingdom", type position).
 - Private persons (friends tagged, ordinary people named): never list them. Count them in ppl.
 - Do not identify people from images or guess identities.
 
 TOPICS AND SIGNALS
-- topics: every taxonomy id below that applies (most items have one to three; at most 10), most specific first; "other" only if nothing fits and nothing is proposed. kw (only when the schema asks for it): up to 5 short keywords in the item's language.
-- new_topics: only when the item is clearly about a theme that no listed topic covers: en (2 to 4 English words), ar (Arabic), parent (the top-level id it belongs under). Usually []. Never propose a synonym, translation, narrower or broader wording of a listed topic: use the listed one. Never propose names of people, companies, positions or places: list those as entities (they become topics automatically).
+- topics: every taxonomy id below that the item is about, said directly or only implied (slang, complaints, jokes): "الوطنية طافية من الصبح" and "امبيرات المولدة غالية" are about electricity supply even without the word electricity. Most items have one to three; at most 10; most specific first; "other" only if nothing fits and nothing is proposed. kw (only when the schema asks for it): up to 5 short keywords in the item's language.
+- new_topics: only when the item is clearly about a theme that no listed topic covers: en (2 to 4 English words), ar (Arabic), parent (an area, or the listed topic it narrows: "Electricity cuts" goes under services.electricity). Usually []. Never propose a synonym or translation of a listed topic: use the listed one. Never propose names of people, companies, positions or places: list those as entities (they become topics automatically).
 - intent: complaint, praise, question, request, suggestion, purchase_intent, churn_threat (says they will leave), recommendation, information (states facts or news), giveaway_entry (enters a contest), greeting_religious, tagging (only tags people), spam_ad, other.
 - emotion: anger, joy, sadness, fear, surprise, disgust, trust, anticipation, none.
 - tox: none, mild (insults, vulgarity), severe (hate speech, threats, incitement).
@@ -111,12 +118,13 @@ TOPICS AND SIGNALS
   - hate, threat, harass: hate speech, a threat, harassment of a person;
   - urgent: the item alleges danger, an outage affecting many, fraud, a health or food-safety problem, or an accident: something a brand or authority must see quickly.
   Advertising (mainly posts; for comments use spam), at most one:
+  - ad_affiliate: affiliate marketing: promotes products for a commission through referral or affiliate links, discount or referral codes ("استخدم كودي", "الرابط بالبايو", Temu, Shein or AliExpress codes);
   - ad_own: a brand, shop or business promoting its own products, services or offers (on its page or elsewhere);
   - ad_paid: disclosed paid promotion of another brand ("sponsored", "إعلان", "برعاية", a paid partnership);
-  - ad_hidden: reads like paid promotion of a brand but is not disclosed: an influencer or news page praising a product with prices, discount codes, links or calls to buy;
+  - ad_hidden: reads like paid promotion of a brand but is not disclosed: an influencer or news page praising a product with prices, links or calls to buy;
   - ad_sale: a private person selling or buying something (classifieds: cars, phones, property).
-  Possible legal or platform-policy breaches, for human review (flag only when the item itself does it, not when it reports or condemns it):
-  - incitement: calls for violence or for hatred against a group (sect, ethnicity, religion, nationality);
+  Possible legal or platform-policy breaches, for human review (hate speech and threats are already covered by the hate and threat signals). Flag when the item itself does it, not when it reports or condemns it:
+  - incitement: calls for violence against anyone (a group, a person, institutions, security forces), for revenge or tribal attacks, or for hatred against a sect, ethnicity, religion, tribe or nationality;
   - terrorism: praise, support or propaganda for terrorist or armed extremist groups;
   - child_safety: sexualisation, abuse or exploitation of minors;
   - sexual_content: explicit sexual content, nudity, or offers of sexual services;
@@ -130,8 +138,11 @@ TOPICS AND SIGNALS
   - unlicensed_finance: unlicensed currency trading, investment or loan offers promising returns;
   - counterfeit: fake branded goods, pirated content or accounts for sale;
   - privacy: publishing someone's phone number, address, ID, private photos or messages;
-  - defamation: a specific accusation of a crime or serious wrongdoing against a named company or private person, stated as fact.
-  Not breaches: criticism of the government, officials, institutions, companies or religion; political opinions; complaints; insults (use tox); news reporting about crimes; discussion of sexuality or identity.
+  - defamation: a specific accusation of a crime or serious wrongdoing against a named person (officials included) or company, stated as fact without evidence or a source;
+  - misinformation: a claim presented as fact that is false or very likely false and can cause harm or panic: health and medicine, security incidents, disasters, elections, shortages, the dollar rate or prices, fabricated quotes or documents; flag only clear cases, not opinions or predictions;
+  - extortion: blackmail, threats to publish private photos or information unless paid, sextortion;
+  - other_illegal: clearly illegal in Iraq and not covered above: human trafficking, bribery offers, vote buying, selling official documents or exam questions, organ trade.
+  Criticism, opinions, satire, complaints and news reporting are not breaches by themselves; flag them when they also do one of the above (criticism that states an unproven crime as fact is defamation; a complaint that calls for attacking a sect is incitement). Peaceful political or religious opinion, and a person's sexuality or gender identity, are never breaches by themselves.
 
 OUTPUT
 Answer only with the JSON object the schema requires. Never translate, quote or explain the items.
@@ -147,7 +158,7 @@ const mediaInstructions = `You analyse images (or key frames of a video, in orde
 - people: how many people are visible. Never identify anyone from their face; name a person only if the name is written in the image or spoken in the transcript.
 - sent, score, conf: the sentiment of the message the image or video conveys (positive, negative, neutral, mixed; a whole number from -100 to 100; a whole number from 0 to 100).
 - ents: brands, organisations, public persons, positions, places and events shown, written or spoken, with sentiment toward each (same rules as for text; never private persons). topics: every taxonomy id that applies (at most 10).
-- flags, usually []: ad_own (a business promoting itself), ad_paid (disclosed paid promotion of another brand), ad_hidden (looks like undisclosed paid promotion), ad_sale (a private sale), and possible legal or platform-policy breaches for human review: incitement, terrorism, child_safety, sexual_content, graphic_violence, self_harm, drugs, weapons, gambling, regulated_goods, fraud_scam, unlicensed_finance, counterfeit, privacy, defamation (same meanings as for text; news images reporting such things are not breaches).
+- flags, usually []: ad_affiliate (affiliate links or codes for a commission), ad_own (a business promoting itself), ad_paid (disclosed paid promotion of another brand), ad_hidden (looks like undisclosed paid promotion), ad_sale (a private sale), and possible legal or platform-policy breaches for human review: incitement, terrorism, child_safety, sexual_content, graphic_violence, self_harm, drugs, weapons, gambling, regulated_goods, fraud_scam, unlicensed_finance, counterfeit, privacy, defamation, misinformation (fabricated or doctored images, false claims as fact), extortion, other_illegal (same meanings as for text; news images reporting such things are not breaches).
 
 Answer only with the JSON object the schema requires.
 
@@ -166,9 +177,11 @@ func MediaSystem(tax *taxonomy.Taxonomy) string {
 }
 
 // Hint is a registry entity found in an item's text (or the page name).
+// Ambiguous: only a generic name matched; the model decides.
 type Hint struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Ambiguous bool   `json:"ambiguous,omitempty"`
 }
 
 // Context is the thread an item group belongs to.

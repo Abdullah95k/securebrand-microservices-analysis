@@ -156,36 +156,38 @@ func (s *Store) LoadTaxonomy(ctx context.Context) (*taxonomy.Taxonomy, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var tops []taxonomy.Topic
-	at := map[string]int{}
-	var children []struct {
-		parent string
+	type row struct {
 		t      taxonomy.Topic
+		parent string
 	}
+	var all []row
 	for rows.Next() {
-		var t taxonomy.Topic
-		var parent string
-		if err := rows.Scan(&t.ID, &parent, &t.EN, &t.AR); err != nil {
+		var r row
+		if err := rows.Scan(&r.t.ID, &r.parent, &r.t.EN, &r.t.AR); err != nil {
 			return nil, err
 		}
-		if parent == "" {
-			at[t.ID] = len(tops)
-			tops = append(tops, t)
-		} else {
-			children = append(children, struct {
-				parent string
-				t      taxonomy.Topic
-			}{parent, t})
-		}
+		all = append(all, r)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	for _, c := range children {
-		if i, ok := at[c.parent]; ok {
-			tops[i].Children = append(tops[i].Children, c.t)
-		}
+	// Build the tree (areas, topics, sub-topics) in display order.
+	kids := map[string][]taxonomy.Topic{}
+	for _, r := range all {
+		kids[r.parent] = append(kids[r.parent], r.t)
 	}
+	var build func(parent string, depth int) []taxonomy.Topic
+	build = func(parent string, depth int) []taxonomy.Topic {
+		if depth > taxonomy.MaxDepth {
+			return nil
+		}
+		ts := kids[parent]
+		for i := range ts {
+			ts[i].Children = build(ts[i].ID, depth+1)
+		}
+		return ts
+	}
+	tops := build("", 1)
 	return taxonomy.New(version, tops)
 }
 
@@ -458,6 +460,9 @@ func (s *Store) applyTopic(ctx context.Context, tx pgx.Tx, d TopicDecision) ([]*
 		if d.Action == "rename" && t.Status != TopicActive {
 			return nil, false, errors.New("only an active topic can be renamed")
 		}
+		if d.Parent != "" && taxonomy.Depth(d.Parent) >= taxonomy.MaxDepth {
+			return nil, false, fmt.Errorf("parent %s is a sub-topic; topics nest at most %d levels", d.Parent, taxonomy.MaxDepth)
+		}
 		if d.Parent != "" && d.Parent != t.Parent && t.Parent != "" {
 			// Another parent means another id: a new topic, the old one
 			// merged into it.
@@ -487,6 +492,17 @@ func (s *Store) applyTopic(ctx context.Context, tx pgx.Tx, d TopicDecision) ([]*
 			return nil, false, err
 		}
 		return []*analysisv1.TopicUpdate{topicEvent(t.ID, t.Parent, en, ar, TopicActive, "")}, true, nil
+	case "merge", "reject":
+		var hasKids bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM analysis.topics WHERE parent_id = $1 AND status IN ('active', 'candidate'))`,
+			t.ID).Scan(&hasKids); err != nil {
+			return nil, false, err
+		}
+		if hasKids {
+			return nil, false, errors.New("it has sub-topics: merge or reject them first")
+		}
+	}
+	switch d.Action {
 	case "merge":
 		if d.Into == "" || d.Into == t.ID {
 			return nil, false, errors.New("merge needs another topic to merge into")
@@ -554,4 +570,104 @@ func (s *Store) repointTopic(ctx context.Context, tx pgx.Tx, id string, into *st
 func topicEvent(id, parent, en, ar, status, into string) *analysisv1.TopicUpdate {
 	return &analysisv1.TopicUpdate{TopicId: id, ParentId: parent, NameEn: en, NameAr: ar, Status: status, MergedInto: into,
 		UpdatedAt: timestamppb.Now()}
+}
+
+// TopicHit is a topic found for a search, with its sub-topics.
+type TopicHit struct {
+	ID, EN, AR string
+	Score      float64
+	// Under is set on a sub-topic included because its parent matched.
+	Under string
+}
+
+// FindTopics finds the topics a search means, in English or Arabic
+// ("electrical cuts", "انقطاع الكهرباء"): every name and alias of the
+// active and candidate topics is compared word by word (trigram
+// similarity, so "electrical" finds "electricity"); the best-scoring
+// topics are returned with all their sub-topics, so a query by their ids
+// fetches every item about it, whatever its language. The analytics agent
+// can instead read agent.topics and agent.topic_aliases and choose ids
+// itself.
+func (s *Store) FindTopics(ctx context.Context, q string) ([]TopicHit, error) {
+	query := strings.Fields(textnorm.TopicKey(q))
+	if len(query) == 0 {
+		return nil, nil
+	}
+	rows, err := s.DB.Query(ctx, `SELECT t.topic_id, t.name_en, coalesce(t.name_ar, ''),
+		coalesce((SELECT array_agg(a.alias) FROM analysis.topic_aliases a WHERE a.topic_id = t.topic_id), '{}')
+		FROM analysis.topics t WHERE t.status IN ('active', 'candidate') ORDER BY t.ord`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type topic struct {
+		id, en, ar string
+		score      float64
+	}
+	var all []topic
+	best := 0.0
+	for rows.Next() {
+		var t topic
+		var aliases []string
+		if err := rows.Scan(&t.id, &t.en, &t.ar, &aliases); err != nil {
+			return nil, err
+		}
+		for _, name := range append([]string{t.en, t.ar}, aliases...) {
+			t.score = max(t.score, nameScore(query, strings.Fields(textnorm.TopicKey(name))))
+		}
+		best = max(best, t.score)
+		all = append(all, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if best < 0.25 {
+		return nil, nil
+	}
+	var out []TopicHit
+	matched := map[string]bool{}
+	for _, t := range all {
+		if t.score >= 0.8*best {
+			matched[t.id] = true
+			out = append(out, TopicHit{ID: t.id, EN: t.en, AR: t.ar, Score: t.score})
+		}
+	}
+	for _, t := range all {
+		if matched[t.id] {
+			continue
+		}
+		for id := range matched {
+			if strings.HasPrefix(t.id, id+".") {
+				out = append(out, TopicHit{ID: t.id, EN: t.en, AR: t.ar, Score: t.score, Under: id})
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// nameScore is the share of query words found in a name (each word's best
+// trigram similarity, counted from 0.45).
+func nameScore(query, name []string) float64 {
+	if len(name) == 0 {
+		return 0
+	}
+	sum := 0.0
+	for _, q := range query {
+		bestWord := 0.0
+		for _, n := range name {
+			bestWord = max(bestWord, textnorm.Similarity(q, n))
+		}
+		if bestWord >= 0.45 {
+			sum += bestWord
+		}
+	}
+	return sum / float64(len(query))
+}
+
+// TopicItems counts the current analyses carrying any of the topic ids.
+func (s *Store) TopicItems(ctx context.Context, ids []string) (int64, error) {
+	var n int64
+	err := s.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.analyses WHERE is_current AND topics && $1`, ids).Scan(&n)
+	return n, err
 }

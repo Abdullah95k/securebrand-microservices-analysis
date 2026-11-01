@@ -50,7 +50,8 @@ FROM comments WHERE text IS NOT NULL AND btrim(text) <> '';
 SELECT count(*) AS authors,
        percentile_cont(ARRAY[0.5, 0.9, 0.99, 0.999]) WITHIN GROUP (ORDER BY n) AS comments_per_author_p50_90_99_999,
        max(n) AS max_comments_one_author,
-       count(*) FILTER (WHERE n >= 10) AS authors_with_10_or_more
+       count(*) FILTER (WHERE n >= 5) AS authors_with_5_or_more,
+       count(*) FILTER (WHERE n BETWEEN 2 AND 4) AS authors_with_2_to_4
 FROM (SELECT author_key, count(*) n FROM comments WHERE author_key IS NOT NULL GROUP BY author_key) t;
 SELECT percentile_cont(ARRAY[0.9, 0.99, 0.999]) WITHIN GROUP (ORDER BY n) AS max_comments_in_one_hour_p90_99_999,
        max(n) AS max_in_one_hour

@@ -164,6 +164,13 @@ func toResult(o itemOut, tax *taxonomy.Taxonomy, reg *entities.Registry, p *Prob
 			}
 		}
 	}
+	// Hate speech and threats are breaches too.
+	if r.Hate {
+		r.Legal = append([]string{"hate_speech"}, r.Legal...)
+	}
+	if r.Threat {
+		r.Legal = append(r.Legal, "threat")
+	}
 	r.NewTopics = NewTopics(o.New, tax)
 	r.CalibratedConfidence = r.Confidence
 	r.PrivatePersonMentions = max(o.PPL, 0)
@@ -180,8 +187,8 @@ func toResult(o itemOut, tax *taxonomy.Taxonomy, reg *entities.Registry, p *Prob
 }
 
 // adRank orders ad types when the model lists several: the most specific
-// (undisclosed, then paid) wins.
-var adRank = map[string]int{"hidden": 4, "paid": 3, "own": 2, "sale": 1}
+// wins (affiliate, then undisclosed, then paid).
+var adRank = map[string]int{"affiliate": 5, "hidden": 4, "paid": 3, "own": 2, "sale": 1}
 
 // legalOrAd records an ad or legal flag; false for an unknown flag.
 func legalOrAd(f string, legal *[]string, ad *string) bool {
@@ -210,8 +217,13 @@ func NewTopics(in []newTopic, tax *taxonomy.Taxonomy) []core.TopicProposal {
 			continue
 		}
 		parent := n.Parent
-		if !oneOf(parent, tax.TopIDs()) {
-			parent = "other"
+		if !oneOf(parent, tax.ParentIDs()) {
+			// A sub-topic named as parent: place it next to it instead.
+			if i := strings.LastIndexByte(parent, '.'); i > 0 && oneOf(parent[:i], tax.ParentIDs()) {
+				parent = parent[:i]
+			} else {
+				parent = "other"
+			}
 		}
 		out = append(out, core.TopicProposal{EN: en, AR: ar, Parent: parent})
 	}
