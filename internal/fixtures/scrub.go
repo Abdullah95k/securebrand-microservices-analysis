@@ -4,12 +4,16 @@ package fixtures
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -43,6 +47,16 @@ func ScrubDir(dir string, keep []string) error {
 	if id := idString(meta["page_id"]); id != "" {
 		keepIDs[id] = true
 	}
+	// A comment's id, with its post's, opens the comment on Facebook: its
+	// author and text. Pseudonyms are the same as in the responses, which
+	// get these ids replaced wherever they appear.
+	var comments []string
+	for _, k := range []string{"comment_id", "parent_comment_id"} {
+		if id := idString(meta[k]); id != "" && strings.Trim(id, "0123456789") == "" {
+			comments = append(comments, id)
+			meta[k] = json.Number(pseudo(id, "comment"))
+		}
+	}
 	for _, name := range []string{"response.ndjson", "response.html"} {
 		p := filepath.Join(dir, name)
 		b, err := os.ReadFile(p)
@@ -52,7 +66,7 @@ func ScrubDir(dir string, keep []string) error {
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(p, Scrub(b, keepIDs), 0o644); err != nil {
+		if err := os.WriteFile(p, scrub(b, keepIDs, comments), 0o644); err != nil {
 			return err
 		}
 	}
@@ -61,7 +75,7 @@ func ScrubDir(dir string, keep []string) error {
 
 // scrubVersion is recorded in meta.json. Raise it when Scrub learns a new
 // pattern, so fixtures scrubbed before are scrubbed again when bundled.
-const scrubVersion = 3
+const scrubVersion = 5
 
 func scrubberVersion(meta map[string]any) int64 {
 	if n, ok := meta["__scrubber"].(json.Number); ok {
@@ -128,14 +142,15 @@ var (
 	// The regular expressions cover what the JSON walk cannot see: script
 	// that is not JSON, and responses that do not parse. A JSON string may
 	// hold escapes: \" or é, which is how Facebook writes non-ASCII.
-	nameRe = regexp.MustCompile(`"(name|short_name|alternate_name|first_name|last_name)":"((?:[^"\\]|\\.)*)"`)
+	nameRe = regexp.MustCompile(`"(name|short_name|alternate_name|first_name|last_name|display_name|username)":"((?:[^"\\]|\\.)*)"`)
 	textRe = regexp.MustCompile(`"text":"((?:[^"\\]|\\.)*)"`)
 	// People's ids: a User object's (Facebook puts "__isNode", "__isActor"
 	// and the like between its __typename and id, or the id first), a
 	// page owner's profile, and the id in a /people/<name>/<id>/ URL.
 	idPatterns = []*regexp.Regexp{
-		regexp.MustCompile(`"__typename":"User"[^{}]*?"id":"(\d+)"`),
-		regexp.MustCompile(`"id":"(\d+)"[^{}]*?"__typename":"User"`),
+		// Objects nested one level inside the User's are stepped over.
+		regexp.MustCompile(`"__typename":"User"(?:[^{}]|\{[^{}]*\})*?"id":"(\d+)"`),
+		regexp.MustCompile(`"id":"(\d+)"(?:[^{}]|\{[^{}]*\})*?"__typename":"User"`),
 		regexp.MustCompile(`"owning_profile":\{[^{}]*?"id":"(\d+)"`),
 		peopleURL,
 	}
@@ -150,11 +165,39 @@ var (
 	// A profile link in HTML. In JSON, the walk replaces the links of
 	// people's objects only, so post permalinks and the page's own link
 	// survive.
-	profileRe = regexp.MustCompile(`https://www\.facebook\.com/(profile\.php\?id=\d+|[A-Za-z0-9.]+)(["?])`)
+	// Its slashes may be escaped (a link in a JS string), on www., m. or
+	// the bare host.
+	profileRe = regexp.MustCompile(`https?:(?:\\*/){2}(?:www\.|m\.)?facebook\.com\\*/(profile\.php\?id=\d+|[A-Za-z0-9.]+)(\\*["?])`)
+	// Media captions, which can describe people.
+	captionRe = regexp.MustCompile(`"(accessibility_caption|alt_text)":"((?:[^"\\]|\\.)*)"`)
+	// Comment ids: a comment's own, and in a comment_id parameter.
+	commentIDRe = []*regexp.Regexp{
+		regexp.MustCompile(`"__typename":"Comment"(?:[^{}]|\{[^{}]*\})*?"legacy_fbid":"(\d+)"`),
+		regexp.MustCompile(`"legacy_fbid":"(\d+)"(?:[^{}]|\{[^{}]*\})*?"__typename":"Comment"`),
+		regexp.MustCompile(`comment_id(?:=|\\?"?:\\?"?)(\d+)`),
+	}
+	// Graph ids of comments and their feedback: base64 of
+	// "comment:<post>_<comment>" and "feedback:<post>_<comment>".
+	// Padding may be missing, or URL-encoded in a link.
+	graphIDRe = regexp.MustCompile(`(?:Y29tbWVudDo|ZmVlZGJhY2s6)[A-Za-z0-9+/]+(?:={1,2}|(?:%3[Dd]){1,2})?`)
 )
 
+// pseudoKey keys the pseudonyms with a secret made for this run and never
+// written down: an unkeyed hash would let anyone holding a list of
+// Facebook ids or names hash them and find who appears in a fixture. The
+// same person gets the same pseudonym across the fixtures of one run.
+var pseudoKey = func() []byte {
+	k := make([]byte, 32)
+	if _, err := rand.Read(k); err != nil {
+		panic("fixtures: no randomness for the pseudonym key: " + err.Error())
+	}
+	return k
+}()
+
 func pseudo(s, salt string) string {
-	h := sha256.Sum256([]byte(salt + s))
+	m := hmac.New(sha256.New, pseudoKey)
+	m.Write([]byte(salt + "\x00" + s))
+	h := m.Sum(nil)
 	return strconv.FormatUint(binary.BigEndian.Uint64(h[:8])%9_000_000_000_000+100_000_000_000, 10)
 }
 
@@ -169,8 +212,15 @@ func pseudo(s, salt string) string {
 // units, so the offsets of mentions and links stay valid. JSON responses,
 // and the JSON script blocks of a page, are walked as JSON, nested
 // serialized JSON included; anything else is scrubbed by pattern.
-func Scrub(b []byte, keep map[string]bool) []byte {
+func Scrub(b []byte, keep map[string]bool) []byte { return scrub(b, keep, nil) }
+
+// scrub is Scrub with comment ids known beforehand (meta.json's), replaced
+// wherever they appear in b even in a form the walk doesn't recognise.
+func scrub(b []byte, keep map[string]bool, comments []string) []byte {
 	sc := &scrubber{keep: keep, ids: map[string]string{}}
+	for _, id := range comments {
+		sc.comment(id)
+	}
 	if t := bytes.TrimSpace(b); len(t) > 0 && t[0] == '<' {
 		return sc.html(string(b))
 	}
@@ -187,6 +237,69 @@ func Scrub(b []byte, keep map[string]bool) []byte {
 type scrubber struct {
 	keep map[string]bool
 	ids  map[string]string // real id -> pseudonym
+}
+
+// comment records id as a comment's.
+func (sc *scrubber) comment(v any) {
+	if id := idString(v); id != "" && strings.Trim(id, "0123456789") == "" {
+		sc.ids[id] = pseudo(id, "comment")
+	}
+}
+
+// graphID is a decoded comment or feedback graph id, written back in the
+// form it came in (padded or not, its padding URL-encoded or not).
+type graphID struct {
+	decoded   string
+	raw, pct  bool
+	commentID string // after "comment:<post>_" or "feedback:<post>_"
+}
+
+func parseGraphID(s string) (graphID, bool) {
+	g := graphID{pct: strings.Contains(strings.ToUpper(s), "%3D")}
+	if g.pct {
+		s = strings.ReplaceAll(strings.ReplaceAll(s, "%3D", "="), "%3d", "=")
+	}
+	d, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		if d, err = base64.RawStdEncoding.DecodeString(s); err != nil {
+			return g, false
+		}
+		g.raw = true
+	}
+	g.decoded = string(d)
+	rest, ok := strings.CutPrefix(g.decoded, "comment:")
+	if !ok {
+		rest, ok = strings.CutPrefix(g.decoded, "feedback:")
+	}
+	i := strings.LastIndexByte(rest, '_')
+	if !ok || i < 0 {
+		return g, false
+	}
+	if cid := rest[i+1:]; cid != "" && strings.Trim(cid, "0123456789") == "" {
+		g.commentID = cid
+		return g, true
+	}
+	return g, false
+}
+
+// with returns the graph id with its comment id replaced by id.
+func (g graphID) with(id string) string {
+	d := g.decoded[:len(g.decoded)-len(g.commentID)] + id
+	if g.raw {
+		return base64.RawStdEncoding.EncodeToString([]byte(d))
+	}
+	out := base64.StdEncoding.EncodeToString([]byte(d))
+	if g.pct {
+		out = strings.ReplaceAll(out, "=", "%3D")
+	}
+	return out
+}
+
+// graphComment returns the comment id in a comment's or a comment's
+// feedback graph id ("comment:<post>_<comment>"), or "".
+func graphComment(s string) string {
+	g, _ := parseGraphID(s)
+	return g.commentID
 }
 
 // jsonDocs scrubs a response of one or more JSON documents (Facebook
@@ -280,6 +393,10 @@ func (sc *scrubber) collect(v any) {
 		if isUser(v) {
 			sc.person(v.get("id"))
 		}
+		if v.get("__typename") == "Comment" {
+			sc.comment(v.get("legacy_fbid"))
+			sc.comment(v.get("comment_id"))
+		}
 		if op, ok := v.get("owning_profile").(*object); ok {
 			sc.person(op.get("id"))
 		}
@@ -297,6 +414,20 @@ func (sc *scrubber) collect(v any) {
 		for _, m := range peopleURL.FindAllStringSubmatch(v, -1) {
 			sc.person(m[1])
 		}
+		sc.collectComments(v)
+	}
+}
+
+// collectComments finds comment ids in any text: graph ids, comment_id
+// parameters and comments' legacy ids.
+func (sc *scrubber) collectComments(s string) {
+	for _, g := range graphIDRe.FindAllString(s, -1) {
+		sc.comment(graphComment(g))
+	}
+	for _, re := range commentIDRe {
+		for _, m := range re.FindAllStringSubmatch(s, -1) {
+			sc.comment(m[1])
+		}
 	}
 }
 
@@ -306,6 +437,7 @@ func (sc *scrubber) collectPatterns(s string) {
 			sc.person(m[1])
 		}
 	}
+	sc.collectComments(s)
 }
 
 // transform scrubs names, people's text and people's links in v, which
@@ -368,6 +500,14 @@ func (sc *scrubber) patterns(s string) string {
 		sm := nameRe.FindStringSubmatch(m)
 		return `"` + sm[1] + `":"Person ` + pseudo(sm[2], "name")[:6] + `"`
 	})
+	// What people wrote, and captions, in script that isn't JSON.
+	s = textRe.ReplaceAllStringFunc(s, func(m string) string {
+		return `"text":` + blankJSON(m[len(`"text":`):])
+	})
+	s = captionRe.ReplaceAllStringFunc(s, func(m string) string {
+		sm := captionRe.FindStringSubmatch(m)
+		return `"` + sm[1] + `":` + blankJSON(m[len(sm[1])+3:])
+	})
 	return profileRe.ReplaceAllString(s, `https://www.facebook.com/scrubbed.profile$2`)
 }
 
@@ -375,6 +515,16 @@ func (sc *scrubber) patterns(s string) string {
 // (whole numbers only, in one pass: a short id inside a longer one is a
 // different id), /people/ links and signed CDN parameters.
 func (sc *scrubber) finish(s string) string {
+	// Graph ids carry a comment id in base64: decoded, it is replaced
+	// like any other, and encoded again.
+	s = graphIDRe.ReplaceAllStringFunc(s, func(m string) string {
+		g, ok := parseGraphID(m)
+		nw, known := sc.ids[g.commentID]
+		if !ok || !known {
+			return m
+		}
+		return g.with(nw)
+	})
 	s = peopleURL.ReplaceAllString(s, "facebook.com/people/scrubbed/$1")
 	s = digits.ReplaceAllStringFunc(s, func(d string) string {
 		if nw, ok := sc.ids[d]; ok {
@@ -387,9 +537,12 @@ func (sc *scrubber) finish(s string) string {
 		if err != nil {
 			return "https://scontent.example.fbcdn.net/scrubbed.jpg"
 		}
-		file := "/"
-		if i := strings.LastIndexByte(u.Path, '/'); i >= 0 {
-			file = u.Path[i:]
+		// The file name is the object's ids (a photo can be a person's):
+		// it becomes a pseudonym, keeping only the extension.
+		file := "/scrubbed"
+		if i := strings.LastIndexByte(u.Path, '/'); i >= 0 && i < len(u.Path)-1 {
+			name := u.Path[i+1:]
+			file = "/" + pseudo(name, "file") + path.Ext(name)
 		}
 		return "https://" + u.Host + "/scrubbed" + file
 	})

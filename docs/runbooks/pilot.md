@@ -93,8 +93,16 @@ The database holds real comments, which are personal data: run `make
 pilot-clean` when the measurements are done, and never copy it off the
 machine.
 
+On this machine `make infra-down` and `make compose-down` refuse to run
+(the local stack is the same Compose project, and they would delete the
+pilot's database): stop the pilot with `make pilot-down`. The stack comes
+back by itself after a reboot or a Docker restart; Redpanda keeps queued
+work in a volume, so a restart doesn't drop tasks; container logs are
+rotated (3 x 50 MB per service), and `make pilot-up` removes old images and
+build cache.
+
 ## Notes
 
 - **Requests that failed count too.** A task that is rate-limited and retried still adds the requests and bytes it used to its job (`blocked`, `soft_errors`, `transport_errors` and `drift` count why).
 - **The fake Facebook's pacing never applies.** The pilot loads `phase0/proxies.yaml` and `deploy/compose/pilot.yaml` over the production defaults, never `deploy/compose/local.yaml`.
-- **The services run as root in their containers**, to read `proxies.yaml` (mode 600). The pilot is meant for a machine of its own.
+- **The services run as root in their containers**, to read `proxies.yaml` (mode 600), with no Linux capabilities but `DAC_READ_SEARCH`, which reads it whoever owns it. The pilot is meant for a machine of its own.

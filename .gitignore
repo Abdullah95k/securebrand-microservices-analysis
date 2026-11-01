@@ -14,6 +14,8 @@ __pycache__/
 !/phase0/dryrun.yaml
 !/phase0/pages.example.csv
 !/phase0/proxies.example.yaml
+# Browser HAR exports (the Phase 0 doc_id fallback) hold cookies and tokens.
+*.har
 
 # Analysis service: provider keys and evaluation data never go to git.
 deploy/compose/analysis.env

@@ -19,9 +19,10 @@ test:
 vet:
 	$(GO) vet ./...
 
+# A lint failure fails the target (`a && b || c` ran c, and passed, when b failed).
 lint: vet
-	@command -v golangci-lint >/dev/null && golangci-lint run ./... || echo "golangci-lint not installed; ran go vet only"
-	@command -v buf >/dev/null && buf lint || echo "buf not installed; skipped proto lint"
+	@if command -v golangci-lint >/dev/null; then golangci-lint run ./...; else echo "golangci-lint not installed; ran go vet only"; fi
+	@if command -v buf >/dev/null; then buf lint; else echo "buf not installed; skipped proto lint"; fi
 
 ## Regenerate protobuf code (requires buf + protoc-gen-go).
 generate:
@@ -37,15 +38,25 @@ fixtures:
 
 ## Start Postgres, Redpanda and Valkey for integration tests.
 infra-up:
+	$(NOT_PILOT)
 	$(COMPOSE) up -d postgres redpanda valkey
 	@until docker exec fbs-postgres-1 pg_isready -U fbs >/dev/null 2>&1; do sleep 1; done
 
+# The local stack and the pilot are the same Compose project: on the pilot
+# machine, `down -v` would delete the pilot's database, and `up` without
+# pilot.yml would recreate its containers with the local settings (no
+# restart policy, no Redpanda volume, the local config).
+NOT_PILOT = @test -z "$(FORCE)" -a -f phase0/out/pilot-run.yaml && { echo "refusing: this machine runs the pilot, and this would replace or delete its stack (use the pilot-* targets; FORCE=1 overrides)"; exit 2; } || true
+
 infra-down:
+	$(NOT_PILOT)
 	$(COMPOSE) down -v
 
 ## Integration tests against real Postgres/Redpanda/Valkey (make infra-up first).
 test-integration:
-	$(TEST_ENV) $(GO) test -count=1 ./internal/persist/... ./internal/e2e/... ./internal/spike/... ./internal/registrysync/... ./internal/platform/schemareg/... ./internal/analysis/...
+	$(PILOT_COMPOSE) --profile analysis down -v
+	@# No pilot left: the local targets may run again (NOT_PILOT).
+	rm -f $(PILOT_OUT)/pilot-run.yaml
 
 ## Load tests against fakefb (opt-in; prints a report). Size with
 ## FBS_LOADTEST_PAGES, _POSTS, _COMMENTS, _ROWS, _LATENCY; FBS_LOADTEST_OUT=file.
@@ -91,9 +102,11 @@ chart-smoke:
 	python3 scripts/chart-smoke.py --image $(IMAGE) --helm $(HELM)
 
 compose-up:
+	$(NOT_PILOT)
 	$(COMPOSE) up -d
 
 compose-down:
+	$(NOT_PILOT)
 	$(COMPOSE) down -v
 
 spike-report:
@@ -173,6 +186,8 @@ pilot-up:
 	echo "requests/s per IP: $${rps:-the default of configs/default.yaml}"
 	$(MAKE) docker
 	$(PILOT_COMPOSE) up -d --force-recreate
+	@# Old images and build cache would fill the disk over restarts.
+	@docker image prune -f >/dev/null; docker builder prune -f --filter until=72h >/dev/null || true
 	@echo "up; register the pages with: make pilot-register"
 
 ## Registers every page of phase0/pages.csv; each is backfilled (a week), then crawled every 3 hours.
@@ -200,6 +215,8 @@ pilot-down:
 	$(PILOT_COMPOSE) --profile analysis down
 pilot-clean:
 	$(PILOT_COMPOSE) --profile analysis down -v
+	@# No pilot left: the local targets may run again (NOT_PILOT).
+	rm -f $(PILOT_OUT)/pilot-run.yaml
 
 ## Pilot data shape for the analysis design: counts and lengths only, no content.
 pilot-stats:

@@ -40,8 +40,9 @@ Only the leader scheduler publishes AIMD, budget, schedule-lag and consumer-lag 
 The fleet reacts on its own, at three levels:
 
 - **Page:** a page whose HTML comes back with session tokens but names nothing (restricted to logged-in viewers by age or country, or removed) is loaded twice more on later attempts (usually through other identities), then marked unavailable (`pages_unavailable`) like a deleted page. It is checked again on its next scheduled crawl.
-- **Identity:** a rate-limited identity cools down; one that keeps being blocked, walled or checkpointed is retired, and so is one whose exit stops answering (3 transport failures in a row: `reason="transport"`).
-- **Exit bucket:** a static IP endpoint's /24, a hostname endpoint's host and port (providers that sell static IPs behind one hostname give each its own port), or a gateway and country, opens its breaker at `fb.proxy.breaker.open_rate` (15%) over `window` (1m). It gets no new identities, its idle identities are retired, and tasks move to the next tier in `fb.proxy.routing`. When every exit of their tiers is cooling down, tasks wait 5 minutes per retry, and those waits don't count toward `crawler.max_attempts`. After `cooldown` (2m, doubling up to `max_cooldown`) one probe identity tests it.
+- **Identity:** a rate-limited identity cools down; one that keeps being blocked, walled or checkpointed is retired, and so is one whose exit stops answering (3 transport failures in a row: `reason="transport"`). Soft errors (server errors, HTML instead of GraphQL) in a row: the second drops the identity's tokens, so its next use loads a page for fresh ones, and the fourth retires it (`reason="soft_errors"`).
+- **Exit bucket:** a static IP endpoint's /24, a hostname endpoint's host and port (providers that sell static IPs behind one hostname give each its own port), or a gateway and country, opens its breaker at `fb.proxy.breaker.open_rate` (15%) over `window` (1m). It gets no new identities, its idle identities are retired, and tasks move to the next tier in `fb.proxy.routing`. When every exit of their tiers is cooling down, tasks wait 5 minutes per retry, and those waits don't count toward `crawler.max_attempts`. After `cooldown` (2m, doubling up to `max_cooldown`) one probe identity tests it. Only GraphQL outcomes and transport failures count toward the breaker.
+- **Page loads per exit:** Facebook walls page loads (HTML) from an exit that views many pages while its GraphQL keeps working, so page loads have their own gate per static exit (`fb.proxy.page_loads`). An exit loads at most one page per `interval` (2m), including the page load that starts every new identity. After a walled or failed page load it loads none for `backoff` (15m, doubling up to `max_backoff`, 2h), and a page that loads resets the backoff. Its identities that already have tokens keep serving GraphQL. Every page load takes a slot, except the first one of a new identity, which was reserved when its exit was chosen. When every exit is only waiting, tasks retry in 30s (5m when every exit backs off after walls). These waits count toward neither `crawler.max_attempts` nor `max_total_attempts`; `crawler.max_waits` (480) bounds them. A stale profile read is deferred to a later run (`profile_deferred` in job counters), but a page whose id is still unknown, or an identity without tokens, waits for a slot. Watch `fbs_proxy_page_loads_deferred_total`. The gate is per crawler process: with N crawler pods, an exit sees up to N times the rate.
 - **Fleet:** AIMD, on the leader scheduler, reads the block rate of the whole fleet every 10s. Above `fb.aimd.high_block_rate` (6%) the ceiling becomes 70% of the rate actually sent. Below `low_block_rate` (2%), while the fleet uses most of the ceiling, the ceiling grows by 2% (at least 1 rps) per window. Recovery from the floor is deliberately slow.
 
 What to check:
@@ -150,13 +151,31 @@ Symptom: `fbs_parse_total{outcome="drift"}` (alert `FbsSchemaDrift`), or a field
   - `fbs_lane_slots{state="waiting",lane="p0"}` above 0 for long means on-demand work is queuing behind tasks that are still finishing. Tasks yield after `crawler.yield_after`, so it clears within a minute; if it persists, add pods.
 * Persister lag delays job completion (the finalizer waits up to
   `scheduler.finalize_timeout`). Scale the persister; check Postgres I/O.
+* The persister never stalls on one bad record: NUL characters (which
+  Postgres can't store) are removed from every text, and a record Postgres
+  still refuses for its data (SQLSTATE class 22) is skipped by itself, logged
+  with its topic, partition, offset and SQLSTATE (never its content) and
+  counted in `fbs_persist_rows_total{op="rejected"}`. A rising count means a
+  shape Postgres won't take: look at the logged offsets.
+* Comments of posts older than `privacy.retention.comments_days` are not
+  written (`op="past_retention"`): retention would drop them within the hour.
 
 ## Media backlog / TTL expiries
 
 * `fbs_media_deleted_total{reason="ttl_expired"}` rising: the analysis service
   is not acking in time. Fix the consumer or raise `media.ttl`.
 * `fbs_media_download_total{outcome="expired"}` rising: downloads lag behind
-  discovery; scale `media-downloader`.
+  discovery; scale `media-downloader`. Such media is `source_expired`, and is
+  downloaded when a later scrape brings a fresh URL.
+* A downloaded object is `stored` until its `fb.media.ready.v1` event is
+  acknowledged by Kafka, then `ready`; a record redelivered in between sends
+  the event without downloading again. Rows never handed over (variants the
+  video policy leaves out, jobs without media, failed or expired downloads)
+  are purged after `privacy.retention.media_rows_days`. Rows of media handed
+  over (`deleted`, `expired`) stay then, as the record that it was, so a later
+  scrape doesn't download and announce it again; they lose the URL, the alt
+  text, the comment, the author key, the hash and the object key. An erasure
+  deletes its subject's media rows outright.
 
 ## Erasure requests
 
@@ -165,8 +184,24 @@ processes it within ~10s: suppression entry, comment redaction (rows stay as
 tombstones so coverage numbers stay correct), author row deletion, media
 deletion and an `fb.erasure.v1` event downstream must honour. Crawlers refresh
 the suppression set every `crawler.suppression_refresh` (60s) and redact
-before publishing, so re-scrapes never reintroduce the data. Kafka topics and
-raw payloads age out by retention (7 days).
+before publishing, so re-scrapes never reintroduce the data; the persister
+also checks the suppression table on every write, so data crawled before the
+crawlers' last refresh and still in flight is dropped (a suppressed page) or
+stored redacted (a suppressed author). Kafka topics age out by retention (7
+days); raw payloads by a bucket lifecycle rule the crawler sets on the raw
+bucket (`privacy.retention.raw_payload_days`, 7).
+
+An author erasure also deletes the author's media whose comment isn't
+stored yet (comment media carry the author key), and clears the author's
+mentions (profile id, URL, name) in other people's comments and posts; the
+crawlers clear them in later scrapes too. A page erasure deletes the page's
+comments and metrics through its post ids.
+
+A request that fails on a passing error (database, object store, Kafka)
+stays `pending` and is retried after 1m, 2m, 4m, ... up to 4h between
+attempts; after 12 attempts (about 16 hours) it is `failed`, with the last
+error in `error`. A request no retry can complete (no author key or page id)
+fails at once. Every step is idempotent, so a retry starts over safely.
 
 ## Stuck jobs
 
@@ -220,6 +255,7 @@ The timeline scan re-reads posts younger than `scheduler.incremental_overlap` (2
 
 - **Backoff:** each refresh that finds nothing new doubles the post's interval, up to 2^`max_backoff`.
 - **Recrawls:** posts with at least `recrawl_min_comments` (20) comments get a full recrawl at 7 and 30 days, to pick up edits and deletions (next section).
+- **Missed replies:** an incremental read takes a post's newest comments and stops at older ones, so it can't see replies added to an old comment. When the post's count grew more than the new comments it found, it spawns a recrawl (`recrawls_spawned`). A post one of whose reply threads was cut short by walls or dead-lettered is read whole on its next pass.
 - **Signal:** `fbs_post_refreshes_total{kind="refresh"|"recrawl"}`.
 - **Cleanup:** rows of posts past every window, and of pages no longer scheduled, are deleted hourly.
 

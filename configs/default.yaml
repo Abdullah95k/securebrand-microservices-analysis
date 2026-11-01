@@ -12,8 +12,8 @@ log:
 http:
   addr: ":8080"            # API listener (fbs-api)
   ops_addr: ":9090"        # /metrics, /healthz, /readyz on every binary
-  read_timeout: 15s
-  write_timeout: 60s
+  read_timeout: 15s       # reading a whole request (fbs-api)
+  write_timeout: 60s      # handling an API request; job results stream without it
 
 postgres:
   dsn: "postgres://fbs:fbs@localhost:5432/fbs?sslmode=disable"
@@ -148,6 +148,17 @@ fb:
       cooldown: 2m
       max_cooldown: 30m
       probe_successes: 3
+    # Page loads (HTML) are what Facebook walls for logged-out sessions that
+    # view many pages; GraphQL is rarely limited (the pilot: ~80% of ISP page
+    # loads walled after a day, almost no GraphQL). Each static exit loads at
+    # most one page per interval. After a walled or failed page load it loads
+    # none for backoff, doubling up to max_backoff; a page that loads resets
+    # it. Page-load walls don't count against the exit's breaker, so its
+    # sessions keep serving GraphQL. Per crawler process. Zeros turn it off.
+    page_loads:
+      interval: 2m
+      backoff: 15m
+      max_backoff: 2h
   # Circuit breaker per (query, doc_id): when responses keep failing to parse
   # (schema drift) or the doc_id is rejected, stop sending that query (tasks
   # retry later) instead of spending requests until a registry or parser
@@ -180,10 +191,13 @@ crawler:
   consecutive_old_stop: 3
   # Retries a task gets without its stream moving forward (a stream that
   # saves new pages between rate limits starts counting again), and in all.
-  # Exhausted tasks go to the DLQ with reason max_attempts or
-  # max_total_attempts.
+  # Waits for proxy exits (every exit cooling down, or pacing its page
+  # loads; 30s or 5m each) count toward neither: max_waits bounds them.
+  # Exhausted tasks go to the DLQ with reason max_attempts,
+  # max_total_attempts or max_waits.
   max_attempts: 5
   max_total_attempts: 50
+  max_waits: 480
   lease_ttl: 120s
   freshness_p0: 15m
   freshness_p1: 6h
@@ -293,13 +307,15 @@ privacy:
   pii_mode: full        # full | pseudonymized
   author_hmac_key: "dev-only-change-me"
   download_author_avatars: false
+  # Days each kind of data is kept; 0 keeps it for good. Erasure requests
+  # remove a person's or a page's data whatever these say.
   retention:
     # Comment text is kept indefinitely (owner's decision, 2026-11): 0 keeps
     # every comments partition. Legal review needed: storage limitation
     # (GDPR Art. 5(1)(e)) and the second copy in the analysis store; see
     # docs/design/analysis-service.md section 13.
     comments_days: 0
-    authors_inactive_days: 365
+    authors_inactive_days: 0   # comment authors are never deleted for inactivity
     metrics_days: 180
     raw_payload_days: 7
     media_rows_days: 30

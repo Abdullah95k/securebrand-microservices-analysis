@@ -31,6 +31,7 @@ import (
 	"github.com/abdullah95k/securebrand-microservices/internal/fb/registry"
 	"github.com/abdullah95k/securebrand-microservices/internal/fb/session"
 	"github.com/abdullah95k/securebrand-microservices/internal/gdpr"
+	"github.com/abdullah95k/securebrand-microservices/internal/media"
 	"github.com/abdullah95k/securebrand-microservices/internal/platform/breaker"
 	"github.com/abdullah95k/securebrand-microservices/internal/platform/kafka"
 	"github.com/abdullah95k/securebrand-microservices/internal/platform/metrics"
@@ -117,7 +118,7 @@ func NewCrawler(ctx context.Context, cfg *config.Config, db *pgxpool.Pool, rdb *
 		slog.Warn("graphql: query breaker", "query", key, "from", from.String(), "to", to.String())
 	}
 	supp := gdpr.NewSuppression(db)
-	loader := &session.Loader{Rules: rules, AcceptLanguage: cfg.FB.AcceptLanguage}
+	loader := &session.Loader{Rules: rules, AcceptLanguage: cfg.FB.AcceptLanguage, Gate: proxies}
 	if cfg.FB.Browser.Enabled {
 		b, err := browser.NewBootstrapper(cfg.FB.Browser, cfg.FB.AcceptLanguage)
 		if err != nil {
@@ -132,6 +133,7 @@ func NewCrawler(ctx context.Context, cfg *config.Config, db *pgxpool.Pool, rdb *
 			Pseudonymize: cfg.Privacy.PIIMode == "pseudonymized", Suppression: supp},
 	}
 	worker := &stage.Worker{D: deps, MaxAttempts: uint32(cfg.Crawler.MaxAttempts), MaxTotalAttempts: uint32(cfg.Crawler.MaxTotalAttempts),
+		MaxWaits: uint32(cfg.Crawler.MaxWaits),
 		LeaseTTL: cfg.Crawler.LeaseTTL,
 		Stages: map[taskv1.Kind]stage.Stage{
 			taskv1.Kind_KIND_PAGE:   &stage.PageStage{D: deps},
@@ -155,6 +157,11 @@ func NewCrawler(ctx context.Context, cfg *config.Config, db *pgxpool.Pool, rdb *
 		c.Components = append(c.Components, ceil.Run)
 	}
 	if o.RawS3 != nil && cfg.FB.CaptureRaw != "none" {
+		// Raw responses hold comment text and authors: they expire after
+		// privacy.retention.raw_payload_days by a bucket lifecycle rule.
+		if days := cfg.Privacy.Retention.RawPayloadDays; days > 0 {
+			media.RawLifecycle(ctx, o.RawS3, cfg.S3.RawBucket, days)
+		}
 		sink := rawsink.New(o.RawS3, cfg.S3.RawBucket)
 		gql.Raw, gql.CaptureAll = sink, cfg.FB.CaptureRaw == "all"
 		c.Components = append(c.Components, func(ctx context.Context) error { return sink.Run(ctx, time.Minute) })
@@ -176,13 +183,13 @@ func NewCrawler(ctx context.Context, cfg *config.Config, db *pgxpool.Pool, rdb *
 	for _, s := range stages {
 		s = strings.TrimSpace(s)
 		if s == "retry" {
-			relay := &stage.RetryRelay{Producer: producer}
-			cons, err := kafka.NewConsumer(kafka.ConsumerConfig{ClientConfig: kcfg, Group: "fbs-retry-relay",
-				Topics: topics.RetryTopics, MaxInflight: 64, MaxInflightPerPartition: 1, DrainTimeout: 5 * time.Second}, relay.Handle)
+			relays, err := stage.RetryRelays(kcfg, producer)
 			if err != nil {
 				return nil, err
 			}
-			c.Components = append(c.Components, cons.Run)
+			for _, r := range relays {
+				c.Components = append(c.Components, r.Run)
+			}
 			continue
 		}
 		kind, ok := kinds[s]

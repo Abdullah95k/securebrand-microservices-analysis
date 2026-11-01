@@ -40,9 +40,14 @@ type Report struct {
 	Rows  []Row     `json:"rows"`
 	// SteadyPages are the distinct pages with scheduled jobs.
 	SteadyPages int64 `json:"steady_pages"`
-	// SteadySince is when the first scheduled job in the span was created:
-	// the steady state is measured from then, not from Since.
+	// SteadySince is when the first scheduled job in the span was created,
+	// and SteadyUntil one interval after the last one was created: k cycles
+	// of a page cover k intervals. The steady state is measured over that
+	// stretch, not from Since to now (a report run after the pilot stopped
+	// would spread its jobs over idle hours), nor to the last job's end (k
+	// cycles over k-1 intervals, which overstates the daily traffic).
 	SteadySince time.Time `json:"steady_since"`
+	SteadyUntil time.Time `json:"steady_until"`
 	// Completeness of the comments of posts first seen in the span, among
 	// those with comments: all of them, and those seen at least a day ago
 	// (whose refreshes have had time to run).
@@ -58,11 +63,14 @@ func (r Report) Days() float64 { return r.Until.Sub(r.Since).Hours() / 24 }
 // SteadyDays is the span the scheduled jobs cover, from the first one: a
 // pilot shorter than --since is not averaged over hours without jobs.
 func (r Report) SteadyDays() float64 {
-	from := r.Since
+	from, until := r.Since, r.Until
 	if r.SteadySince.After(from) {
 		from = r.SteadySince
 	}
-	return r.Until.Sub(from).Hours() / 24
+	if !r.SteadyUntil.IsZero() {
+		until = r.SteadyUntil // also after now: the last cycle's interval
+	}
+	return until.Sub(from).Hours() / 24
 }
 
 // Steady sums the scheduled jobs (the every-3-hours crawls and the
@@ -124,13 +132,25 @@ func Load(ctx context.Context, db *pgxpool.Pool, since time.Time) (Report, error
 	if err := rows.Err(); err != nil {
 		return rep, err
 	}
-	var first *time.Time
-	if err := db.QueryRow(ctx, `SELECT count(DISTINCT page_ref), min(created_at) FROM jobs
-		WHERE created_at >= $1 AND kind = 'scheduled' AND status IN ('completed', 'partial', 'failed')`, since).Scan(&rep.SteadyPages, &first); err != nil {
+	var first, last *time.Time
+	// The last cycle's interval is the pages' usual one (the lower median):
+	// a page on a long interval of its own doesn't stretch the span.
+	if err := db.QueryRow(ctx, `WITH j AS (
+			SELECT j.page_ref, j.created_at, j.finished_at, s.interval_seconds FROM jobs j
+			LEFT JOIN page_schedule s ON s.page_ref = j.page_ref
+			WHERE j.created_at >= $1 AND j.kind = 'scheduled' AND j.status IN ('completed', 'partial', 'failed'))
+		SELECT count(DISTINCT page_ref), min(created_at),
+			coalesce(max(created_at) + make_interval(secs => (SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY i)
+				FROM (SELECT DISTINCT page_ref, interval_seconds AS i FROM j WHERE interval_seconds > 0) p)), max(finished_at))
+		FROM j`, since).
+		Scan(&rep.SteadyPages, &first, &last); err != nil {
 		return rep, err
 	}
 	if first != nil {
 		rep.SteadySince = first.UTC()
+	}
+	if last != nil {
+		rep.SteadyUntil = last.UTC()
 	}
 	err = db.QueryRow(ctx, `
 		SELECT count(*), coalesce(avg(least(completeness, 1)), 0),

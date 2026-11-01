@@ -88,7 +88,9 @@ jobs:
           FBS_TEST_KAFKA_BROKERS: localhost:19092
           FBS_TEST_SCHEMA_REGISTRY: http://localhost:18081
           FBS_BROWSER_NO_SANDBOX: "1"
-        run: go test -count=1 -timeout 20m ./internal/persist/... ./internal/e2e/... ./internal/spike/... ./internal/registrysync/... ./internal/platform/schemareg/... ./internal/analysis/...
+        # Every package: a test needing Postgres, Redis or Kafka skips without
+        # them, so listing packages here let new integration tests go unrun.
+        run: go test -count=1 -timeout 25m ./...
 
   deploy:
     runs-on: ubuntu-latest
@@ -115,5 +117,7 @@ jobs:
           python3 -c 'import yaml' 2>/dev/null || sudo apt-get install -y python3-yaml
           make infra-up
           make chart-smoke IMAGE=fbs:ci
-      - name: Compose config is valid
-        run: docker compose -f deploy/compose/docker-compose.yml config -q
+      - name: Compose config is valid (local stack and pilot)
+        run: |
+          docker compose -f deploy/compose/docker-compose.yml config -q
+          docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/pilot.yml config -q

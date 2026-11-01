@@ -1,12 +1,15 @@
 package stage
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"google.golang.org/protobuf/proto"
 
@@ -32,7 +35,11 @@ type Worker struct {
 	// MaxTotalAttempts bounds every retry of a task, progress or not
 	// (Task.attempt); 0 means 10 × MaxAttempts.
 	MaxTotalAttempts uint32
-	LeaseTTL         time.Duration
+	// MaxWaits bounds the retries spent waiting for proxy exits
+	// (Task.waits), which count toward neither of the above; 0 means
+	// defaultMaxWaits.
+	MaxWaits uint32
+	LeaseTTL time.Duration
 }
 
 var stageNames = map[taskv1.Kind]string{
@@ -45,6 +52,19 @@ func (w *Worker) Handle(ctx context.Context, rec *kgo.Record) error {
 	if err := proto.Unmarshal(rec.Value, &t); err != nil {
 		return w.deadLetterRaw(ctx, rec, "undecodable", err.Error())
 	}
+	if _, ok := w.Stages[t.Kind]; !ok {
+		// Dead-lettered as received: a kind this build doesn't know (an
+		// empty record, a newer producer) has no topic name of its own.
+		return w.deadLetterRaw(ctx, rec, "no_stage", "no stage for kind "+t.Kind.String())
+	}
+	if kafka.HeaderValue(rec, kafka.HeaderReplay) != "" {
+		// A dead letter replayed on purpose (fbctl dlq replay): it ended
+		// without finishing, so it runs again instead of being skipped as
+		// done.
+		if err := w.D.Ckpt.ClearDone(ctx, t.TaskId); err != nil {
+			return err
+		}
+	}
 	return w.Run(ctx, &t)
 }
 
@@ -55,10 +75,22 @@ func (w *Worker) Run(ctx context.Context, t *taskv1.Task) error {
 	lane := topics.LaneName(t.Lane)
 	st, ok := w.Stages[t.Kind]
 	if !ok {
-		return w.deadLetter(ctx, t, "no_stage", "no stage for kind "+t.Kind.String(), nil)
+		return fmt.Errorf("stage: no stage for kind %v", t.Kind)
+	}
+	// Tasks queued before their page was erased (backlog, retries,
+	// continuations, threads) stop before anything is requested. A page task
+	// whose page id isn't known yet is checked by its stage once resolved.
+	if d.Suppression.PageSuppressed(scopePage(t)) {
+		metrics.Tasks.WithLabelValues(name, lane, "suppressed").Inc()
+		return w.finish(ctx, t, map[string]int64{"pages_suppressed": 1})
 	}
 	if d.Jobs.Cancelled(ctx, t.JobId) {
 		metrics.Tasks.WithLabelValues(name, lane, "cancelled").Inc()
+		// What the task left unread makes the post's next pass read it
+		// whole; a post whose pass never began keeps its last state.
+		if w.begun(ctx, t) {
+			w.markIncomplete(ctx, t)
+		}
 		return w.finish(ctx, t, map[string]int64{"cancelled": 1})
 	}
 	if isDone, err := d.Ckpt.IsDone(ctx, t.TaskId); err != nil {
@@ -67,12 +99,16 @@ func (w *Worker) Run(ctx context.Context, t *taskv1.Task) error {
 		_, err := d.Jobs.Done(ctx, t.JobId, t.TaskId, nil)
 		return ignoreUnspawned(err)
 	}
-	lease, ok, err := d.Ckpt.Acquire(ctx, task.ScopeKey(t), t.LineageId, w.LeaseTTL)
+	// The owner is this run: another copy of the same task (a redelivery
+	// while this run still goes, a record produced twice) waits for it
+	// instead of running alongside it, where both would produce the next
+	// segment and every child twice, and so on for the rest of the stream.
+	lease, ok, err := d.Ckpt.Acquire(ctx, task.ScopeKey(t), t.LineageId+"/"+uuid.NewString(), w.LeaseTTL)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		// Another job is paginating the same stream; come back later.
+		// Another run is paginating the same stream; come back later.
 		metrics.Tasks.WithLabelValues(name, lane, "lease_busy").Inc()
 		return w.toRetry(ctx, t, "30s")
 	}
@@ -81,15 +117,15 @@ func (w *Worker) Run(ctx context.Context, t *taskv1.Task) error {
 	// moved its stream forward.
 	before, _, beforeErr := d.Ckpt.Load(ctx, t.LineageId, t.Seq)
 	start := time.Now()
-	out := st.Run(ctx, t)
+	out := w.runStage(ctx, st, t, lease)
 	metrics.TaskSeconds.WithLabelValues(name).Observe(time.Since(start).Seconds())
-	// Release before producing follow-on work so the next segment (or a
-	// follow-up stream on the same scope) can claim the lease immediately.
-	lease.Release(ctx)
 
 	switch out.Result {
 	case Done:
 		metrics.Tasks.WithLabelValues(name, lane, "done").Inc()
+		if out.Counters["cancelled"] > 0 && w.begun(ctx, t) {
+			w.markIncomplete(ctx, t) // cut short by a cancel
+		}
 		if err := d.spawn(ctx, out.FollowUps...); err != nil {
 			return err
 		}
@@ -104,6 +140,10 @@ func (w *Worker) Run(ctx context.Context, t *taskv1.Task) error {
 		next := out.Next
 		after, _, afterErr := d.Ckpt.Load(ctx, t.LineageId, t.Seq)
 		next.Stalls = stallsAfter(t.Stalls, beforeErr == nil && afterErr == nil && advanced(before, after), out.Waiting)
+		if out.Waiting {
+			// The exits' doing, not the task's: counted apart.
+			next.Attempt, next.Waits = t.Attempt, t.Waits+1
+		}
 		if reason := w.exhausted(next); reason != "" {
 			metrics.Tasks.WithLabelValues(name, lane, "failed").Inc()
 			slog.Warn("task failed after retries", "stage", name, "job", t.JobId, "task", t.TaskId,
@@ -176,6 +216,9 @@ func stallsAfter(prev uint32, progressed, waiting bool) uint32 {
 	return prev + 1
 }
 
+// defaultMaxWaits is crawler.max_waits when unset: 4 hours of 30s waits.
+const defaultMaxWaits = 480
+
 // exhausted returns the dead-letter reason for a task about to be retried,
 // or "" while it may retry.
 func (w *Worker) exhausted(next *taskv1.Task) string {
@@ -188,8 +231,60 @@ func (w *Worker) exhausted(next *taskv1.Task) string {
 		return "max_attempts"
 	case next.Attempt >= total:
 		return "max_total_attempts"
+	case next.Waits >= cmp.Or(w.MaxWaits, defaultMaxWaits):
+		return "max_waits"
 	}
 	return ""
+}
+
+// runStage runs the stage, then releases the lease (before follow-on work
+// is produced, so the next segment can claim it at once), also when the
+// stage panics: the consumer recovers a panic, and a lease left behind
+// would be kept alive forever and block its stream.
+func (w *Worker) runStage(ctx context.Context, st Stage, t *taskv1.Task, lease *checkpoint.Lease) Outcome {
+	defer lease.Release(ctx)
+	return st.Run(ctx, t)
+}
+
+// scopePage is the page a task works on (0 when not known yet).
+func scopePage(t *taskv1.Task) int64 {
+	switch t.Kind {
+	case taskv1.Kind_KIND_PAGE:
+		return t.GetPage().GetPageId()
+	case taskv1.Kind_KIND_POST:
+		return t.GetPost().GetPageId()
+	case taskv1.Kind_KIND_THREAD:
+		return t.GetThread().GetPageId()
+	}
+	return 0
+}
+
+// begun reports whether t's stream has read anything: a reply thread (its
+// post's pass is done), a continuation, or a first segment retried after
+// progress (it carries a cursor, or its checkpoint has one).
+func (w *Worker) begun(ctx context.Context, t *taskv1.Task) bool {
+	if t.Kind == taskv1.Kind_KIND_THREAD || t.Seq > 0 || t.Cursor != "" {
+		return true
+	}
+	st, _, err := w.D.Ckpt.Load(ctx, t.LineageId, t.Seq)
+	return err != nil || st.Pages > 0 || st.Cursor != ""
+}
+
+// markIncomplete marks the post whose comments t was collecting: its next
+// pass reads it whole.
+func (w *Worker) markIncomplete(ctx context.Context, t *taskv1.Task) {
+	var post int64
+	switch t.Kind {
+	case taskv1.Kind_KIND_POST:
+		post = t.GetPost().GetPostId()
+	case taskv1.Kind_KIND_THREAD:
+		post = t.GetThread().GetPostId()
+	}
+	if post != 0 {
+		if err := w.D.Ckpt.MarkIncomplete(ctx, post); err != nil {
+			slog.Warn("stage: incomplete mark not set", "post", post, "err", err)
+		}
+	}
 }
 
 func (w *Worker) finish(ctx context.Context, t *taskv1.Task, c map[string]int64) error {
@@ -235,9 +330,17 @@ func (w *Worker) deadLetter(ctx context.Context, t *taskv1.Task, reason, detail 
 		c = map[string]int64{}
 	}
 	c["tasks_failed"]++
-	if t.Kind == taskv1.Kind_KIND_POST {
+	// The post's comments are incomplete: its next pass reads it whole.
+	switch t.Kind {
+	case taskv1.Kind_KIND_POST:
 		_ = w.D.Jobs.UpdatePostState(ctx, t.JobId, t.GetPost().GetPostId(), jobs.PostFailed)
+	case taskv1.Kind_KIND_THREAD:
+		_ = w.D.Jobs.UpdatePostState(ctx, t.JobId, t.GetThread().GetPostId(), jobs.PostTruncated)
 	}
+	w.markIncomplete(ctx, t)
+	// Marked done like a finished task, so a redelivery or a parked copy is
+	// skipped; a replay of the dead letter (fbctl dlq replay) carries
+	// HeaderReplay, which clears the mark.
 	return w.finish(ctx, t, c)
 }
 
@@ -251,13 +354,17 @@ func (w *Worker) deadLetterRaw(ctx context.Context, rec *kgo.Record, reason, det
 	return w.D.Producer.ProduceSync(ctx, out)
 }
 
+// ignoreUnspawned drops the error of a task produced outside job accounting
+// (e.g. a DLQ replay of an old job), which must not block the consumer. Any
+// other error (Redis unreachable) is returned, so the record is retried:
+// otherwise the job would never see the task done and would hang until the
+// reaper closed it.
 func ignoreUnspawned(err error) error {
-	// A task produced outside job accounting (e.g. a DLQ replay of an old
-	// job) must not block the consumer.
-	if err != nil {
+	if errors.Is(err, jobs.ErrNeverSpawned) {
 		slog.Debug("jobs: done", "err", err)
+		return nil
 	}
-	return nil
+	return err
 }
 
 func truncate(s string, n int) string {
@@ -267,11 +374,37 @@ func truncate(s string, n int) string {
 	return s
 }
 
-// RetryRelay moves parked tasks back to their original topic once due. Run
-// it with MaxInflightPerPartition = 1: each retry topic has a fixed delay, so
-// the head of a partition is always the next one due.
+// RetryRelay moves parked tasks back to their original topic once due. Each
+// record waits for its own due time, so run one consumer per retry topic,
+// with room for many records in flight: a record waiting must not hold up
+// one due sooner.
 type RetryRelay struct {
 	Producer *kafka.Producer
+}
+
+// retryRelayInflight is how many parked tasks a relay consumer holds waiting
+// for their due time; past it, it stops fetching until the earliest are
+// relayed.
+const retryRelayInflight = 1024
+
+// RetryRelays returns the relay's consumers: one per retry topic, so a task
+// parked for an hour never holds up one due in 30 seconds. They share one
+// group (and its committed offsets); each member subscribes to one topic.
+func RetryRelays(kcfg kafka.ClientConfig, producer *kafka.Producer) ([]*kafka.Consumer, error) {
+	relay := &RetryRelay{Producer: producer}
+	out := make([]*kafka.Consumer, 0, len(topics.RetryTopics))
+	for _, topic := range topics.RetryTopics {
+		cons, err := kafka.NewConsumer(kafka.ConsumerConfig{ClientConfig: kcfg, Group: "fbs-retry-relay", Topics: []string{topic},
+			MaxInflight: retryRelayInflight, MaxInflightPerPartition: retryRelayInflight, DrainTimeout: 5 * time.Second}, relay.Handle)
+		if err != nil {
+			for _, c := range out {
+				c.Client().Close()
+			}
+			return nil, err
+		}
+		out = append(out, cons)
+	}
+	return out, nil
 }
 
 func (r *RetryRelay) Handle(ctx context.Context, rec *kgo.Record) error {

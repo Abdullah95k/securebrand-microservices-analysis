@@ -9,13 +9,30 @@ on:
   push:
     tags: ["v*"]
 
+# Read-only by default; only the job that publishes may write packages.
 permissions:
   contents: read
-  packages: write
 
 jobs:
-  publish:
+  # Nothing is published unless the tagged commit builds, vets and passes
+  # its unit tests (CI's integration and deploy jobs run on every push and
+  # pull request before a tag is cut).
+  checks:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+
+  publish:
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - name: Names

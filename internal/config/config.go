@@ -201,6 +201,20 @@ type Proxy struct {
 	// Breaker opens an exit bucket (a static /24, or a gateway and country)
 	// that is blocked too often.
 	Breaker breaker.Config `koanf:"breaker"`
+	// PageLoads paces page loads on each static exit, apart from GraphQL.
+	PageLoads PageLoads `koanf:"page_loads"`
+}
+
+// PageLoads paces page loads (HTML), the requests Facebook walls for
+// logged-out sessions that view many pages, on each static exit. Zero
+// values turn the pacing off.
+type PageLoads struct {
+	// Interval is the least time between two page loads on one exit.
+	Interval time.Duration `koanf:"interval"`
+	// Backoff pauses an exit's page loads after one is walled or fails,
+	// doubling up to MaxBackoff; a page that loads resets it.
+	Backoff    time.Duration `koanf:"backoff"`
+	MaxBackoff time.Duration `koanf:"max_backoff"`
 }
 
 type ProxyTier struct {
@@ -233,6 +247,7 @@ type Crawler struct {
 	ConsecutiveOldStop      int            `koanf:"consecutive_old_stop"`
 	MaxAttempts             int            `koanf:"max_attempts"`
 	MaxTotalAttempts        int            `koanf:"max_total_attempts"`
+	MaxWaits                int            `koanf:"max_waits"`
 	LeaseTTL                time.Duration  `koanf:"lease_ttl"`
 	FreshnessP0             time.Duration  `koanf:"freshness_p0"`
 	FreshnessP1             time.Duration  `koanf:"freshness_p1"`
@@ -411,8 +426,15 @@ func (c *Config) Validate() error {
 	default:
 		errs = append(errs, fmt.Errorf("privacy.pii_mode %q must be full or pseudonymized", c.Privacy.PIIMode))
 	}
-	if c.Service.Env == "prod" && c.Privacy.AuthorHMACKey == "dev-only-change-me" {
-		errs = append(errs, errors.New("privacy.author_hmac_key must be set in prod"))
+	// The author key pseudonymises commenters and matches erased authors on
+	// later scrapes. A known or short key lets anyone confirm a guessed
+	// Facebook id from an author_key. Generate one per deployment (e.g.
+	// openssl rand -hex 32) and never change it: suppression entries are
+	// stored under it.
+	if c.Service.Env == "prod" || (c.Service.Env != "dev" && c.Privacy.PIIMode == "pseudonymized") {
+		if k := c.Privacy.AuthorHMACKey; k == "" || k == "dev-only-change-me" || len(k) < 32 {
+			errs = append(errs, errors.New("privacy.author_hmac_key must be a secret of at least 32 characters (e.g. openssl rand -hex 32)"))
+		}
 	}
 	if c.Media.TTL <= 0 {
 		errs = append(errs, errors.New("media.ttl must be > 0"))
