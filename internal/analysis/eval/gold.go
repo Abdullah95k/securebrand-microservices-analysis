@@ -16,7 +16,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/core"
 )
 
 // Item is one gold-set entry: the text to label (with its context) and,
@@ -133,13 +136,116 @@ func WriteItems(path string, items []Item) error {
 	return os.Rename(tmp.Name(), path)
 }
 
-// Labelled returns the items with a usable (not unsure) label.
+// Labelled returns the items with a usable (not unsure) label, without the
+// repeated copies.
 func Labelled(items []Item) []Item {
 	var out []Item
 	for _, it := range items {
+		if strings.HasSuffix(it.ID, RepeatSuffix) {
+			continue
+		}
 		if it.Label != nil && !it.Label.Unsure && it.Label.Sentiment != "" {
 			out = append(out, it)
 		}
 	}
 	return out
+}
+
+// RepeatSuffix marks a copy of an item labelled a second time, to measure
+// the labeller's consistency; copies are left out of model scoring.
+const RepeatSuffix = "-r"
+
+// AddRepeats appends copies of every n-th item (share 0..1) with
+// RepeatSuffix ids, for a second blind labelling later in the session.
+func AddRepeats(items []Item, share float64) []Item {
+	if share <= 0 {
+		return items
+	}
+	step := int(1 / share)
+	if step < 1 {
+		step = 1
+	}
+	out := append([]Item(nil), items...)
+	for i := 0; i < len(items); i += step {
+		c := items[i]
+		c.ID += RepeatSuffix
+		c.Label = nil
+		out = append(out, c)
+	}
+	return out
+}
+
+// Agreement is the labeller's consistency on repeated items.
+type Agreement struct {
+	Pairs          int
+	SentimentKappa float64
+	SentimentAgree float64
+	EntityF1       float64
+	TopicF1        float64
+}
+
+// SelfAgreement compares each repeated item with its original.
+func SelfAgreement(items []Item) Agreement {
+	byID := map[string]Item{}
+	for _, it := range items {
+		byID[it.ID] = it
+	}
+	var a, b []string
+	var la []Label
+	var lb []Label
+	var ta, tb [][]string
+	for _, it := range items {
+		if len(it.ID) <= len(RepeatSuffix) || it.ID[len(it.ID)-len(RepeatSuffix):] != RepeatSuffix || it.Label == nil || it.Label.Unsure {
+			continue
+		}
+		orig, ok := byID[it.ID[:len(it.ID)-len(RepeatSuffix)]]
+		if !ok || orig.Label == nil || orig.Label.Unsure {
+			continue
+		}
+		a, b = append(a, orig.Label.Sentiment), append(b, it.Label.Sentiment)
+		la, lb = append(la, *orig.Label), append(lb, *it.Label)
+		ta, tb = append(ta, orig.Label.Topics), append(tb, it.Label.Topics)
+	}
+	ag := Agreement{Pairs: len(a)}
+	if len(a) == 0 {
+		return ag
+	}
+	ag.SentimentAgree = Accuracy(a, b)
+	ag.SentimentKappa = Kappa(a, b)
+	// Score the second labelling's entities as "predictions" of the first.
+	preds := make([]core.Result, len(lb))
+	for i, l := range lb {
+		for _, e := range l.Entities {
+			preds[i].Entities = append(preds[i].Entities, core.Entity{ID: e.ID, Name: e.Name, Type: e.Type, Sentiment: e.Sentiment})
+		}
+	}
+	ag.EntityF1 = ScoreEntities(la, preds).Entities.F1
+	ag.TopicF1 = ScoreTopics(ta, tb, 1).Micro.F1
+	return ag
+}
+
+// Kappa is Cohen's kappa of two labelings.
+func Kappa(a, b []string) float64 {
+	n := float64(len(a))
+	if n == 0 {
+		return 0
+	}
+	ca, cb := map[string]float64{}, map[string]float64{}
+	agree := 0.0
+	for i := range a {
+		ca[a[i]]++
+		cb[b[i]]++
+		if a[i] == b[i] {
+			agree++
+		}
+	}
+	po := agree / n
+	pe := 0.0
+	for k, v := range ca {
+		pe += (v / n) * (cb[k] / n)
+	}
+	if pe == 1 {
+		return 1
+	}
+	return (po - pe) / (1 - pe)
 }

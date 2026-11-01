@@ -390,3 +390,10 @@ func (s *Store) StaleRequests(ctx context.Context, batchID string) ([]uuid.UUID,
 	}
 	return out, rows.Err()
 }
+
+// DeadLetterCount is the number of items given up after max attempts.
+func (s *Store) DeadLetterCount(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.dead_letters`).Scan(&n)
+	return n, err
+}

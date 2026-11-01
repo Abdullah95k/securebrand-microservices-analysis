@@ -111,9 +111,7 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 		return err
 	}
 	groups := p.Groups(route, claimed)
-	if !hasBatch || !p.Providers.Available(prov) {
-		// No batch API (or the primary is down): analyse in real time,
-		// through the fallback when the primary's circuit is open.
+	realtime := func() error {
 		var errs []error
 		for _, g := range groups {
 			if err := p.RunGroup(ctx, g, core.LaneBatch); err != nil {
@@ -122,9 +120,29 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 		}
 		return errors.Join(errs...)
 	}
+	if !hasBatch {
+		// No batch API configured: analyse in real time.
+		return realtime()
+	}
+	// While the primary's batch API keeps failing, submissions are still
+	// retried (each round) unless its circuit is open. Mixing models in bulk
+	// data hurts comparability, so only after batch.fallback_after does the
+	// backlog go to the route's fallback in real time.
+	since, down := p.downSince(prov)
+	useFallback := down && p.now().Sub(since) >= p.Cfg.Batch.FallbackAfter && p.Cfg.Routes[route].FallbackProvider != ""
+	if !p.Providers.Available(prov) {
+		if useFallback {
+			slog.Warn("analysis: batch provider down; using the fallback", "route", route, "provider", prov, "since", since)
+			return realtime()
+		}
+		p.markDown(prov)
+		return p.Store.ReleaseUnsent(ctx, ids(flatten(groups)), route, 5*time.Minute)
+	}
+
 	type pending struct {
 		row store.RequestRow
 		req provider.Request
+		g   group
 	}
 	var reqs []pending
 	for _, g := range groups {
@@ -151,7 +169,7 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 		if err := p.Store.StartRequest(ctx, row); err != nil {
 			return err
 		}
-		reqs = append(reqs, pending{row: row, req: b.req})
+		reqs = append(reqs, pending{row: row, req: b.req, g: g})
 	}
 	size := max(p.Cfg.Batch.MaxRequests, 1)
 	for start := 0; start < len(reqs); start += size {
@@ -163,13 +181,35 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 		}
 		id, err := batcher.SubmitBatch(ctx, batch)
 		p.Providers.Observe(prov, err)
+		if err != nil && provider.Retryable(err) {
+			p.markDown(prov)
+		}
 		if err != nil {
 			ametrics.Requests.WithLabelValues(prov, model, core.LaneBatch, "submit_error").Add(float64(len(chunk)))
-			if aerr := p.Store.AbortRequests(context.WithoutCancel(ctx), reqIDs, "batch submit: "+err.Error(), 5*time.Minute); aerr != nil {
+			// Abort this chunk and every later one (none was sent).
+			var unsent []uuid.UUID
+			for _, r := range reqs[start:] {
+				unsent = append(unsent, r.row.ID)
+			}
+			if aerr := p.Store.AbortRequests(context.WithoutCancel(ctx), unsent, "batch submit: "+err.Error(), 5*time.Minute); aerr != nil {
 				return errors.Join(err, aerr)
 			}
-			return err
+			if !useFallback {
+				return err
+			}
+			// Down for longer than batch.fallback_after: the rest goes to
+			// the fallback in real time (the aborted items stay unclaimable
+			// for 5 minutes meanwhile).
+			slog.Warn("analysis: batch provider down; using the fallback", "route", route, "provider", prov, "since", since, "err", err)
+			var errs []error
+			for _, r := range reqs[start:] {
+				if rerr := p.RunGroup(ctx, r.g, core.LaneBatch); rerr != nil {
+					errs = append(errs, rerr)
+				}
+			}
+			return errors.Join(errs...)
 		}
+		p.markUp(prov)
 		if err := p.Store.SetBatchID(ctx, id, prov, model, route, reqIDs); err != nil {
 			return err
 		}
@@ -276,4 +316,33 @@ func sleep(ctx context.Context, d time.Duration) {
 	case <-ctx.Done():
 	case <-t.C:
 	}
+}
+
+func (p *Pipeline) downSince(prov string) (time.Time, bool) {
+	p.downMu.Lock()
+	defer p.downMu.Unlock()
+	t, ok := p.down[prov]
+	return t, ok
+}
+
+func (p *Pipeline) markDown(prov string) {
+	p.downMu.Lock()
+	defer p.downMu.Unlock()
+	if _, ok := p.down[prov]; !ok {
+		p.down[prov] = p.now()
+	}
+}
+
+func (p *Pipeline) markUp(prov string) {
+	p.downMu.Lock()
+	defer p.downMu.Unlock()
+	delete(p.down, prov)
+}
+
+func flatten(gs []group) []core.Item {
+	var out []core.Item
+	for _, g := range gs {
+		out = append(out, g.items...)
+	}
+	return out
 }

@@ -1,0 +1,153 @@
+# Analysis service operations (sb-analysis)
+
+The design is in [docs/design/analysis-service.md](../design/analysis-service.md) and the evaluation in [docs/analysis/evaluation.md](../analysis/evaluation.md). Commands run in the analysis container or pod:
+- **Compose (pilot):** `docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/pilot.yml --profile analysis exec analysis sb-analysis ...`
+- **Kubernetes:** `kubectl exec deploy/fbs-analysis -- sb-analysis ...`
+
+All times in reports and budgets are Iraq time (Asia/Baghdad, UTC+3).
+
+## Roles and scaling
+
+`sb-analysis run --roles` takes any of:
+- **ingest:** Kafka to Postgres;
+- **pipeline:** the real-time and batch lanes;
+- **media:** images and videos;
+- **relay:** the outbox to Kafka;
+- **rollup:** daily rollups.
+
+The Helm chart runs `analysis` (all roles but media) and `analysis-media` (media, on the ffmpeg image). Scaling:
+- **Ingest:** scales on Kafka lag (KEDA).
+- **Pipeline:** I/O-bound; one replica handles ~10 items/s with batching. More replicas share the queue safely (`SKIP LOCKED`).
+- **Media:** scale on `fbs_analysis_media_ttl_at_risk` and the pending `media_jobs`.
+
+## Queue backlog
+
+**Look:**
+- `fbs_analysis_queue_depth` and `fbs_analysis_queue_oldest_seconds` by lane and route;
+- `make pilot-analysis-status` on the pilot.
+
+**Causes, in order:**
+1. **The budget paused work** (`fbs_analysis_budget_paused == 1`): see [Budget](#budget).
+2. **Provider errors** (`fbs_analysis_provider_requests_total{outcome="error"}`): see [Provider outage](#provider-outage).
+3. **Batches not collected** (`fbs_analysis_open_batches` grows): check that a pipeline replica runs and can reach the provider. Batches finish within 24h; results stay downloadable for 29 days, so a restart collects them.
+4. **Real-time lane slow** at a burst: raise `analysis.realtime.workers`, or set `analysis.urgent.tracked_entities: false` to send fewer items there.
+
+## Media
+
+`fbs_analysis_media_ttl_at_risk > 0` means files are within 6h of deletion (`delete_after`). Files deleted before analysis are lost for it: fbs logs `ttl_expired`.
+- Scale `analysis-media`, or raise `analysis.media.workers`.
+- `failed_permanent` acks for videos with "ffmpeg not found" mean the media workers run the default image: set `image.mediaTag` (Helm) or `FBS_ANALYSIS_IMAGE=fbs:analysis-media` (Compose, after `make docker-analysis-media`).
+- `analysis.media.kinds` lists the kinds analysed. Others are acknowledged without analysis (`skipped`).
+
+## Dead letters
+
+Items that failed `analysis.limits.max_attempts` times are in `analysis.dead_letters` with the last error, and `fbs_analysis_dead_letters` counts them.
+1. Read the errors: `SELECT route, left(error, 120), count(*) FROM analysis.dead_letters GROUP BY 1, 2 ORDER BY 3 DESC;`
+2. Fix the cause (a schema change, a model that keeps truncating: raise the route's `max_tokens`).
+3. Queue them again: `sb-analysis replay-failed [--route comment]`.
+
+## Refusals
+
+The model's safety classifiers can decline content (violence, hate).
+- A refused group is retried item by item. A refused single item goes to the route's fallback provider if one is configured, and is otherwise stored with `refused = true` (neutral, no entities).
+- A refusal rate above 2% (`AnalysisRefusalsHigh`) skews toxicity and sentiment statistics: configure a `fallback_provider` for the comment route, and report the rate in the evaluation.
+
+## Provider outage
+
+Every provider has a circuit breaker.
+- **Real-time lane:** while the breaker is open, requests go to the route's `fallback_provider` / `fallback_model`, recorded with `fallback = true`.
+- **Batch lane:** waits and retries every 5 minutes, without counting attempts.
+- `fbs_analysis_fallback_total` over 5% (`AnalysisFallbackShareHigh`) means results from two models are being mixed: trends are less comparable for that period.
+
+API keys come from the environment: `FBS_ANALYSIS__PROVIDERS__ANTHROPIC__API_KEY` (and `__OPENAI__`, `__GEMINI__`).
+- **Compose:** in `deploy/compose/analysis.env` (mode 600).
+- **Kubernetes:** in the `secretEnv` Secret.
+
+A 401 in the logs means the key is missing or revoked.
+
+## Budget
+
+`analysis.budget.daily_usd` caps spend per Iraq day; `analysis.routes.<route>.daily_usd` caps one route. Spend is measured from real token usage at list prices (`analysis.pricing`).
+- **At the cap:** batch and re-analysis work pause (items wait); urgent real-time items continue if `analysis.budget.urgent_exempt`.
+- **To look:** `fbs_analysis_spent_today_usd`, `fbs_analysis_cost_usd_total` by model and route, or `make pilot-analysis-status`.
+- **To change:** set the budget in the config and restart the analysis containers. A new day starts at 00:00 Iraq time.
+
+Keep the price table in `configs/default.yaml` current when providers change prices.
+
+## Outbox
+
+Results (`analysis.result.v1`, `analysis.media.v1`) and media acks (`fb.media.processed.v1`) leave through `analysis.outbox`, published by the relay role.
+- A growing `fbs_analysis_outbox_backlog` means the relay is down or cannot produce.
+- Acks wait in the outbox too, so a long outage can push media past its TTL.
+- Records are delivered at least once: consumers deduplicate on `event_id`.
+
+## Erasure
+
+`fb.erasure.v1` and `content.erasure.v1` are applied by the ingest role:
+- **author:** their items are redacted and their analyses, mentions and media analyses deleted;
+- **source:** everything of the page is deleted;
+- the subject goes into `analysis.erased_subjects`, so later items and late batch results are dropped;
+- pending media jobs are acknowledged.
+
+Check with `SELECT * FROM analysis.erasures ORDER BY received_at DESC LIMIT 20;` (stats only, no content).
+
+## Entities: brand list and review
+
+- **Import the owner's brand list** (same format as `configs/analysis/entities.seed.yaml`): `sb-analysis entities import --file brands.yaml`.
+- **Track a client's brands:** `sb-analysis entities track --client acme --entity-id asiacell --role own` (own, competitor, watch). Tracked entities make items urgent (real-time lane) and eligible for escalation.
+- **Review names the model found:** `sb-analysis entities review --min-seen 20`, then for each candidate:
+  - **accept:** `sb-analysis entities resolve --norm <norm> --type brand --action accept --entity-id new-id --name "Name"`;
+  - **merge into an existing entity:** `--action merge --entity-id asiacell`;
+  - **reject:** `--action reject`.
+  Earlier mentions are re-linked and rollups rebuilt.
+- **Merge duplicates:** `sb-analysis entities merge --from old-id --into kept-id`.
+- **People policy:** public figures only, always reviewed. Private persons are never stored.
+
+## Re-analysis
+
+Always estimate first:
+```bash
+sb-analysis reanalyze --model claude-haiku-5-5 --since 2026-10-01 --dry-run
+```
+Then queue with a cap:
+```bash
+sb-analysis reanalyze --model claude-haiku-5-5 --since 2026-10-01 --max-usd 50
+```
+Filters: `--platform`, `--source`, `--entity`, `--taxonomy-not tax-v1`, `--sample 0.1`, `--limit`. Re-analysis runs on the batch lane at background priority and stops at the budget.
+
+## Changing a model, prompt or taxonomy
+
+1. Run the evaluation with the new configuration (`sb-eval run` + `sb-eval report`). It must match or beat the current one within the confidence interval.
+2. Run both on an overlap sample. Then compare the label distribution of `purpose = 'current'` analyses before and after the switch over the same items:
+   ```bash
+   sb-analysis reanalyze --sample 0.01 --since <30 days ago> --route <route> --max-usd <cap>
+   ```
+   with the new model configured on that route.
+3. Change `analysis.routes.<route>`. At start the service records the change in `analysis.model_changes`, the series break that dashboards and the agent must show.
+4. If trends must stay continuous for a client, re-analyse their tracked entities' history (see [Re-analysis](#re-analysis)).
+
+## Agent access (read-only roles)
+
+```bash
+sb-analysis agent-role --client acme --name "Acme" --role sb_agent_acme --password-file /run/secrets/sb_agent_acme
+```
+This creates a login role that:
+- can read only the `agent` views, scoped to the client's tracked entities (`client_entities`) and monitored sources (`sb-analysis sources monitor --client acme --source fb:page:123`);
+- runs read-only, with a 15 s statement timeout, a 1 GB temp-file limit and 5 connections.
+
+The password file is created by the operator. Never pass passwords on the command line or in chat.
+
+## Metrics
+
+| Metric | Meaning |
+|---|---|
+| `fbs_analysis_items_ingested_total{outcome}` | new, edited, unchanged, skipped, deleted, redacted, suppressed |
+| `fbs_analysis_items_analyzed_total{route,model,outcome}` | written, stale (edited meanwhile), duplicate |
+| `fbs_analysis_items_failed_total{route,reason}` | missing, invalid, truncated, refused, error |
+| `fbs_analysis_tokens_total`, `fbs_analysis_cost_usd_total` | token usage and spend by model and route |
+| `fbs_analysis_queue_depth`, `fbs_analysis_queue_oldest_seconds` | queue by lane and route |
+| `fbs_analysis_spent_today_usd`, `fbs_analysis_budget_paused` | budget |
+| `fbs_analysis_media_total`, `fbs_analysis_media_ttl_at_risk` | media outcomes and deadlines |
+| `fbs_analysis_output_repairs_total` | values validation fixed (invalid topics, private persons dropped) |
+| `fbs_analysis_fallback_total`, `fbs_analysis_refusals_total` | fallback use and refusals |
+| `fbs_analysis_outbox_backlog`, `fbs_analysis_published_total` | outbox |

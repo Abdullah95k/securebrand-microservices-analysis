@@ -5,7 +5,7 @@ PG_DSN ?= postgres://fbs:fbs@localhost:5432/fbs?sslmode=disable
 TEST_ENV = FBS_TEST_PG_DSN="$(PG_DSN)" FBS_TEST_REDIS_ADDR=localhost:6379 FBS_TEST_KAFKA_BROKERS=localhost:19092 FBS_TEST_SCHEMA_REGISTRY=http://localhost:18081
 COMPOSE = docker compose -f deploy/compose/docker-compose.yml
 
-.PHONY: all build test lint vet generate golden fixtures infra-up infra-down test-integration e2e loadtest soak docker docker-prebuilt compose-up compose-down spike-report phase0 phase0-dryrun phase0-trim phase0-rate pilot-up pilot-register pilot-registry pilot-report pilot-down pilot-clean pilot-stats pilot-analysis-up pilot-analysis-down pilot-analysis-status docker-analysis-media spike-bin chart-check chart-smoke clean
+.PHONY: all build test lint vet generate golden fixtures infra-up infra-down test-integration e2e loadtest soak docker docker-prebuilt compose-up compose-down spike-report phase0 phase0-dryrun phase0-trim phase0-rate pilot-up pilot-register pilot-registry pilot-report pilot-down pilot-clean pilot-stats pilot-analysis-up pilot-analysis-down pilot-analysis-status docker-analysis-media eval-sample eval-label eval-agreement eval-run eval-report eval-cost spike-bin chart-check chart-smoke clean
 
 all: generate build test
 
@@ -223,6 +223,31 @@ pilot-analysis-status:
 	  -c "SELECT route, lane, count(*) AS queued FROM analysis.analysis_queue GROUP BY 1, 2" \
 	  -c "SELECT (created_at AT TIME ZONE 'Asia/Baghdad')::date AS day_iraq, model, count(*) AS requests, sum(items) AS items, \
 	      round(sum(coalesce(cost_usd, est_cost_usd))::numeric, 2) AS usd FROM analysis.provider_requests GROUP BY 1, 2 ORDER BY 1 DESC, 2 LIMIT 20"
+
+## Evaluation (docs/analysis/evaluation.md). The gold set stays in GOLD_DIR,
+## outside the repository; the tools run from the image (no Go needed).
+GOLD_DIR ?= /srv/securebrand/gold
+MODEL ?= claude-haiku-5-5
+PROVIDER ?= anthropic
+EVAL_ARGS ?=
+EVAL = docker run --rm -v $(GOLD_DIR):/gold --entrypoint /usr/local/bin/sb-eval
+eval-sample:
+	@test -d $(GOLD_DIR) || { echo "create it first: mkdir -p $(GOLD_DIR) && chown 65532:65532 $(GOLD_DIR) && chmod 700 $(GOLD_DIR)"; exit 2; }
+	$(EVAL) --network fbs_default -e FBS_POSTGRES__DSN=postgres://fbs:fbs@postgres:5432/fbs?sslmode=disable $(IMAGE) \
+	  sample --out /gold/gold.labels.jsonl $(EVAL_ARGS)
+eval-label:
+	@echo "Open http://127.0.0.1:8099 through an SSH tunnel (docs/analysis/evaluation.md). Ctrl+C to stop."
+	$(EVAL) --network host $(IMAGE) label --file /gold/gold.labels.jsonl
+eval-agreement:
+	$(EVAL) $(IMAGE) agreement --file /gold/gold.labels.jsonl
+eval-run:
+	@test -f deploy/compose/analysis.env || { echo "missing deploy/compose/analysis.env (API keys): docs/owner/analysis-decisions.md"; exit 2; }
+	$(EVAL) --env-file deploy/compose/analysis.env $(IMAGE) run --gold /gold/gold.labels.jsonl --out /gold/results.jsonl \
+	  --provider $(PROVIDER) --model $(MODEL) $(EVAL_ARGS)
+eval-report:
+	$(EVAL) $(IMAGE) report --gold /gold/gold.labels.jsonl /gold/results.jsonl
+eval-cost:
+	$(EVAL) $(IMAGE) cost --measured /gold/results.jsonl --model $(MODEL)
 
 ## Image with ffmpeg for the analysis media workers.
 docker-analysis-media:

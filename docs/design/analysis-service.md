@@ -175,7 +175,7 @@ One JSON object per item, enforced by JSON-schema structured output (`internal/a
 - **Private individuals** (tagged friends, names in comments) are never stored as entities, not even their surface text: the result keeps `private_person_mentions: n` only. This keeps the political opinions of identifiable private persons out of the store.
 - **No face recognition.**
 
-**Taxonomy v1** (`configs/analysis/taxonomy.v1.yaml`) was proposed from domain knowledge of Iraqi news and brand pages; the pilot data's content was not read. It has 19 top-level topics and ~95 sub-topics: politics, security, economy, public services, telecom, banking & payments, retail, food, automotive, real estate, travel, health, education, religion & occasions, sports, entertainment, social issues, technology, and brand engagement. Each topic has an id, English and Arabic labels, and a one-line description that goes into the prompt.
+**Taxonomy v1** (`configs/analysis/taxonomy.v1.yaml`) was proposed from domain knowledge of Iraqi news and brand pages; the pilot data's content was not read. It has 20 top-level topics (including `other`) and 87 sub-topics: politics, security, economy, public services, telecom, banking & payments, retail, food, automotive, real estate, travel, health, education, religion & occasions, sports, entertainment, social issues, technology, and brand engagement. Each topic has an id, English and Arabic labels, and a one-line description that goes into the prompt.
 
 The taxonomy is versioned. A change bumps `taxonomy_version` and makes items eligible for selective re-analysis (section 10). The owner replaces or edits the list.
 
@@ -196,7 +196,7 @@ The taxonomy is versioned. A change bumps `taxonomy_version` and makes items eli
 - when the primary's circuit breaker is open;
 - when the primary refuses after isolation (section 8.4).
 
-The batch lane waits up to `batch_fallback_after` (default 12h) for the primary to recover before it uses the fallback, because mixing models in the bulk data is itself a consistency risk (section 7.6). Every result records the model that produced it, and `fallback_share` is a metric.
+The batch lane keeps retrying the primary's batch API (every submission round, without counting attempts) for `batch.fallback_after` (default 12h), because mixing models in the bulk data is itself a consistency risk (section 7.6). After that, the backlog goes to real time: to the primary if its real-time API still works, else to the fallback. A successful batch submission ends the outage. Every result records the model that produced it, and `fbs_analysis_fallback_total` counts fallback use.
 
 ### 7.2 Grouping and prompt caching
 
@@ -215,7 +215,7 @@ Code then validates every item:
 - enum values are valid and scores in range;
 - `person_private` entities are dropped, and topics outside the taxonomy are removed (counted as `invalid_topic`).
 
-If items are missing from a response, only those are re-queued (attempt + 1) and retried alone. Invalid JSON is retried once, then routed to the fallback. After `max_attempts`, items go to the `failed` state, kept in `analysis_dead_letters` with the error, alerted and replayable (`sb-analysis replay-failed`).
+If items are missing from a response, only those are re-queued (attempt + 1). An invalid or truncated answer re-queues all its items. Re-queued items wait with exponential backoff and are then retried alone, so one bad item cannot sink a group twice. After `max_attempts`, items move to `analysis.dead_letters` with the error; they are alerted on and replayable (`sb-analysis replay-failed`). Provider errors and refusals are what trigger the fallback (section 8.4).
 
 ### 7.4 Batch vs real time
 
@@ -299,7 +299,7 @@ Ingest scales on Kafka lag (KEDA). Pipeline workers are I/O-bound: one or two re
   - key frames: scene-change selection, at most 8, 512 px;
   - audio: 16 kHz mono.
   Speech-to-text runs through the provider's transcription endpoint (OpenAI-compatible `/audio/transcriptions`: OpenAI `gpt-4o-mini-transcribe`, or a self-hosted Whisper server speaking the same API), then one vision call with frames + transcript. The temporary files are deleted in all cases.
-- **Deadlines:** jobs are processed in `delete_after` order. A job within `deadline_margin` (12h) of deletion jumps the queue. The `TTL-at-risk` gauge counts jobs within 6h of `delete_after`.
+- **Deadlines:** jobs are processed nearest `delete_after` first. The `TTL-at-risk` gauge counts jobs within 6h of `delete_after`.
 - **Ack:** written to the outbox in the same transaction as the analysis: `PROCESSED`, `FAILED_PERMANENT` (undecodable, too large, policy) or `FAILED_RETRYABLE` (transient; fbs re-announces). Acks therefore survive crashes, and the janitor deletes the file.
 
 **STT options for Iraqi Arabic speech**, per audio minute:
@@ -447,7 +447,7 @@ ClickHouse enforces all of this server-side, which is a reason to give the agent
 
 **Per-client access scoping (built).**
 - **Model:** a client sees mentions of its tracked entities (`client_entities`) anywhere in the corpus, and every item from the sources it monitors (`client_sources`).
-- **Postgres:** each client gets its own login role (`client_roles`), and row-level security on the `agent` views uses `current_user`. The scope is tied to the login, so agent SQL cannot change it (a session variable could be reset by the SQL itself).
+- **Postgres:** each client gets its own login role (`client_roles`). The `agent` views are security-barrier views filtered on `current_user`: the views read the tables with their owner's rights, while `current_user` stays the agent's login. The scope is tied to the login, so agent SQL cannot change it (a session variable could be reset by the SQL itself). A test connects as two client roles and checks that each sees only its own rows and no base table.
 - **ClickHouse:** row policies per client user, as above.
 
 Example retrieval returns at most 20 texts per call, with phones and e-mails masked and no author identity.
@@ -617,16 +617,29 @@ The harness is `cmd/sb-eval`, with guide [docs/analysis/evaluation.md](../analys
 
 ## What is built (this change)
 
-- **Contracts:** `securebrand.content.v1`, `securebrand.analysis.v1`, topics, Schema Registry mapping.
-- **`cmd/sb-analysis`:**
-  - Facebook adapter, ingest, skip rules, alias matcher;
-  - Postgres queue; real-time and batch lanes; result writer + outbox + relay;
-  - providers: Anthropic (official Go SDK, Message Batches, structured output, caching), OpenAI-compatible (OpenAI, Gemini, vLLM; JSON schema; transcription), and fake (deterministic);
-  - router with breaker, fallback and budget;
-  - media worker (images; video with ffmpeg + STT), acks;
-  - erasure; rollups; agent views, client scoping and the agent role command; Arabic full-text search; metrics;
-  - commands: `reanalyze`, `entities import|review`, `replay-failed`.
-- **`cmd/sb-eval`:** sample, label (web tool), run, report, cost.
-- **Docs:** labelling guide; Compose and Helm wiring; the fbs comment retention change (kept indefinitely, flagged).
+- **Contracts:** `securebrand.content.v1` (`ContentItem`, `MediaReady`/`MediaProcessed`, `Erasure`) and `securebrand.analysis.v1` (`ItemAnalysis`, `MediaAnalysis`), with topics, the Schema Registry mapping and `buf lint`/`buf breaking` clean. Documented in [content-v1.md](../contracts/content-v1.md).
+- **`cmd/sb-analysis`** (roles `ingest`, `pipeline`, `media`, `relay`, `rollup`):
+  - **inputs:** the Facebook adapter and the canonical input, skip rules, PII masking, and the alias matcher with clitic handling;
+  - **pipeline:** the Postgres work queue with leases, backoff and dead letters; real-time and Message Batches lanes;
+  - **providers:** Anthropic on the official Go SDK v2 (structured output, cached system prompt, per-model thinking control, batches); OpenAI-compatible (chat with strict JSON schema, transcription); a deterministic fake;
+  - **reliability:** circuit breakers and rate limits, fallback, refusal isolation, budget caps, escalation and audit sampling, calibration maps;
+  - **output:** the transactional outbox and relay;
+  - **media:** images resized; videos as ffmpeg key frames plus speech-to-text; acks through the outbox;
+  - **data management:** erasure with suppression; the entity registry with review, merge and tracking; daily rollups;
+  - **agent access:** views with per-client scoping, and read-only agent roles with limits;
+  - **search and metrics:** Arabic full-text search; Prometheus metrics and alert rules ([runbook](../runbooks/analysis.md));
+  - **commands:** `migrate`, `entities`, `sources`, `reanalyze`, `replay-failed`, `agent-role`, `rollups`.
+- **`cmd/sb-eval`** ([guide](../analysis/evaluation.md)): `sample`, `label` (web tool), `agreement`, `run`, `report`, `calibrate`, `cost`. Plus the [labelling guide](../analysis/labelling-guide.md) and a synthetic gold example.
+- **Deployment:**
+  - **Compose:** local stack with the fake provider. On the pilot the service sits behind the `analysis` profile, so nothing is sent before the owner decides; `make pilot-stats` gives counts only.
+  - **Helm:** `analysis` and `analysis-media` components, a migrate hook, the ffmpeg image target; `make chart-check` and `make chart-smoke` pass.
+  - **Retention:** fbs comment retention is now indefinite.
+- **Tests:**
+  - unit tests;
+  - integration tests against Postgres and Redpanda: store, agent scoping, pipeline lanes and failure modes, media with real ffmpeg, Facebook topics to `analysis.result.v1` end to end, the sampler;
+  - the existing fbs suites still pass;
+  - a mutation check of the new tests: 16 of 16 deliberate faults caught.
 
-Not built: ClickHouse, embeddings, the agent, `sb-eval retrieval`.
+**Not built:** ClickHouse, embeddings and `sb-eval retrieval`, the agent itself, and the speech-to-text evaluation.
+
+**Not measured yet:** accuracy and real token counts. They need the owner's gold set and API keys (section 15).

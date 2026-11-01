@@ -177,24 +177,38 @@ func TestAlertRules(t *testing.T) {
 	}
 }
 
-// Runbook anchors the alerts link to must exist (GitHub heading slugs).
+// Runbook anchors the alerts link to must exist (GitHub heading slugs) in
+// the runbook file each link names.
 func TestAlertRunbookAnchors(t *testing.T) {
-	b, err := os.ReadFile("../../../docs/runbooks/operations.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	slugs := map[string]bool{}
 	drop := regexp.MustCompile(`[^a-z0-9 _-]`)
-	for _, line := range strings.Split(string(b), "\n") {
-		if h, ok := strings.CutPrefix(line, "## "); ok {
-			slugs[strings.ReplaceAll(drop.ReplaceAllString(strings.ToLower(h), ""), " ", "-")] = true
+	slugs := map[string]map[string]bool{}
+	headings := func(file string) map[string]bool {
+		if m, ok := slugs[file]; ok {
+			return m
 		}
+		b, err := os.ReadFile("../../../docs/runbooks/" + file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := map[string]bool{}
+		for _, line := range strings.Split(string(b), "\n") {
+			if h, ok := strings.CutPrefix(line, "## "); ok {
+				m[strings.ReplaceAll(drop.ReplaceAllString(strings.ToLower(h), ""), " ", "-")] = true
+			}
+		}
+		slugs[file] = m
+		return m
 	}
 	for _, g := range loadRules(t).Groups {
 		for _, r := range g.Rules {
 			u := r.Annotations["runbook_url"]
-			if i := strings.IndexByte(u, '#'); i >= 0 && !slugs[u[i+1:]] {
-				t.Errorf("%s: no runbook heading for #%s", r.Alert, u[i+1:])
+			i := strings.IndexByte(u, '#')
+			if i < 0 {
+				continue
+			}
+			file := filepath.Base(u[:i])
+			if !headings(file)[u[i+1:]] {
+				t.Errorf("%s: no heading for #%s in docs/runbooks/%s", r.Alert, u[i+1:], file)
 			}
 		}
 	}

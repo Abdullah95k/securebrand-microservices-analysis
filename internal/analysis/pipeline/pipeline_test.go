@@ -190,6 +190,9 @@ func TestMissingItemsAreRetriedAlone(t *testing.T) {
 	if _, err := e.s.DB.Exec(ctx, `UPDATE analysis.analysis_queue SET not_before = now() - interval '1s'`); err != nil {
 		t.Fatal(err)
 	}
+	// A new comment of the same thread arrives meanwhile: the retried item
+	// must still go alone, not in a group with it.
+	e.ingest(t, comment(4, "شكرا"))
 	calls := e.primary.Calls()
 	if err := e.p.SubmitBatches(ctx); err != nil {
 		t.Fatal(err)
@@ -197,11 +200,11 @@ func TestMissingItemsAreRetriedAlone(t *testing.T) {
 	if err := e.p.PollBatches(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if n := e.count(t, `SELECT count(*) FROM analysis.analyses`); n != 3 {
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses`); n != 4 {
 		t.Fatal("retried item not analysed")
 	}
-	if e.primary.Calls()-calls != 1 {
-		t.Fatal("retry should be one request with the item alone")
+	if e.primary.Calls()-calls != 2 {
+		t.Fatalf("want 2 requests (the retried item alone, the new one), got %d", e.primary.Calls()-calls)
 	}
 }
 
@@ -379,5 +382,65 @@ func TestCalibration(t *testing.T) {
 	var none *pipeline.Calibration
 	if none.Apply(0.42) != 0.42 {
 		t.Fatal("nil calibration must be identity")
+	}
+}
+
+// failingBatcher wraps the fake provider with a batch API that fails.
+type failingBatcher struct {
+	*fake.Provider
+	fail bool
+}
+
+func (f *failingBatcher) SubmitBatch(ctx context.Context, reqs []provider.Request) (string, error) {
+	if f.fail {
+		return "", &provider.Error{Status: 503, Retryable: true, Err: errOverloaded}
+	}
+	return f.Provider.SubmitBatch(ctx, reqs)
+}
+
+func TestBatchOutageWaitsThenFallsBack(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) {
+		r := c.Routes[core.RouteComment]
+		r.FallbackProvider, r.FallbackModel = "fallback", "fallback-model"
+		c.Routes[core.RouteComment] = r
+		c.Batch.MaxRequests = 1 // one request per batch: several chunks
+		c.Grouping.MaxItems = 1
+	})
+	ctx := context.Background()
+	fb := &failingBatcher{Provider: e.primary, fail: true}
+	e.p.Providers.Add("primary", fb, true, 0)
+	e.ingest(t, comment(1, "حلو"), comment(2, "سيء"), comment(3, "عادي"))
+	// Down, but not for long: nothing is analysed, nothing stays leased.
+	if err := e.p.SubmitBatches(ctx); err == nil {
+		t.Fatal("submit error not reported")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses`); n != 0 {
+		t.Fatal("analysed during a short outage")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_requests WHERE status = 'submitted'`); n != 0 {
+		t.Fatalf("%d dangling submitted requests", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE attempts = 0 AND lease_until IS NULL`); n != 3 {
+		t.Fatal("items not released without an attempt")
+	}
+	// After batch.fallback_after, the backlog goes to the fallback.
+	e.p.Cfg.Batch.FallbackAfter = 0
+	if _, err := e.s.DB.Exec(ctx, `UPDATE analysis.analysis_queue SET not_before = now() - interval '1s'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE is_current`); n != 3 {
+		t.Fatalf("analysed %d after the outage threshold, want 3", n)
+	}
+	// Recovery: a successful submission clears the outage.
+	fb.fail = false
+	e.ingest(t, comment(4, "تمام"))
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'in_progress'`); n != 1 {
+		t.Fatal("batch lane did not recover")
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,7 +41,12 @@ type Pipeline struct {
 	Calib     map[string]*Calibration
 	Budget    *Budget
 
-	entities   atomic.Pointer[entities.Registry]
+	entities atomic.Pointer[entities.Registry]
+	// down records since when a provider's batch API has been failing
+	// (cleared by a successful submission).
+	downMu sync.Mutex
+	down   map[string]time.Time
+
 	textSystem string
 	textSchema map[string]any
 	urgentSrc  map[string]bool
@@ -50,7 +56,8 @@ type Pipeline struct {
 // New builds a pipeline.
 func New(st *store.Store, providers *registry.Registry, tax *taxonomy.Taxonomy, cfg config.Analysis, calib map[string]*Calibration) *Pipeline {
 	p := &Pipeline{Store: st, Providers: providers, Tax: tax, Cfg: cfg, Pricing: provider.Pricing(cfg.Pricing), Calib: calib,
-		textSystem: prompt.TextSystem(tax), textSchema: prompt.TextSchema(tax), urgentSrc: map[string]bool{}, now: time.Now}
+		textSystem: prompt.TextSystem(tax), textSchema: prompt.TextSchema(tax), urgentSrc: map[string]bool{}, now: time.Now,
+		down: map[string]time.Time{}}
 	for _, s := range cfg.Urgent.Sources {
 		p.urgentSrc[s] = true
 	}
@@ -502,6 +509,11 @@ func (p *Pipeline) QueueMetrics(ctx context.Context) error {
 		ametrics.QueueDepth.WithLabelValues(q.Lane, q.Route).Set(float64(q.Depth))
 		ametrics.QueueAge.WithLabelValues(q.Lane, q.Route).Set(q.OldestAge.Seconds())
 	}
+	n, err := p.Store.DeadLetterCount(ctx)
+	if err != nil {
+		return err
+	}
+	ametrics.DeadLetters.Set(float64(n))
 	return nil
 }
 

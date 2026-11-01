@@ -423,7 +423,6 @@ analysis:
     poll: 2s
     lease: 10m
     max_tries: 5
-    deadline_margin: 12h
     video:
       enabled: true
       ffmpeg: ffmpeg       # needs the image built with --target analysis-media

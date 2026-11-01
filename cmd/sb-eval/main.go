@@ -34,7 +34,7 @@ import (
 	"github.com/abdullah95k/securebrand-microservices/internal/platform/pg"
 )
 
-const usage = `usage: sb-eval <sample|label|run|report|calibrate|cost> [flags]   (sb-eval <command> -h for flags)`
+const usage = `usage: sb-eval <sample|label|agreement|run|report|calibrate|cost> [flags]   (sb-eval <command> -h for flags)`
 
 func main() {
 	if len(os.Args) < 2 {
@@ -57,6 +57,8 @@ func main() {
 		err = calibrate(os.Args[2:])
 	case "cost":
 		err = cost(os.Args[2:])
+	case "agreement":
+		err = agreement(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown command %q\n%s", os.Args[1], usage)
 	}
@@ -94,6 +96,7 @@ func sample(ctx context.Context, args []string) error {
 	posts := fs.Int("posts", eval.DefaultSample.Posts, "posts to sample")
 	seedFile := fs.String("entities", "", "entity seed (\"\" = built-in) used to oversample brand mentions")
 	seed := fs.Uint64("seed", 1, "sampling seed")
+	repeat := fs.Float64("repeat", 0.1, "share of items repeated at the end for a blind second labelling (consistency)")
 	_ = fs.Parse(args)
 	if *out == "" {
 		return fmt.Errorf("--out is required")
@@ -120,6 +123,7 @@ func sample(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	items = eval.AddRepeats(items, *repeat)
 	if err := eval.WriteItems(*out, items); err != nil {
 		return err
 	}
@@ -346,4 +350,21 @@ func parent(p string) string {
 		return "/"
 	}
 	return p[:i]
+}
+
+func agreement(args []string) error {
+	fs := flag.NewFlagSet("agreement", flag.ExitOnError)
+	file := fs.String("file", "", "the labelled file")
+	_ = fs.Parse(args)
+	items, err := eval.ReadItems(*file)
+	if err != nil {
+		return err
+	}
+	a := eval.SelfAgreement(items)
+	if a.Pairs == 0 {
+		return fmt.Errorf("no repeated item is labelled twice yet")
+	}
+	fmt.Printf("Repeated items labelled twice: %d\nSentiment: %.0f%% identical, Cohen's kappa %.2f (above 0.8 is very good, 0.6-0.8 good)\n"+
+		"Entities F1 %.0f%%, topics F1 %.0f%%\n", a.Pairs, 100*a.SentimentAgree, a.SentimentKappa, 100*a.EntityF1, 100*a.TopicF1)
+	return nil
 }

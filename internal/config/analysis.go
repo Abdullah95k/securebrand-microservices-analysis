@@ -165,9 +165,7 @@ type AnalysisMedia struct {
 	Poll         time.Duration `koanf:"poll"`
 	Lease        time.Duration `koanf:"lease"`
 	MaxTries     int           `koanf:"max_tries"`
-	// DeadlineMargin: jobs this close to delete_after go first.
-	DeadlineMargin time.Duration `koanf:"deadline_margin"`
-	Video          VideoConfig   `koanf:"video"`
+	Video        VideoConfig   `koanf:"video"`
 }
 
 // VideoConfig: key frames with ffmpeg, speech-to-text through a provider.

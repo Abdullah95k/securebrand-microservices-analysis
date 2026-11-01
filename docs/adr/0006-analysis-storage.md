@@ -19,7 +19,7 @@ Status: accepted (2026-11-01). Design: [docs/design/analysis-service.md](../desi
 3. **Daily rollups** (entity, entity × topic, topic, source) are recomputed per dirty day. That keeps them correct under re-analysis, registry merges and erasure.
 4. **Agent access:**
    - **schema:** an `agent` schema of views;
-   - **scoping:** one Postgres login role per client, mapped in `client_roles`, with row-level security keyed on `current_user`. A client sees mentions of its tracked entities anywhere, plus everything from its monitored sources;
+   - **scoping:** one Postgres login role per client, mapped in `client_roles`, and security-barrier views filtered on `current_user`. A client sees mentions of its tracked entities anywhere, plus everything from its monitored sources;
    - **limits:** `default_transaction_read_only`, `statement_timeout`, `temp_file_limit`, `work_mem`, a connection limit. The agent's SQL tool must additionally accept one `SELECT`, cap rows, and enforce its own deadline.
 5. **Full-text search:** an expression GIN index on `to_tsvector('simple', analysis.ar_normalize(text))`.
 6. **ClickHouse is the analytics store for the agent.** It is added before the agent goes live, or past ~200M mentions, fed from `analysis.result.v1` (Kafka engine + materialized views, `ReplacingMergeTree(analysis_version)`). The agent queries only ClickHouse. Its settings profiles, constraints, quotas and row policies enforce limits and scoping server-side.

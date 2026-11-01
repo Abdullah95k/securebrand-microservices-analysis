@@ -283,3 +283,32 @@ func TestCostModel(t *testing.T) {
 		t.Fatalf("cost report:\n%s", b.String())
 	}
 }
+
+func TestRepeatsAndAgreement(t *testing.T) {
+	items, _ := ReadItems(synthetic)
+	with := AddRepeats(items, 0.5)
+	if len(with) != len(items)+6 || !strings.HasSuffix(with[len(with)-1].ID, RepeatSuffix) || with[len(with)-1].Label != nil {
+		t.Fatalf("repeats: %d", len(with))
+	}
+	if len(Labelled(with)) != len(Labelled(items)) {
+		t.Fatal("repeats must not be scored")
+	}
+	// Label the copies: same as the original except one sentiment.
+	for i := len(items); i < len(with); i++ {
+		orig := with[i]
+		for _, it := range items {
+			if it.ID+RepeatSuffix == orig.ID && it.Label != nil {
+				l := *it.Label
+				with[i].Label = &l
+			}
+		}
+	}
+	with[len(items)].Label.Sentiment = "neutral" // syn-001 was negative
+	a := SelfAgreement(with)
+	if a.Pairs < 4 || a.SentimentAgree >= 1 || a.SentimentKappa >= 1 || a.SentimentKappa <= 0 || a.EntityF1 != 1 || a.TopicF1 != 1 {
+		t.Fatalf("agreement %+v", a)
+	}
+	if !near(Kappa([]string{"a", "b"}, []string{"a", "b"}), 1) || Kappa(nil, nil) != 0 {
+		t.Fatal("kappa")
+	}
+}
