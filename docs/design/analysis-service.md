@@ -17,7 +17,7 @@ Owner-facing summary: [docs/owner/analysis-decisions.md](../owner/analysis-decis
 - **The topic list grows by itself** (section 6.1): the model proposes missing topics, the service deduplicates them, and a daily check merges synonyms before they join the list. Brands, people, positions and places the item is about become topics too ("@asiacell").
 - **Bot and fake-account detection** (section 6.2): a daily behaviour score per author; every item of a flagged author carries the flag.
 - **Postgres is the work queue and the system of record.** Text, analyses, entity mentions and daily rollups live there, partitioned by month. Results are also published on `analysis.result.v1`, so ClickHouse can be added for the future chat/analytics agent without changing the service.
-- **Expected cost** (list prices of 2026-11-01; token counts and the duplicate share are estimates until the evaluation and `make pilot-stats` measure them):
+- **Expected cost** (list prices of 2026-11-01; token counts and the duplicate share are estimates until the evaluation and `make analysis-stats` measure them):
   - **lean mix** (Haiku 5.5 everywhere, Sonnet 5.5 for escalations): about **$3.9k/year at 100M** text items, **$9.7k at 300M** and **$28k at 1B**. Above ~150M items a year, speech-to-text runs on an own Whisper server instead of a per-minute API (if it passes the dialect test).
   - **heavier mix** (Sonnet 5.5 for posts, images and videos): about $43k/year at 300M. It is needed only if the evaluation shows Haiku failing on those routes.
   - The first estimate was $15.1k (lean) and $48.5k (heavier) at 300M; section 16.1 explains the difference.
@@ -238,7 +238,7 @@ The service has no profile data (author ids are pseudonymous HMACs, by design), 
   - the agent views show `author_bot` from the author's current level;
   - results carry the level at analysis time, and `AuthorFlag` events on `analysis.author.v1` announce every change;
   - rollups count `bot_items` / `bot_mentions`, and a level change rebuilds the author's days.
-- **Limits, stated plainly:** behaviour alone produces false positives (super-fans, giveaway hunters, page admins posting from personal accounts) and misses careful bots. Paid human "electronic armies" look the same and are flagged the same; "bot" here means inauthentic behaviour, not proven automation. The thresholds are starting values: `make pilot-stats` prints the activity distribution (counts only), and the owner reviews a sample of flagged authors before the flags are shown to clients.
+- **Limits, stated plainly:** behaviour alone produces false positives (super-fans, giveaway hunters, page admins posting from personal accounts) and misses careful bots. Paid human "electronic armies" look the same and are flagged the same; "bot" here means inauthentic behaviour, not proven automation. The thresholds are starting values: `make analysis-stats` prints the activity distribution (counts only), and the owner reviews a sample of flagged authors before the flags are shown to clients.
 - **Scale:** the scoring query scans 30 days of items once a day, minutes at pilot scale. At hundreds of millions of items a year it moves to ClickHouse with the rest of the analytics (section 12.3).
 - **Privacy:** this is automated profiling of (pseudonymous) people. It is flagged for the lawyer. The profile row is deleted with the author's other data on erasure.
 
@@ -285,7 +285,7 @@ The batch lane keeps retrying the primary's batch API (every submission round, w
 
 - **Grouping:** a request = one thread context (the post text, truncated to 1,500 characters) + up to `grouping.max_items` (40) items of that thread, capped by an estimated token size. Items carry an index; the response is an array keyed by index. Kafka keys comments by post, so a thread's comments arrive together. The real-time lane waits `grouping.realtime_wait` (20 s) for siblings, and the batch lane groups within each 10-minute window.
 - **Static prefix** (system prompt: instructions, taxonomy, output rules; ~2.5k tokens) is byte-identical across requests and marked `cache_control`. Cache reads cost 0.1x on Haiku 5.5 and 0.05x on Sonnet/Opus 5.5, and stack with the batch discount. In the Batch API, cache hits are best-effort. The minimum cacheable prefix on the 5.5 models is 512 tokens.
-- **Identical items are sent once** (`internal/analysis/pipeline/dedup.go`). Contest posts ("علق تم للمشاركة"), condolence and prayer threads collect hundreds of identical comments. Within a claim, items of one thread with the same parent and the same input hash (text, kind, media) collapse onto the first: it alone is shown to the model, and the others ride in the same request as followers. They get its answer and their share of the cost, and they fail and retry with it. The model's input for them would be identical, so its answer would be too. Followers count toward neither group limit, so a thread of 3,000 "تم" costs one prompt slot per claim. The batch lane recomputes the mapping from the request's stored input hashes when results arrive. Posts and audits are never collapsed. `fbs_analysis_items_deduplicated_total` counts followers, and `make pilot-stats` measures the share (assumed 10%).
+- **Identical items are sent once** (`internal/analysis/pipeline/dedup.go`). Contest posts ("علق تم للمشاركة"), condolence and prayer threads collect hundreds of identical comments. Within a claim, items of one thread with the same parent and the same input hash (text, kind, media) collapse onto the first: it alone is shown to the model, and the others ride in the same request as followers. They get its answer and their share of the cost, and they fail and retry with it. The model's input for them would be identical, so its answer would be too. Followers count toward neither group limit, so a thread of 3,000 "تم" costs one prompt slot per claim. The batch lane recomputes the mapping from the request's stored input hashes when results arrive. Posts and audits are never collapsed. `fbs_analysis_items_deduplicated_total` counts followers, and `make analysis-stats` measures the share (assumed 10%).
 - **Entity hints:** per item, the alias matcher's candidates (`id`, canonical name). They are not the whole brand list (hundreds of brands × aliases would bloat every prompt).
 - **PII masking:** phone numbers (Western and Arabic-Indic digits) and e-mail addresses are replaced with `[phone]` / `[email]` before the text leaves the service.
 
@@ -653,10 +653,10 @@ The harness is `cmd/sb-eval`, with guide [docs/analysis/evaluation.md](../analys
 
 ## 16. Cost model
 
-**Assumptions** (replace with measured numbers from `sb-eval run` and `make pilot-stats`):
+**Assumptions** (replace with measured numbers from `sb-eval run` and `make analysis-stats`):
 - **Volume:** posts = items / 58.3 (pilot ratio); media = 1 per post, 80% images and 20% videos of 45 s.
 - **Tokens per unit** (uncached in / cached in / out), compact format (prompt `p3`): comment 60 / 110 / 50; post 700 / 600 / 150; image 1,100 / 550 / 180; video 3,250 / 550 / 220. The cached prefix includes the flag definitions; ads and breaches cost no output when absent.
-- **Duplicates:** 10% of comments share an identical comment's answer (same thread, parent and text); `make pilot-stats` measures it.
+- **Duplicates:** 10% of comments share an identical comment's answer (same thread, parent and text); `make analysis-stats` measures it.
 - **Other shares:** 2% of analysed comments escalated to Sonnet 5.5 batch; 0.02% audit on Opus 5.5.
 - **Speech-to-text:** Gemini 3.5 Transcribe at $0.0051/min, or an own Whisper server at a fixed ~$2k/year (mix `lean+whisper`).
 - **Prices:** list prices of 2026-11-01. Batch is 50% off where offered. Media uses the real-time lane.
@@ -771,7 +771,8 @@ Result: lean **$3.7k / $9.2k / $25.9k** at 100M / 300M / 1B (taking the cheaper 
   - **commands:** `migrate`, `entities`, `sources`, `reanalyze`, `replay-failed`, `agent-role`, `rollups`.
 - **`cmd/sb-eval`** ([guide](../analysis/evaluation.md)): `sample`, `label` (web tool), `agreement`, `run`, `report`, `calibrate`, `cost`. Plus the [labelling guide](../analysis/labelling-guide.md) and a synthetic gold example.
 - **Deployment:**
-  - **Compose:** local stack with the fake provider. On the pilot the service sits behind the `analysis` profile, so nothing is sent before the owner decides; `make pilot-stats` gives counts only.
+  - **Compose:** local stack with the fake provider.
+  - **Pilot:** a Compose project of its own (`deploy/analysis/compose.yml`, image `sb-analysis:dev`), run from its own checkout of this repository next to the fbs pilot. It joins the pilot's network to read Redpanda and keep its `analysis` schema in the pilot's Postgres. It creates only its own topics (`content.*`, `analysis.*`), so fbs's restarts never touch it and it never touches fbs. Nothing is sent before the owner runs `make analysis-up`; `make analysis-stats` gives counts only.
   - **Helm:** `analysis` and `analysis-media` components, a migrate hook, the ffmpeg image target; `make chart-check` and `make chart-smoke` pass.
   - **Retention:** fbs comment retention is now indefinite.
 - **Tests:**

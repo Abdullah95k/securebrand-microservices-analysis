@@ -5,7 +5,7 @@ PG_DSN ?= postgres://fbs:fbs@localhost:5432/fbs?sslmode=disable
 TEST_ENV = FBS_TEST_PG_DSN="$(PG_DSN)" FBS_TEST_REDIS_ADDR=localhost:6379 FBS_TEST_KAFKA_BROKERS=localhost:19092 FBS_TEST_SCHEMA_REGISTRY=http://localhost:18081
 COMPOSE = docker compose -f deploy/compose/docker-compose.yml
 
-.PHONY: all build test lint vet generate golden fixtures infra-up infra-down test-integration e2e loadtest soak docker docker-prebuilt compose-up compose-down spike-report phase0 phase0-dryrun phase0-trim phase0-rate pilot-up pilot-register pilot-registry pilot-report pilot-down pilot-clean pilot-stats pilot-analysis-up pilot-analysis-down pilot-analysis-status pilot-analysis-cmd docker-analysis-media eval-sample eval-silver eval-label eval-agreement eval-run eval-report eval-cost spike-bin chart-check chart-smoke clean
+.PHONY: all build test lint vet generate golden fixtures infra-up infra-down test-integration e2e loadtest soak docker docker-prebuilt compose-up compose-down spike-report phase0 phase0-dryrun phase0-trim phase0-rate pilot-up pilot-register pilot-registry pilot-report pilot-down pilot-clean analysis-image analysis-stats analysis-up analysis-down analysis-status analysis-cmd docker-analysis-media eval-sample eval-silver eval-label eval-agreement eval-run eval-report eval-cost spike-bin chart-check chart-smoke clean
 
 all: generate build test
 
@@ -210,47 +210,65 @@ pilot-report:
 
 ## Stops the pilot and keeps its database; pilot-clean also deletes it.
 pilot-down:
-	$(PILOT_COMPOSE) --profile analysis down
+	$(PILOT_RUN)
+	$(PILOT_COMPOSE) down
 pilot-clean:
-	$(PILOT_COMPOSE) --profile analysis down -v
+	$(PILOT_RUN)
+	$(PILOT_COMPOSE) down -v
 	@# No pilot left: the local targets may run again (NOT_PILOT).
 	rm -f $(PILOT_OUT)/pilot-run.yaml
 
-## Pilot data shape for the analysis design: counts and lengths only, no content.
-pilot-stats:
-	$(PILOT_COMPOSE) exec -T postgres psql -U fbs -d fbs -f - < scripts/analysis/pilot-stats.sql
+## Content analysis next to the fbs pilot, as a Compose project of its own
+## (deploy/analysis/compose.yml): its own image and containers on the
+## pilot's network. fbs's pilot-up and restarts never touch it, and nothing
+## here touches fbs's containers, image, topics or settings. Run these from
+## a checkout of this repository of its own (docs/owner/analysis-decisions.md).
+ANALYSIS_IMAGE ?= sb-analysis:dev
+ANALYSIS_ENV = deploy/analysis/analysis.env
+FBS_NETWORK ?= fbs_default
+FBS_POSTGRES ?= fbs-postgres-1
+ANALYSIS_COMPOSE = SB_ANALYSIS_IMAGE=$(ANALYSIS_IMAGE) FBS_NETWORK=$(FBS_NETWORK) docker compose -f deploy/analysis/compose.yml
+ANALYSIS_PSQL = docker exec -i $(FBS_POSTGRES) psql -U fbs -d fbs
+NEED_FBS = @docker network inspect $(FBS_NETWORK) >/dev/null 2>&1 || { echo "no $(FBS_NETWORK) network: the fbs pilot must be running on this machine"; exit 2; }
+NEED_KEYS = @test -f $(ANALYSIS_ENV) || { echo "missing $(ANALYSIS_ENV) (the API keys): docs/owner/analysis-decisions.md, step 5"; exit 2; }; \
+	test "$$(stat -c %a $(ANALYSIS_ENV))" = 600 || { echo "$(ANALYSIS_ENV) must be mode 600: chmod 600 $(ANALYSIS_ENV)"; exit 2; }
 
-## Starts the analysis service on the pilot (sends comments to the LLM provider:
-## only after the owner's decision, docs/owner/analysis-decisions.md).
-pilot-analysis-up:
-	$(PILOT_RUN)
-	@test -f deploy/compose/analysis.env || { echo "missing deploy/compose/analysis.env (the API key): docs/owner/analysis-decisions.md, step 5"; exit 2; }
-	@test "$$(stat -c %a deploy/compose/analysis.env)" = 600 || { echo "deploy/compose/analysis.env must be mode 600: chmod 600 deploy/compose/analysis.env"; exit 2; }
-	@# The analysis topics and schemas (fbctl kafka apply / schemas apply are idempotent).
-	$(PILOT_COMPOSE) run --rm topics
-	$(PILOT_COMPOSE) run --rm schemas
-	$(PILOT_COMPOSE) --profile analysis up -d analysis
-	@echo "analysis running; follow it with: make pilot-analysis-status"
+## The analysis image: sb-analysis and sb-eval only.
+analysis-image:
+	docker build -f deploy/docker/Dockerfile --target sb-analysis -t $(ANALYSIS_IMAGE) .
 
-pilot-analysis-down:
-	$(PILOT_COMPOSE) --profile analysis stop analysis
+## Shape of the collected data (counts and lengths only, no content).
+analysis-stats:
+	$(ANALYSIS_PSQL) -f - < scripts/analysis/pilot-stats.sql
 
-## Owner commands of the analysis service on the pilot, e.g.
-##   make pilot-analysis-cmd ARGS="authors list"
-##   make pilot-analysis-cmd ARGS='topics find "electricity cuts"'
-pilot-analysis-cmd:
-	$(PILOT_RUN)
-	$(PILOT_COMPOSE) --profile analysis run --rm --no-deps -T --entrypoint /usr/local/bin/sb-analysis analysis $(ARGS)
+## Starts the analysis (sends comments to the LLM provider: only after the
+## owner's decision, docs/owner/analysis-decisions.md).
+analysis-up:
+	$(NEED_FBS)
+	$(NEED_KEYS)
+	$(ANALYSIS_COMPOSE) run --rm kafka-topics
+	$(ANALYSIS_COMPOSE) up -d --force-recreate analysis
+	@echo "analysis running; follow it with: make analysis-status"
+
+analysis-down:
+	$(ANALYSIS_COMPOSE) stop analysis
+
+## Owner commands, e.g.
+##   make analysis-cmd ARGS="authors list"
+##   make analysis-cmd ARGS='topics find "electricity cuts"'
+analysis-cmd:
+	$(NEED_FBS)
+	$(ANALYSIS_COMPOSE) run --rm --no-deps -T --entrypoint /usr/local/bin/sb-analysis analysis $(ARGS)
 
 ## Analysis progress and spend (counts only).
-pilot-analysis-status:
-	@$(PILOT_COMPOSE) exec -T postgres psql -U fbs -d fbs -c "SELECT state, count(*) FROM analysis.content_index GROUP BY state ORDER BY 1" \
+analysis-status:
+	@$(ANALYSIS_PSQL) -c "SELECT state, count(*) FROM analysis.content_index GROUP BY state ORDER BY 1" \
 	  -c "SELECT route, lane, count(*) AS queued FROM analysis.analysis_queue GROUP BY 1, 2" \
 	  -c "SELECT (created_at AT TIME ZONE 'Asia/Baghdad')::date AS day_iraq, model, count(*) AS requests, sum(items) AS items, \
 	      round(sum(coalesce(cost_usd, est_cost_usd))::numeric, 2) AS usd FROM analysis.provider_requests GROUP BY 1, 2 ORDER BY 1 DESC, 2 LIMIT 20"
 
 ## Evaluation (docs/analysis/evaluation.md). The gold set stays in GOLD_DIR,
-## outside the repository; the tools run from the image (no Go needed).
+## outside the repository; the tools run from the analysis image (no Go needed).
 GOLD_DIR ?= /srv/securebrand/gold
 MODEL ?= claude-haiku-5-5
 PROVIDER ?= anthropic
@@ -258,26 +276,27 @@ EVAL_ARGS ?=
 EVAL = docker run --rm -v $(GOLD_DIR):/gold --entrypoint /usr/local/bin/sb-eval
 eval-sample:
 	@test -d $(GOLD_DIR) || { echo "create it first: mkdir -p $(GOLD_DIR) && chown 65532:65532 $(GOLD_DIR) && chmod 700 $(GOLD_DIR)"; exit 2; }
-	$(EVAL) --network fbs_default -e FBS_POSTGRES__DSN=postgres://fbs:fbs@postgres:5432/fbs?sslmode=disable $(IMAGE) \
+	$(NEED_FBS)
+	$(EVAL) --network $(FBS_NETWORK) -e FBS_POSTGRES__DSN=postgres://fbs:fbs@postgres:5432/fbs?sslmode=disable $(ANALYSIS_IMAGE) \
 	  sample --out /gold/gold.labels.jsonl $(EVAL_ARGS)
 ## Reference labels from the strongest model (no human labeller): Opus
 ## 5.5 labels the sample, the production model is measured against it.
 eval-silver:
-	@test -f deploy/compose/analysis.env || { echo "missing deploy/compose/analysis.env (API keys): docs/owner/analysis-decisions.md"; exit 2; }
-	$(EVAL) --env-file deploy/compose/analysis.env $(IMAGE) silver --gold /gold/gold.labels.jsonl $(EVAL_ARGS)
+	$(NEED_KEYS)
+	$(EVAL) --env-file $(ANALYSIS_ENV) $(ANALYSIS_IMAGE) silver --gold /gold/gold.labels.jsonl $(EVAL_ARGS)
 eval-label:
 	@echo "Open http://127.0.0.1:8099 through an SSH tunnel (docs/analysis/evaluation.md). Ctrl+C to stop."
-	$(EVAL) --network host $(IMAGE) label --file /gold/gold.labels.jsonl
+	$(EVAL) --network host $(ANALYSIS_IMAGE) label --file /gold/gold.labels.jsonl
 eval-agreement:
-	$(EVAL) $(IMAGE) agreement --file /gold/gold.labels.jsonl
+	$(EVAL) $(ANALYSIS_IMAGE) agreement --file /gold/gold.labels.jsonl
 eval-run:
-	@test -f deploy/compose/analysis.env || { echo "missing deploy/compose/analysis.env (API keys): docs/owner/analysis-decisions.md"; exit 2; }
-	$(EVAL) --env-file deploy/compose/analysis.env $(IMAGE) run --gold /gold/gold.labels.jsonl --out /gold/results.jsonl \
+	$(NEED_KEYS)
+	$(EVAL) --env-file $(ANALYSIS_ENV) $(ANALYSIS_IMAGE) run --gold /gold/gold.labels.jsonl --out /gold/results.jsonl \
 	  --provider $(PROVIDER) --model $(MODEL) $(EVAL_ARGS)
 eval-report:
-	$(EVAL) $(IMAGE) report --gold /gold/gold.labels.jsonl /gold/results.jsonl
+	$(EVAL) $(ANALYSIS_IMAGE) report --gold /gold/gold.labels.jsonl /gold/results.jsonl
 eval-cost:
-	$(EVAL) $(IMAGE) cost --measured /gold/results.jsonl --model $(MODEL)
+	$(EVAL) $(ANALYSIS_IMAGE) cost --measured /gold/results.jsonl --model $(MODEL)
 
 ## Image with ffmpeg for the analysis media workers.
 docker-analysis-media:

@@ -253,7 +253,7 @@ Commenter data is personal data.
 | `make generate` | Regenerate protobuf Go code (`buf generate`) |
 | `go run ./cmd/fakefb --pages 5 --posts 30 --rate-limit-every 10 --login-wall-after 200` | Synthetic Facebook with injected faults (`--docids rotated` to exercise doc_id discovery) |
 | `make phase0-dryrun` | The Phase 0 kit end to end against fakefb |
-| `make pilot-stats` | Pilot data shape for the analysis (counts only) |
+| `make analysis-stats` | Data shape for the analysis (counts only) |
 | `make eval-sample`, `eval-label`, `eval-run`, `eval-report` | Analysis evaluation on the pilot server ([guide](docs/analysis/evaluation.md)) |
 
 ### Repository layout

@@ -19,6 +19,7 @@ __pycache__/
 
 # Analysis service: provider keys and evaluation data never go to git.
 deploy/compose/analysis.env
+deploy/analysis/analysis.env
 *.gold.jsonl
 *.labels.jsonl
 gold/

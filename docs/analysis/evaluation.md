@@ -12,7 +12,7 @@ No model is chosen without measurement. `sb-eval` runs any configured provider a
 
 The gold set is real personal data. It lives in `/srv/securebrand/gold` on the pilot server (mode 700), never in git. `sb-eval sample` refuses to write inside a git checkout, `.gitignore` blocks `*.labels.jsonl`, and the repository holds only `testdata/analysis/synthetic-gold-example.jsonl` (invented texts).
 
-Every command below runs **on the pilot server** (the DigitalOcean droplet), in `~/securebrand-microservices`, from the image that `make pilot-up` builds. Go is not needed.
+Every command below runs **on the pilot server** (the DigitalOcean droplet), in the analysis's own checkout `~/securebrand-analysis`, from the image that `make analysis-image` builds (`sb-analysis:dev`). Go is not needed, and fbs's folder and containers are not touched.
 
 ## 1. Draw the gold set (once)
 
@@ -74,7 +74,7 @@ make eval-silver
 
 ## 3. Run models
 
-API keys go in `deploy/compose/analysis.env` (see [the owner's steps](../owner/analysis-decisions.md)). Each run appends to `/srv/securebrand/gold/results.jsonl`:
+API keys go in `deploy/analysis/analysis.env` (see [the owner's steps](../owner/analysis-decisions.md)). Each run appends to `/srv/securebrand/gold/results.jsonl`:
 
 ```bash
 make eval-run MODEL=claude-haiku-5-5
@@ -127,7 +127,7 @@ It prints every mix, including `lean` (speech on a per-minute API) and `lean+whi
 
 **Calibration:** fit the confidence map that drives escalation, and copy the output into `analysis.calibration_dir`:
 ```bash
-docker run --rm -v /srv/securebrand/gold:/gold --entrypoint /usr/local/bin/sb-eval fbs:dev calibrate --gold /gold/gold.labels.jsonl --model claude-haiku-5-5 /gold/results.jsonl
+docker run --rm -v /srv/securebrand/gold:/gold --entrypoint /usr/local/bin/sb-eval sb-analysis:dev calibrate --gold /gold/gold.labels.jsonl --model claude-haiku-5-5 /gold/results.jsonl
 ```
 
 ## Results (to be filled in after the runs)

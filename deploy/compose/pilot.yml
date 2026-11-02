@@ -98,20 +98,6 @@ services:
     depends_on:
       pilot-registry: {condition: service_completed_successfully}
 
-  # Content analysis: NOT started by `make pilot-up`. Real comments go to the
-  # LLM provider only after the owner decides it (docs/owner/analysis-
-  # decisions.md) and runs `make pilot-analysis-up`. The API key comes from
-  # deploy/compose/analysis.env (mode 600, never committed).
-  analysis:
-    profiles: ["analysis"]
-    <<: *pilot
-    environment:
-      FBS_CONFIG: /etc/fbs/proxies.yaml,/etc/fbs/pilot.yaml,/etc/fbs/pilot-run.yaml
-      FBS_FB__BASE_URL: https://www.facebook.com
-    env_file:
-      - path: ./analysis.env
-        required: false
-
 volumes:
   redpanda-data: {}
   valkey-data: {}

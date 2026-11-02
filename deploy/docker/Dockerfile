@@ -38,6 +38,25 @@ USER 65532:65532
 EXPOSE 9090
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/sb-analysis"]
 
+# `--target sb-analysis`: the analysis service's own image (sb-analysis and
+# sb-eval only, tagged sb-analysis:dev), so it runs next to an fbs stack
+# without sharing or replacing fbs's image.
+FROM golang:1.27-alpine AS build-analysis
+WORKDIR /src
+ENV CGO_ENABLED=0 GOFLAGS=-trimpath GOTOOLCHAIN=local
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY . .
+ARG VERSION=dev
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    go build -ldflags="-s -w -X main.version=${VERSION}" -o /out/ ./cmd/sb-analysis ./cmd/sb-eval
+
+FROM gcr.io/distroless/static-debian12:nonroot AS sb-analysis
+COPY --from=build-analysis /out/ /usr/local/bin/
+USER nonroot:nonroot
+EXPOSE 9090
+ENTRYPOINT ["/usr/local/bin/sb-analysis"]
+
 # The default image: static binaries only.
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/ /usr/local/bin/

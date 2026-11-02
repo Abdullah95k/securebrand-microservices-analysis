@@ -111,17 +111,31 @@ ssh root@SERVER_IP
 
 To paste a command into the terminal: right-click (Windows/PowerShell) or Cmd+V (Mac). Run the commands one at a time, and wait for each one to finish (the prompt comes back).
 
-### Step 2. Go to the project and check the pilot is running
+### How the analysis sits next to the collector
+
+The collector (fbs) and the analysis are separate:
+- **Separate folders:** the collector lives in `~/securebrand-microservices` and is managed by the collector work. The analysis lives in `~/securebrand-analysis`.
+- **Separate images:** the collector runs `fbs:dev`, the analysis runs `sb-analysis:dev`.
+- **Separate containers:** restarting or updating the collector never touches the analysis, and the analysis never touches the collector.
+- **Shared data:** the analysis reads what the collector saves, and keeps its own tables next to the collector's in the same database.
+
+Never run `make pilot-...` commands in `~/securebrand-analysis`. Those manage the collector, from its own folder.
+
+### Step 2. Check the collector is running and there is disk space
+
+These only read:
 
 ```bash
-cd ~/securebrand-microservices
+docker ps --format '{{.Names}}  {{.Status}}'
 ```
+
+The `fbs-...` services should show **Up**.
 
 ```bash
-docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/pilot.yml ps
+df -h /
 ```
 
-You should see `crawler`, `persister`, `scheduler` and the other services as **running** (or **Up**). If not, tell me before going on.
+The **Avail** column should show at least **3G**. If it shows less, stop and tell me. The fix is a bigger disk, never deleting data.
 
 Install `tmux`, so long steps keep running if your connection drops:
 
@@ -133,38 +147,44 @@ apt-get install -y tmux
 tmux new -s work
 ```
 
-If you get disconnected later, reconnect (step 1) and type `tmux attach -t work` to return to where you were.
+If you get disconnected, reconnect (step 1) and type `tmux attach -t work`.
 
-### Step 3. Get this work and build it
-
-This version has the latest collector code plus the analysis service.
+### Step 3. Get the analysis into its own folder and build it
 
 ```bash
-git fetch https://github.com/Abdullah95k/securebrand-microservices-analysis claude/jolly-bell-mb5sct
+git clone --depth 1 --branch claude/jolly-bell-mb5sct https://github.com/Abdullah95k/securebrand-microservices-analysis ~/securebrand-analysis
 ```
 
 ```bash
-git checkout FETCH_HEAD
+cd ~/securebrand-analysis
 ```
 
 ```bash
-make docker
+make analysis-image
 ```
 
-The build takes 5-15 minutes and ends with `naming to docker.io/library/fbs:dev`. It does not restart the running collector.
+The build takes 5-10 minutes and ends with `naming to docker.io/library/sb-analysis:dev`. It doesn't stop or change the collector.
+
+From now on, every command below runs in `~/securebrand-analysis`. After a reconnect, type `cd ~/securebrand-analysis` first.
 
 ### Step 4. Measure the data (counts only, safe to share)
 
 ```bash
-make pilot-stats
+make analysis-stats > ~/pilot-stats.txt 2>&1
 ```
 
-Copy everything it prints and send it to me. It contains only numbers.
+Then, on your Mac, in a new Terminal window (**Cmd+N**), don't type `ssh`:
+
+```bash
+scp root@SERVER_IP:pilot-stats.txt ~/Desktop/ && open ~/Desktop/pilot-stats.txt
+```
+
+Copy everything (**Cmd+A**, **Cmd+C**) and paste it to me. It contains only numbers.
 
 ### Step 5. Put the API keys on the server
 
 ```bash
-nano deploy/compose/analysis.env
+nano deploy/analysis/analysis.env
 ```
 
 An editor opens. Type these lines, replacing the parts after `=` with your keys (leave out the second line if you have no Gemini key):
@@ -177,7 +197,7 @@ FBS_ANALYSIS__PROVIDERS__GEMINI__API_KEY=your-gemini-key
 Save with **Ctrl+O**, then **Enter**, and close with **Ctrl+X**. Then make the file private:
 
 ```bash
-chmod 600 deploy/compose/analysis.env
+chmod 600 deploy/analysis/analysis.env
 ```
 
 ### Step 6. The automatic quality check (about $3-5 and 30-45 minutes)
@@ -188,7 +208,7 @@ chmod 600 deploy/compose/analysis.env
 mkdir -p /srv/securebrand/gold && chown 65532:65532 /srv/securebrand/gold && chmod 700 /srv/securebrand/gold
 ```
 
-**2.** Draw 1,000 comments and 200 posts from the pilot data:
+**2.** Draw 1,000 comments and 200 posts from the collected data:
 
 ```bash
 make eval-sample EVAL_ARGS="--repeat 0"
@@ -217,7 +237,7 @@ Send me the tables it prints (numbers only). I then tell you whether Haiku is go
 ### Step 7. Switch the analysis on
 
 ```bash
-make pilot-analysis-up
+make analysis-up
 ```
 
 It prints `analysis running`. From now on, comments are analysed within hours (brand mentions within a minute), up to $5 a day.
@@ -225,13 +245,13 @@ It prints `analysis running`. From now on, comments are analysed within hours (b
 To check progress and spending (in dollars per Iraq day), at any time:
 
 ```bash
-make pilot-analysis-status
+make analysis-status
 ```
 
-To switch it off:
+To switch it off (the collector keeps running):
 
 ```bash
-make pilot-analysis-down
+make analysis-down
 ```
 
 ### Everyday commands (optional)
@@ -239,37 +259,41 @@ make pilot-analysis-down
 **Accounts flagged as bots, with the reasons:**
 
 ```bash
-make pilot-analysis-cmd ARGS="authors list"
+make analysis-cmd ARGS="authors list"
 ```
 
 **Mark an account as not a bot** (copy its key from the list; your name and the reason go into the log):
 
 ```bash
-make pilot-analysis-cmd ARGS='authors mark --key PASTE_KEY --as human --by "Your name" --note "why"'
+make analysis-cmd ARGS='authors mark --key PASTE_KEY --as human --by "Your name" --note "why"'
 ```
 
 **The log of those decisions:**
 
 ```bash
-make pilot-analysis-cmd ARGS="authors log"
+make analysis-cmd ARGS="authors log"
 ```
 
 **Find a topic and count its posts** (English or Arabic):
 
 ```bash
-make pilot-analysis-cmd ARGS='topics find "electricity cuts"'
+make analysis-cmd ARGS='topics find "electricity cuts"'
 ```
 
 **Topics the system added:**
 
 ```bash
-make pilot-analysis-cmd ARGS="topics list --status active"
+make analysis-cmd ARGS="topics list --status active"
 ```
 
-### Later
-
-When this work is merged into the main repository, return the server to the main branch:
+### Updating the analysis later
 
 ```bash
-git checkout main && git pull --ff-only origin main
+cd ~/securebrand-analysis && git pull && make analysis-image
+```
+
+Then restart it on the new version:
+
+```bash
+make analysis-up
 ```

@@ -24,7 +24,7 @@ The Helm chart runs `analysis` (all roles but media) and `analysis-media` (media
 
 **Look:**
 - `fbs_analysis_queue_depth` and `fbs_analysis_queue_oldest_seconds` by lane and route;
-- `make pilot-analysis-status` on the pilot.
+- `make analysis-status` on the pilot.
 
 **Causes, in order:**
 1. **The budget paused work** (`fbs_analysis_budget_paused == 1`): see [Budget](#budget).
@@ -60,7 +60,7 @@ Every provider has a circuit breaker.
 - `fbs_analysis_fallback_total` over 5% (`AnalysisFallbackShareHigh`) means results from two models are being mixed: trends are less comparable for that period.
 
 API keys come from the environment: `FBS_ANALYSIS__PROVIDERS__ANTHROPIC__API_KEY` (and `__OPENAI__`, `__GEMINI__`).
-- **Compose:** in `deploy/compose/analysis.env` (mode 600).
+- **Compose:** in `deploy/analysis/analysis.env` (mode 600).
 - **Kubernetes:** in the `secretEnv` Secret.
 
 A 401 in the logs means the key is missing or revoked.
@@ -69,7 +69,7 @@ A 401 in the logs means the key is missing or revoked.
 
 `analysis.budget.daily_usd` caps spend per Iraq day; `analysis.routes.<route>.daily_usd` caps one route. Spend is measured from real token usage at list prices (`analysis.pricing`), plus speech-to-text minutes at the transcription model's `per_minute` price (logged as `video` requests of that model; an own Whisper server is priced 0).
 - **At the cap:** batch and re-analysis work pause (items wait); urgent real-time items continue if `analysis.budget.urgent_exempt`.
-- **To look:** `fbs_analysis_spent_today_usd`, `fbs_analysis_cost_usd_total` by model and route, or `make pilot-analysis-status`.
+- **To look:** `fbs_analysis_spent_today_usd`, `fbs_analysis_cost_usd_total` by model and route, or `make analysis-status`.
 - **To change:** set the budget in the config and restart the analysis containers. A new day starts at 00:00 Iraq time.
 
 Keep the price table in `configs/default.yaml` current when providers change prices.
@@ -125,7 +125,7 @@ Once a day every author with 5+ items in 30 days is scored from behaviour (burst
 - **Look:** `sb-analysis authors list` (flagged, highest score first, with reasons). The key is the pseudonymous author key, never a Facebook id.
 - **Decide:** `sb-analysis authors mark --key <hex> --as human --by "<your name>" --note "<why>"` ("not a bot"); `--as bot` (shows as `confirmed`); `--as none` (back to the score). Every item of the author follows, earlier ones too.
 - **The log of decisions:** `sb-analysis authors log [--key <hex>]`: who, when, why, the level before and after.
-- On the pilot, run these through `make pilot-analysis-cmd ARGS='...'` (example: `make pilot-analysis-cmd ARGS="authors list"`).
+- On the pilot, run these through `make analysis-cmd ARGS='...'` (example: `make analysis-cmd ARGS="authors list"`).
 - **Score now:** `sb-analysis authors score`.
 - **Tune:** `analysis.bots` (thresholds, window, minimum items). Before showing bot flags to clients, review a sample of flagged authors: false positives (super-fans, giveaway hunters) are expected.
 
