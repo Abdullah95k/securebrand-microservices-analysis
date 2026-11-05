@@ -58,3 +58,4 @@
 
   Adoption comes in its own request after v1.0.0.
 - **6 Nov:** review of the contract draft v0.1 (REQ-015) in [`docs/master/analysis-contract-review.md`](master/analysis-contract-review.md). Review only; nothing built.
+- **6 Nov:** fixed the failing chart test ("deploy" check) in pull request #1. It was a test-only problem: the small test broker holds 256 partitions; the topic setup fills them, and with this branch's 8 extra topics no room was left for Kafka's own consumer-offsets topic, so nothing could read. The test script (`scripts/chart-smoke.py`) now has the broker create that topic first. No topic, field, schema or endpoint changed.

@@ -147,6 +147,16 @@ def main():
         if time.time() > deadline:
             raise SystemExit("Redpanda does not accept idempotent produce requests")
         time.sleep(2)
+    # Join a consumer group once, so the broker creates __consumer_offsets
+    # now. The dev broker (--memory 1G) holds at most 256 partitions, and the
+    # topics hook grows topics until that limit is reached (configs/topics.yaml
+    # asks for far more); a broker without room left for __consumer_offsets
+    # gives no consumer group a coordinator, and every component then waits
+    # forever.
+    sh("docker", "exec", "fbs-redpanda-1", "rpk", "topic", "consume", TOPIC_PREFIX + "warmup",
+       "-g", TOPIC_PREFIX + "warmup", "-o", "start", "-n", "1", timeout=120)
+    if "__consumer_offsets" not in sh("docker", "exec", "fbs-redpanda-1", "rpk", "topic", "list", "-i").stdout:
+        raise SystemExit("Redpanda did not create __consumer_offsets")
     docs = render(args)
     configmaps = {d["metadata"]["name"]: d.get("data") or {} for d in docs if d["kind"] == "ConfigMap"}
     hooks = [d for d in docs if d["kind"] == "Job"]
