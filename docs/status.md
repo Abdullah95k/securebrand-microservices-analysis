@@ -11,7 +11,7 @@
 | Pilot server | A separate deployment is ready (`deploy/analysis/compose.yml`, image `sb-analysis:dev`, folder `~/securebrand-analysis`). Not confirmed as cloned or built there; **not started**. |
 | Quality | **Not measured.** The evaluation (`docs/analysis/evaluation.md`) is waiting for the owner's approval and API keys on the server. |
 | Contract | Reads `fb.*` through its Facebook adapter (`analysis.inputs: [fb]`). This repository's draft `securebrand.content.v1` is **not used and will be retired** for the master's v1. Publishes `analysis.result.v1`, `analysis.media.v1`, `analysis.author.v1`, `analysis.topic.v1`; nobody consumes them yet. |
-| Schema Registry | sb-analysis registers nothing (standing instruction: no `securebrand.content.*` until the master publishes v1). **But the pilot's shared registry already holds 9 subjects from this repository's copy** (confirmed 6 Nov, 00:58 Iraq time): the 4 `content.*` subjects, `securebrand/content/v1/content.proto`, and the 4 `analysis.*` subjects, almost certainly from a `make pilot-up` run from this copy around 1 November. They would block the master's v1 under the same name; delete them (with the owner's approval) or avoid them first. |
+| Schema Registry | sb-analysis registers nothing (standing instruction: no `securebrand.content.*` until the master publishes v1). **But the pilot's shared registry already holds 9 subjects from this repository's copy** (confirmed 6 Nov, 00:58 Iraq time): the 4 `content.*` subjects, `securebrand/content/v1/content.proto`, and the 4 `analysis.*` subjects, almost certainly from a `make pilot-up` run from this copy around 1 November. The master (6 Nov): they don't block the platform, since staging and production get their own registry. **Leave them in place; delete nothing.** |
 
 ## Reports for the master (5 Nov)
 
@@ -48,4 +48,13 @@
   - erasure events delete nothing by default (`analysis.erasure.mode: record`), with new commands `erasures list` and `erasures apply`;
   - migration `00003` adds `content_items.tag_spans` and two columns of `erasures`.
 - **6 Nov:** `main` created and the draft pull request #1 opened (owner's approval).
+- **6 Nov:** the master confirmed the REQ-006 and REQ-015 answers. Its direction for contract draft v0.2:
+  - `AccountRef account` on `Post`;
+  - the consumer name `sb-analysis` (both sides keep `analysis` until adoption);
+  - media retries at most 3, with `attempt`;
+  - `delete_after` at least 24 hours;
+  - a `reason` field on `MediaProcessed`;
+  - `securebrand.analysis.v1` moves into the contracts repository (to review when v0.2 is up).
+
+  Adoption comes in its own request after v1.0.0.
 - **6 Nov:** review of the contract draft v0.1 (REQ-015) in [`docs/master/analysis-contract-review.md`](master/analysis-contract-review.md). Review only; nothing built.
