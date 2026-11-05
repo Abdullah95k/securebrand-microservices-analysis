@@ -48,3 +48,4 @@
   - Facebook's UTF-16 tag offsets are converted exactly (a bug fix);
   - erasure events delete nothing by default (`analysis.erasure.mode: record`), with new commands `erasures list` and `erasures apply`;
   - migration `00003` adds `content_items.tag_spans` and two columns of `erasures`.
+- **6 Nov:** review of the contract draft v0.1 (REQ-015) in [`docs/master/analysis-contract-review.md`](master/analysis-contract-review.md). Review only; nothing built.
