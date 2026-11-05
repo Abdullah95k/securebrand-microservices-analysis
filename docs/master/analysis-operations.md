@@ -200,6 +200,8 @@ There are also read-only `agent.*` views filtered per client (row-level, by logi
   - `analysis.budget.daily_usd` (0 = no cap; **5** on the pilot);
   - `analysis.urgent.tracked_entities: true`;
   - `analysis.privacy.mask_pii: true` (phone numbers and e-mails are masked before text leaves);
+  - `analysis.privacy.mask_tagged_users: true` (tagged people's names become `@user` before text leaves; added 6 Nov);
+  - `analysis.erasure.mode: record` (an erasure request is stored and deletes nothing until the owner applies it; added 6 Nov);
   - `media.kinds`;
   - `media.video.stt_provider: ""` (no speech-to-text by default);
   - `topics.dynamic: true`; `entities.auto: true`; `bots.min_items: 5`.

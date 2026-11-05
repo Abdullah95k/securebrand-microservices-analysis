@@ -243,35 +243,35 @@ Every other field in the text-analysis table is not used by sb-analysis's own co
   - it marks the queue entries;
   - it records the request in `analysis.erasures`.
 - **A second, dependent path:** fbs later publishes matching comments as `redacted` (suppression of erased authors). sb-analysis then drops their text and results. That path also exists only after an erasure.
-- **Gate today:** fbs's admin scope only. **sb-analysis has no switch of its own.**
+- **Gate before 6 November:** fbs's admin scope only.
 
-**Proposal, if the owner wants a guarantee on the analysis side too:** a setting `analysis.erasure.mode`, which would replace any attempt to rely on the input switch alone:
+**Built on 6 November, with the owner's approval:** a setting `analysis.erasure.mode`.
 
 | Mode | What it does |
 |---|---|
-| `apply` | Today's behaviour |
-| `record` | Log and store the request without deleting anything |
-| `off` | Ignore the request |
+| **`record`** (default) | Stores the request with its subject; **deletes, redacts and suppresses nothing** (a later `redacted` comment keeps its text here) |
+| `off` | Ignores the request |
+| `apply` | Deletes, as before |
 
-**Proposed default:** `record`. Effort about half a day. Turning off the `fb` input isn't an option, because erasures arrive on the same input as content.
+- **Applying a recorded request later:** only on the owner's order, with `sb-analysis erasures apply --request <id> --yes-delete`.
+- **Listing requests:** `sb-analysis erasures list`.
 
-### 3. Tagged names are sent to the AI provider
+### 3. Tagged names and the AI provider
 
-**Yes, that's how the code behaves today.**
-- `analysis.privacy.mask_pii` masks **only e-mails and phone numbers** (9 or more digits) before text leaves.
-- **What stays in the text** sent to the provider:
-  - the names of **tagged users**: Facebook writes them into the comment text and marks them in `text_ranges` as `User`;
-  - any names people type themselves.
-- The tag spans are used only to decide whether a comment has content of its own. They aren't removed from what is sent or stored.
+**Before 6 November:** `analysis.privacy.mask_pii` masked only e-mails and phone numbers, so the names of **tagged users** reached the provider. Facebook writes them into the comment text and marks them in `text_ranges` as `User`. The owner's 1 November decision was about authors, so this was a gap, not an intended choice.
 
-**The owner's decision of 1 November was about authors:** comment authors' names and IDs are never sent, and sb-analysis never receives them. Tagged names weren't raised then, so this is **a gap, not an intended choice.**
-
-**Proposed fix** (needs the owner's approval):
-- **What:** before sending, replace each tagged-user span with a placeholder (`@user`). Keep tagged pages' names, because they are often brands.
-- **Unchanged:** the stored text stays as received (contract rule 1).
-- **Effect on results:** tag-only comments are still recognised as tagging, and private persons are still counted (`private_person_mentions`), never stored.
-- **Effort:** half a day with tests.
-- **What it can't do:** names typed as plain text can't be removed reliably, so they would still be sent.
+**Built on 6 November, with the owner's approval** (`analysis.privacy.mask_tagged_users`, default on):
+- **Where names are hidden:** every tagged person's name is written as `@user` in everything sent to a provider:
+  - the items;
+  - the post shown as context;
+  - a parent comment;
+  - a media owner's text;
+  - the entity-curation examples;
+  - the evaluation gold set.
+- **What stays readable:** tagged names that are unambiguous registry entities (brands, public figures).
+- **Storage:** the stored text is unchanged (contract rule 1). The tag positions are stored beside it (`content_items.tag_spans`, migration `00003`).
+- **A bug fixed on the way:** Facebook counts tag positions in **UTF-16 units**, but the analysis read them as characters, so after an emoji a span would have landed in the wrong place. Positions are now converted exactly, and a position that misses the tagged name falls back to the name itself. **The v1 contract should state that mention offsets are UTF-16 units.**
+- **What it can't do:** names people type without tagging can't be found reliably, and are still sent.
 
 ### 4. Raw author fields in v1 (the owner's decision D-003)
 

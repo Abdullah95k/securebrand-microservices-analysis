@@ -147,3 +147,26 @@ func TestAmbiguousAliases(t *testing.T) {
 		t.Fatal("unambiguous linking broken")
 	}
 }
+
+// Known: a whole name that is an unambiguous alias of a public entity. A
+// private person, a generic title, an unknown name or a longer name that
+// only contains an alias are not.
+func TestKnown(t *testing.T) {
+	r := New([]Entity{
+		{ID: "examplebrand", Name: "Example Brand", Type: "brand"},
+		{ID: "someone", Name: "Private Person", Type: "person_private"},
+		{ID: "pm", Name: "Prime Minister of Iraq", Type: "position"},
+	}, []Alias{{Alias: "رئيس الوزراء", EntityID: "pm", Ambiguous: true}}, nil)
+	for name, want := range map[string]bool{
+		"Example Brand": true, "example brand": true, "Private Person": false, "رئيس الوزراء": false,
+		"Sara Ahmed": false, "Ali Example Brand": false, "": false,
+	} {
+		if r.Known(name) != want {
+			t.Errorf("Known(%q) = %v", name, !want)
+		}
+	}
+	var none *Registry
+	if none.Known("Example Brand") {
+		t.Fatal("nil registry knows a name")
+	}
+}

@@ -28,7 +28,7 @@ Today the Facebook collector does not publish `content.*`. sb-analysis's built-i
   - `author_key` is the HMAC of the platform author id, with the same key as fbs (`privacy.author_hmac_key`), so erasure by author works across services;
   - `author_type` is person or organisation;
   - `author_is_source` is true when the page or channel replies itself.
-- **Mentions:** for tagged private persons, send only `type: user` with offset and length, never a name or id. The analysis service uses them to skip comments that only tag friends.
+- **Mentions:** for tagged private persons, send only `type: user` with offset and length, never a name or id. **Offsets and lengths count UTF-16 code units**, as Facebook's API does (an emoji outside the basic plane counts two). The analysis service uses them to skip comments that only tag friends, and to write the tagged names as `@user` before any text is sent to an AI provider.
 - **Text:** send the text as published (no translation, no cleaning). For videos, put the caption in `text` and the file in `media`.
 - **Every observation** may be published. The analysis service computes its own hash of text, kind and media ids:
   - **unchanged re-scrape:** costs nothing;

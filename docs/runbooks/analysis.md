@@ -83,13 +83,25 @@ Results (`analysis.result.v1`, `analysis.media.v1`) and media acks (`fb.media.pr
 
 ## Erasure
 
-`fb.erasure.v1` and `content.erasure.v1` are applied by the ingest role:
-- **author:** their items are redacted and their analyses, mentions and media analyses deleted;
+`fb.erasure.v1` and `content.erasure.v1` reach the ingest role. **What happens is set by `analysis.erasure.mode`:**
+
+| Mode | Effect |
+|---|---|
+| **`record`** (default; the owner keeps all data) | The request is stored in `analysis.erasures` (subject type and key, `mode = record`) and **nothing is deleted, redacted or suppressed**. A comment the collector later publishes as `redacted` keeps its text and results here (counted as `RedactedKept`). |
+| `off` | The event is counted and logged, nothing else. |
+| `apply` | The data is deleted (below). |
+
+**What a deletion does** (in `apply` mode, or with `sb-analysis erasures apply`):
+- **author:** their items are redacted and their analyses, mentions, media analyses, bot state and correction log deleted;
 - **source:** everything of the page is deleted;
 - the subject goes into `analysis.erased_subjects`, so later items and late batch results are dropped;
 - pending media jobs are acknowledged.
 
-Check with `SELECT * FROM analysis.erasures ORDER BY received_at DESC LIMIT 20;` (stats only, no content).
+**Commands:**
+- `sb-analysis erasures list`: the requests received, their mode and whether they were applied (no content).
+- `sb-analysis erasures apply --request <id> --yes-delete`: applies one recorded request, **on the owner's written order only**. It can't be undone. On the pilot: `make analysis-cmd ARGS='erasures apply --request <id> --yes-delete'`.
+
+Only fbs creates these requests, through its admin-only API (`POST /erasure-requests`, `DELETE /pages/{id}?purge=true`).
 
 ## Entities: brand list and review
 

@@ -71,7 +71,7 @@ func Keywords(text string, n int) []string {
 	if n <= 0 {
 		return nil
 	}
-	text = urlRe.ReplaceAllString(MaskPII(text), " ")
+	text = urlRe.ReplaceAllString(MaskPII(strings.ReplaceAll(text, TagPlaceholder, " ")), " ")
 	words := strings.FieldsFunc(text, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !isDiacritic(r)
 	})

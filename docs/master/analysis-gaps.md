@@ -109,6 +109,13 @@
 | `fbctl schemas apply` or `make pilot-up` from this copy would register `content.*` and `analysis.*` in the shared registry | Retire the copy (Part D); until then, never run them from here | — |
 | sb-analysis's Postgres grows ~100 GB a month per 1,000 accounts, because of its text copy | E1 fix | — |
 
+## Fixed since 5 November
+
+| Gap | Fix (6 Nov, owner-approved) |
+|---|---|
+| Names of tagged people reached the AI provider; Facebook's UTF-16 tag offsets were read as characters | `analysis.privacy.mask_tagged_users` (default on), exact UTF-16 conversion, tag positions stored (migration `00003`), applied to everything sent and to the evaluation sample |
+| An erasure event deleted analysis data, gated only by fbs's admin scope | `analysis.erasure.mode` (default `record`: nothing deleted); `sb-analysis erasures list` and `apply --request <id> --yes-delete` |
+
 ## The owner's decisions in `docs/owner/analysis-decisions.md` the master must know
 
 Recorded on 1 November 2026 unless noted.
@@ -131,6 +138,8 @@ Recorded on 1 November 2026 unless noted.
 | — | **Bot detection: 5 or more items in 30 days** (the owner found 10 too many); small accounts that take part in coordination are scored too | `analysis.bots.min_items: 5` |
 | — | **Generic titles must be accurate** ("رئيس الوزراء" alone isn't always Iraq's Prime Minister) | Bare titles are hints resolved from context, never a direct link |
 | — | **The analysis runs as its own service, never inside fbs's stack** (2 Nov) | `deploy/analysis/compose.yml`, its own image and folder |
+| 15 | **Tagged people's names are hidden from the AI** (6 Nov) | `@user` in everything sent; tagged brands and public figures stay; the stored text is unchanged |
+| 16 | **No deletion on an erasure request without the owner's order** (6 Nov) | `analysis.erasure.mode: record` by default; deletion only with `erasures apply` |
 | — | **"I don't want to delete anything"** on the server (2 Nov) | No clean-up of images or build cache without the owner. The pilot disk was 88% full on 2 Nov, mostly Redpanda (9 GB) and Postgres (2.4 GB, growing about 1 GB a day). |
 
 **Flagged for the owner's lawyer** (not decided; from the same document):

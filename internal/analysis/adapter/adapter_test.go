@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -134,20 +135,27 @@ func TestDecodeCanonicalAndFB(t *testing.T) {
 	}
 }
 
-func TestRuneSpan(t *testing.T) {
-	s := "ab😀cd"
-	for _, c := range []struct {
-		off, n     int
-		ok         bool
-		start, end int
-	}{
-		{0, 2, true, 0, 2}, {2, 1, true, 2, 6}, {3, 2, true, 6, 8}, {4, 1, true, 7, 8},
-		{4, 2, false, 0, 0}, {5, 1, false, 0, 0}, {-1, 1, false, 0, 0}, {0, 0, false, 0, 0},
-	} {
-		sp, ok := runeSpan(s, c.off, c.n)
-		if ok != c.ok || (ok && (sp.Start != c.start || sp.End != c.end)) {
-			t.Errorf("runeSpan(%d,%d) = %+v %v", c.off, c.n, sp, ok)
-		}
+// Tagged users are found by Facebook's UTF-16 offsets (an emoji before a
+// tag counts twice), on posts as well as comments; a range that misses the
+// name falls back to the name's own position.
+func TestFBTagSpans(t *testing.T) {
+	text := "😀 Ali Sara and Example Brand"
+	ranges := []*fbv1.TextRange{
+		{Offset: 3, Length: 3, EntityType: "User", Name: "Ali"},
+		{Offset: 99, Length: 4, EntityType: "User", Name: "Sara"},
+		{Offset: 16, Length: 13, EntityType: "Page", Name: "Example Brand"},
+	}
+	c := FromFBComment(&fbv1.Comment{CommentId: 1, PostId: 2, PageId: 3, Text: text, TextRanges: ranges})
+	var got []string
+	for _, sp := range c.RemoveSpans {
+		got = append(got, text[sp.Start:sp.End])
+	}
+	if strings.Join(got, ",") != "Ali,Sara" {
+		t.Fatalf("comment spans %q", got)
+	}
+	p := FromFBPost(&fbv1.Post{PostId: 2, PageId: 3, Text: text, TextRanges: ranges[:1]})
+	if len(p.RemoveSpans) != 1 || text[p.RemoveSpans[0].Start:p.RemoveSpans[0].End] != "Ali" {
+		t.Fatalf("post spans %+v", p.RemoveSpans)
 	}
 }
 

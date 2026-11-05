@@ -12,6 +12,7 @@
 //	sb-analysis topics find <words> | list | approve | rename | merge | reject | curate | import
 //	sb-analysis authors list | mark --key k --as bot|human|none --by name [--note why] | log | score
 //	sb-analysis kafka-topics [--partitions-cap n] [--replicas n]
+//	sb-analysis erasures list | apply --request id --yes-delete
 package main
 
 import (
@@ -73,6 +74,8 @@ func main() {
 		err = authorsCmd(args)
 	case "kafka-topics":
 		err = kafkaTopicsCmd(args)
+	case "erasures":
+		err = erasuresCmd(args)
 	case "help", "-h", "--help":
 		fmt.Println(usage)
 		return
@@ -85,7 +88,7 @@ func main() {
 	}
 }
 
-const usage = `usage: sb-analysis [run|migrate|entities|sources|reanalyze|replay-failed|agent-role|rollups|topics|authors|kafka-topics] [flags]
+const usage = `usage: sb-analysis [run|migrate|entities|sources|reanalyze|replay-failed|agent-role|rollups|topics|authors|kafka-topics|erasures] [flags]
   run            run the service (--roles ingest,pipeline,media,relay,rollup; default all)
   migrate        apply the analysis migrations
   entities       import [--file f] | review [--min-seen n] | resolve --norm n --type t --action accept|merge|reject [--entity-id id] [--name n]
@@ -100,7 +103,8 @@ const usage = `usage: sb-analysis [run|migrate|entities|sources|reanalyze|replay
                  | rename --id t --en .. --ar .. | merge --from t --into t | reject --id t | curate | import --file f.yaml
   authors        list [--all] [--limit n] | mark --key hex --as bot|human|none --by name [--note why] [--platform facebook]
                  | log [--key hex] | score
-  kafka-topics   create the analysis's own Kafka topics (content.*, analysis.*), never fbs's [--partitions-cap n] [--replicas n]`
+  kafka-topics   create the analysis's own Kafka topics (content.*, analysis.*), never fbs's [--partitions-cap n] [--replicas n]
+  erasures       list | apply --request id --yes-delete (deletes only on this explicit order; see analysis.erasure.mode)`
 
 // withApp loads the config (flags parsed into fs first), opens the
 // analysis database and runs fn.

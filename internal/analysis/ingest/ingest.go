@@ -188,7 +188,7 @@ func (c *Consumer) Flush(ctx context.Context, recs []*kgo.Record) error {
 			return fmt.Errorf("erasure %s: %w", e.RequestID, err)
 		}
 		ametrics.Erasures.WithLabelValues(e.Subject).Inc()
-		slog.Info("analysis: erasure done", "request", e.RequestID, "subject", e.Subject, "stats", stats)
+		slog.Info("analysis: erasure event", "request", e.RequestID, "subject", e.Subject, "stats", stats)
 	}
 	return nil
 }

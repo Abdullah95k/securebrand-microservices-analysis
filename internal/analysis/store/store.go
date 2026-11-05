@@ -24,6 +24,9 @@ type Store struct {
 	DB *pgxpool.Pool
 	// Loc is the timezone of rollup and budget days (Asia/Baghdad).
 	Loc *time.Location
+	// ErasureMode is analysis.erasure.mode: "apply", "record" or "off".
+	// Anything but "apply" deletes nothing (empty acts as "record").
+	ErasureMode string
 
 	mu     sync.Mutex
 	months map[string]bool // partitions known to exist

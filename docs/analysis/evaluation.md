@@ -29,7 +29,7 @@ This writes `/srv/securebrand/gold/gold.labels.jsonl` with:
 - **200 posts**, spread over pages and post types;
 - **10% repeated copies** at the end, labelled again blind to measure consistency.
 
-Items carry opaque ids, their text and their context (page name, post, parent comment). No author data is included. Change sizes with `make eval-sample EVAL_ARGS="--comments 1500 --posts 300"`.
+Items carry opaque ids, their text and their context (page name, post, parent comment). No author data is included, and **tagged people are written as `@user`**, exactly as production sends texts to the AI (`--keep-tags` keeps them, for a reason the owner approves). Change sizes with `make eval-sample EVAL_ARGS="--comments 1500 --posts 300"`.
 
 **Images (optional, ~100):** the pilot downloads no media. To add images, put JPEG/PNG files in `/srv/securebrand/gold/images/` and add lines like this to the file:
 ```

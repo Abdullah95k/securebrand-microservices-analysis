@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/core"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/textnorm"
 )
 
 // Plan says how an item is queued.
@@ -24,6 +25,9 @@ type Planner func(it *core.Item) Plan
 // IngestStats counts what an ingest batch did.
 type IngestStats struct {
 	New, Edited, Unchanged, Skipped, Deleted, Redacted, Suppressed int
+	// RedactedKept counts redactions not applied: analysis.erasure.mode is
+	// not "apply", so the stored text and results are kept.
+	RedactedKept int
 }
 
 type indexRow struct {
@@ -91,9 +95,12 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 			ex, seen := existing[it.ContentID]
 			switch it.Status {
 			case core.StatusRedacted:
-				if seen {
+				switch {
+				case seen && s.DeletesOnErasure():
 					redact = append(redact, itemKey{ex.createdAt, it.ContentID})
 					st.Redacted++
+				case seen:
+					st.RedactedKept++
 				}
 				continue
 			case core.StatusDeleted:
@@ -115,6 +122,12 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 			}
 			switch {
 			case seen && bytes.Equal(ex.textHash, hash):
+				if len(it.RemoveSpans) > 0 {
+					// Same text: keep the tag positions current (rows stored
+					// before they were kept, or ranges the collector fixed).
+					b.Queue(`UPDATE analysis.content_items SET tag_spans = $3 WHERE created_at = $1 AND content_id = $2
+						AND tag_spans IS DISTINCT FROM $3`, ex.createdAt, it.ContentID, textnorm.SpansToInts(it.RemoveSpans))
+				}
 				if !ex.visible {
 					// Seen again after a deletion: visible again.
 					b.Queue(`UPDATE analysis.content_items SET status = 'visible', last_seen_at = $3
@@ -125,9 +138,9 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 				continue
 			case seen:
 				b.Queue(`UPDATE analysis.content_items SET text = $3, media_ids = $4, hashtags = $5, status = 'visible',
-					skip_reason = $6, edit_count = edit_count + 1, last_seen_at = $7
+					skip_reason = $6, edit_count = edit_count + 1, last_seen_at = $7, tag_spans = $8
 					WHERE created_at = $1 AND content_id = $2`,
-					ex.createdAt, it.ContentID, nilIfEmpty(it.Text), it.MediaIDs, it.Hashtags, skip, now)
+					ex.createdAt, it.ContentID, nilIfEmpty(it.Text), it.MediaIDs, it.Hashtags, skip, now, textnorm.SpansToInts(it.RemoveSpans))
 				b.Queue(`UPDATE analysis.content_index SET text_hash = $2, state = $3, visible = true, updated_at = now() WHERE content_id = $1`,
 					it.ContentID, hash, state)
 				it.CreatedAt = ex.createdAt
@@ -135,12 +148,12 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 			default:
 				b.Queue(`INSERT INTO analysis.content_items (created_at, content_id, platform, kind, source_id, source_name,
 					thread_id, parent_id, author_key, author_is_source, text, lang_hint, hashtags, media_ids, status, skip_reason,
-					first_seen_at, last_seen_at)
-					VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'visible',$15,$16,$16)
+					first_seen_at, last_seen_at, tag_spans)
+					VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'visible',$15,$16,$16,$17)
 					ON CONFLICT (created_at, content_id) DO NOTHING`,
 					it.CreatedAt, it.ContentID, it.Platform, it.Kind, it.SourceID, nilIfEmpty(it.SourceName),
 					nilIfEmpty(it.ThreadID), nilIfEmpty(it.ParentID), nilIfEmptyBytes(it.AuthorKey), it.AuthorIsSource,
-					nilIfEmpty(it.Text), nilIfEmpty(it.LangHint), it.Hashtags, it.MediaIDs, skip, now)
+					nilIfEmpty(it.Text), nilIfEmpty(it.LangHint), it.Hashtags, it.MediaIDs, skip, now, textnorm.SpansToInts(it.RemoveSpans))
 				b.Queue(`INSERT INTO analysis.content_index (content_id, created_at, text_hash, state) VALUES ($1,$2,$3,$4)
 					ON CONFLICT (content_id) DO NOTHING`, it.ContentID, it.CreatedAt, hash, state)
 				st.New++

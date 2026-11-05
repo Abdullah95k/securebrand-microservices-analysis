@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/provider/registry"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/store"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/taxonomy"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/textnorm"
 	"github.com/abdullah95k/securebrand-microservices/internal/config"
 	"github.com/abdullah95k/securebrand-microservices/internal/testenv"
 )
@@ -726,5 +728,100 @@ func TestBatchOutageWaitsThenFallsBack(t *testing.T) {
 	}
 	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'in_progress'`); n != 1 {
 		t.Fatal("batch lane did not recover")
+	}
+}
+
+// Tagged people never reach the provider: their names are written as
+// "@user" in the items, in the post shown as context and in a parent
+// comment shown to a later reply. A tagged registry entity stays readable,
+// and the stored text is unchanged.
+func TestTaggedPeopleHiddenFromProvider(t *testing.T) {
+	e := setup(t, nil)
+	ctx := context.Background()
+	var mu sync.Mutex
+	var users []string
+	e.primary.Fail = func(req provider.Request) error {
+		mu.Lock()
+		users = append(users, req.User)
+		mu.Unlock()
+		return nil
+	}
+	tag := func(it *core.Item, names ...string) *core.Item {
+		for _, n := range names {
+			i := strings.Index(it.Text, n)
+			it.RemoveSpans = append(it.RemoveSpans, textnorm.Span{Start: i, End: i + len(n)})
+		}
+		return it
+	}
+	p := post()
+	p.Text = "مبروك للفائزة Layla Kareem بعرض Asiacell الجديد"
+	tag(p, "Layla Kareem", "Asiacell")
+	c := tag(comment(1, "Sara Ahmed شوفي العرض"), "Sara Ahmed")
+	e.ingest(t, p, c)
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// A later reply: its parent is not in the request, so the parent's
+	// text is sent as context.
+	r := comment(2, "شكرا")
+	r.Kind, r.ParentID = core.KindReply, "fb:comment:1"
+	e.ingest(t, r)
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(users, "\n")
+	if len(users) < 3 || strings.Contains(all, "Layla") || strings.Contains(all, "Sara") {
+		t.Fatalf("a tagged person's name reached the provider (%d requests):\n%s", len(users), all)
+	}
+	last := users[len(users)-1]
+	if !strings.Contains(last, textnorm.TagPlaceholder+" شوفي") || !strings.Contains(last, "Asiacell") {
+		t.Fatalf("the reply's request lacks the masked parent or the post context:\n%s", last)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.content_items WHERE content_id = 'fb:comment:1' AND text LIKE 'Sara Ahmed%'
+		AND tag_spans = '{0,10}'`); n != 1 {
+		t.Fatal("stored text or its tag spans changed")
+	}
+
+	// With the setting off, names are sent as written.
+	off := setup(t, func(c *config.Analysis) { c.Privacy.MaskTaggedUsers = false })
+	if got := off.p.Outbound(c.Text, c.RemoveSpans, 0); got != c.Text {
+		t.Fatalf("masked with the setting off: %q", got)
+	}
+}
+
+// The examples shown to the entity-curation model hide tagged people too.
+func TestEntityCurationHidesTags(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) {
+		c.Topics.Curation = config.Route{Provider: "primary", Model: "curation-model", MaxTokens: 2000}
+	})
+	ctx := context.Background()
+	c := comment(1, "Sara Ahmed جربي Toyota Iraq")
+	c.RemoveSpans = []textnorm.Span{{Start: 0, End: len("Sara Ahmed")}}
+	e.ingest(t, c)
+	var cands []store.Candidate
+	for range 5 {
+		cands = append(cands, store.Candidate{Surface: "Toyota Iraq", Type: "brand", ContentID: c.ContentID})
+	}
+	if err := e.s.AddCandidates(ctx, cands); err != nil {
+		t.Fatal(err)
+	}
+	var users []string
+	e.primary.Fail = func(req provider.Request) error {
+		users = append(users, req.User)
+		return nil
+	}
+	cur := &curate.EntityCurator{Store: e.s, Providers: e.p.Providers, Pricing: e.p.Pricing, Route: e.p.Cfg.Topics.Curation, MinSeen: 5,
+		Registry: e.p.Entities, MaskTags: true}
+	if _, err := cur.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 1 || strings.Contains(users[0], "Sara") || !strings.Contains(users[0], textnorm.TagPlaceholder) {
+		t.Fatalf("curation request %q", users)
 	}
 }

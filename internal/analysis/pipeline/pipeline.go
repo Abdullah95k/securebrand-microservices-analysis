@@ -231,6 +231,20 @@ func (p *Pipeline) mask(s string) string {
 	return s
 }
 
+// Outbound is text as it may leave the service: the names of tagged
+// people hidden (privacy.mask_tagged_users; tagged registry entities such
+// as brands stay), cut to limit runes (0 = whole), then phones and e-mails
+// masked (privacy.mask_pii).
+func (p *Pipeline) Outbound(text string, tags []textnorm.Span, limit int) string {
+	if p.Cfg.Privacy.MaskTaggedUsers {
+		text = textnorm.MaskSpans(text, tags, textnorm.TagPlaceholder, p.Entities().Known)
+	}
+	if limit > 0 {
+		text = textnorm.Truncate(text, limit)
+	}
+	return p.mask(text)
+}
+
 func hints(ms []entities.Match) []prompt.Hint {
 	out := make([]prompt.Hint, 0, len(ms))
 	for _, m := range ms {
@@ -276,7 +290,7 @@ func (p *Pipeline) build(ctx context.Context, g group, model string) (built, err
 		}
 		if len(g.items) > 0 {
 			if post, ok := ctxItems[g.items[0].ThreadID]; ok {
-				c.Post = p.mask(textnorm.Truncate(post.Text, p.Cfg.Grouping.ContextChars))
+				c.Post = p.Outbound(post.Text, post.RemoveSpans, p.Cfg.Grouping.ContextChars)
 				c.Page = post.SourceName
 			}
 		}
@@ -290,12 +304,12 @@ func (p *Pipeline) build(ctx context.Context, g group, model string) (built, err
 			if lead[i] != i {
 				continue // a follower: gets its leader's answer
 			}
-			in := prompt.ItemInput{I: i, Kind: it.Kind, Text: p.mask(it.Text), ReplyTo: -1, Hints: hints(reg.Find(it.Text))}
+			in := prompt.ItemInput{I: i, Kind: it.Kind, Text: p.Outbound(it.Text, it.RemoveSpans, 0), ReplyTo: -1, Hints: hints(reg.Find(it.Text))}
 			if it.Kind == core.KindReply {
 				if j, ok := inGroup[it.ParentID]; ok {
 					in.ReplyTo = j
 				} else if par, ok := ctxItems[it.ParentID]; ok {
-					in.ParentText = p.mask(textnorm.Truncate(par.Text, 300))
+					in.ParentText = p.Outbound(par.Text, par.RemoveSpans, 300)
 				}
 			}
 			inputs = append(inputs, in)
@@ -308,7 +322,7 @@ func (p *Pipeline) build(ctx context.Context, g group, model string) (built, err
 	} else {
 		for i, it := range g.items {
 			if lead[i] == i {
-				inputs = append(inputs, prompt.ItemInput{I: i, Kind: it.Kind, Text: p.mask(it.Text), ReplyTo: -1, Hints: hints(reg.Find(it.Text))})
+				inputs = append(inputs, prompt.ItemInput{I: i, Kind: it.Kind, Text: p.Outbound(it.Text, it.RemoveSpans, 0), ReplyTo: -1, Hints: hints(reg.Find(it.Text))})
 			}
 		}
 		page := ""
@@ -428,7 +442,7 @@ func (p *Pipeline) handle(ctx context.Context, s sent, items []core.Item, hashes
 				continue
 			}
 			r.Entities = append([]core.Entity(nil), r.Entities...)
-			prompt.Finish(&r, p.mask(items[i].Text))
+			prompt.Finish(&r, p.Outbound(items[i].Text, items[i].RemoveSpans, 0))
 			results = append(results, p.result(s, items[i], hashes[i], r, per))
 			if lead[i] != i {
 				ametrics.Deduplicated.WithLabelValues(s.route).Inc()

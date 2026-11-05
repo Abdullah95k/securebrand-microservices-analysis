@@ -64,6 +64,8 @@ Server and storage costs come on top: roughly 330 GB of database storage a year 
 | 12 | Bot flags | Show them; users can mark "not a bot", with a log | Bot flags are shown on every item of the account. Anyone you allow can mark an account "not a bot" (or "is a bot"). Each decision is logged with who, when, why and the before/after. |
 | 13 | New topics | An AI approves; a person only steps in if needed | As in 4. |
 | 14 | Very large posts | Every comment | Every comment is analysed. |
+| 15 | Names of tagged people (6 Nov) | Hide them from the AI | When a commenter tags someone, that person's name is written as "@user" before anything is sent to the AI. Tagged brands and public figures stay readable, and the saved text is unchanged. |
+| 16 | Deleting data on an erasure request (6 Nov) | Never without your order | An erasure request from the collector is only recorded; nothing is deleted. A recorded request is deleted only when you order it, with `make analysis-cmd ARGS='erasures apply --request <id> --yes-delete'`. `make analysis-cmd ARGS='erasures list'` shows the requests received. |
 
 **Why Google Gemini as the backup:**
 - its prices are confirmed on Google's official page (OpenAI's could not be checked);

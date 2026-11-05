@@ -38,6 +38,7 @@ type Analysis struct {
 	Budget    AnalysisBudget        `koanf:"budget"`
 	Media     AnalysisMedia         `koanf:"media"`
 	Privacy   AnalysisPrivacy       `koanf:"privacy"`
+	Erasure   AnalysisErasure       `koanf:"erasure"`
 	Rollups   Rollups               `koanf:"rollups"`
 	Limits    AnalysisLimits        `koanf:"limits"`
 	Topics    AnalysisTopics        `koanf:"topics"`
@@ -229,6 +230,28 @@ type AnalysisPrivacy struct {
 	// MaskPII replaces phone numbers and e-mail addresses before text is
 	// sent to a provider.
 	MaskPII bool `koanf:"mask_pii"`
+	// MaskTaggedUsers replaces the names of tagged accounts with "@user"
+	// before text is sent to a provider; tagged entities of the registry
+	// (brands, public figures) stay. The stored text is unchanged.
+	MaskTaggedUsers bool `koanf:"mask_tagged_users"`
+}
+
+// Erasure modes (analysis.erasure.mode).
+const (
+	// ErasureApply deletes the subject's analysis data.
+	ErasureApply = "apply"
+	// ErasureRecord stores the request and deletes nothing.
+	ErasureRecord = "record"
+	// ErasureOff ignores the request (it is only counted and logged).
+	ErasureOff = "off"
+)
+
+// AnalysisErasure decides what an erasure event does to analysis data.
+// The owner keeps all data (no deletion): "record" stores the request and
+// deletes nothing, so data is deleted only after the owner switches to
+// "apply".
+type AnalysisErasure struct {
+	Mode string `koanf:"mode"`
 }
 
 // Rollups recomputes the daily rollups of days marked dirty.
@@ -249,6 +272,11 @@ var RouteNames = []string{"comment", "post", "image", "video", "escalation", "au
 // Validate rejects analysis configs that would misbehave at runtime.
 func (a *Analysis) Validate() error {
 	var errs []error
+	switch a.Erasure.Mode {
+	case ErasureApply, ErasureRecord, ErasureOff:
+	default:
+		errs = append(errs, fmt.Errorf("analysis.erasure.mode %q must be apply, record or off", a.Erasure.Mode))
+	}
 	for _, in := range a.Inputs {
 		if in != "fb" && in != "content" {
 			errs = append(errs, fmt.Errorf("analysis.inputs: %q must be fb or content", in))

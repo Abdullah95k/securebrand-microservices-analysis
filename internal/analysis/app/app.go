@@ -58,6 +58,7 @@ func New(ctx context.Context, cfg *config.Config, db *pgxpool.Pool, kc kafka.Cli
 		return nil, err
 	}
 	st := store.New(db, loc)
+	st.ErasureMode = cfg.Analysis.Erasure.Mode
 	tax, err := taxonomy.Load(a.TaxonomyFile)
 	if err != nil {
 		return nil, err
@@ -130,7 +131,8 @@ func (a *App) Curator() *curate.Curator {
 func (a *App) EntityCurator() *curate.EntityCurator {
 	c := a.Cfg.Analysis
 	return &curate.EntityCurator{Store: a.Store, Providers: a.Pipeline.Providers, Pricing: provider.Pricing(c.Pricing),
-		Route: c.Topics.Curation, MinSeen: c.Entities.MinSeen, Registry: a.Pipeline.Entities, MaskPII: c.Privacy.MaskPII}
+		Route: c.Topics.Curation, MinSeen: c.Entities.MinSeen, Registry: a.Pipeline.Entities, MaskPII: c.Privacy.MaskPII,
+		MaskTags: c.Privacy.MaskTaggedUsers}
 }
 
 // ScoreBots scores the authors active in the window.

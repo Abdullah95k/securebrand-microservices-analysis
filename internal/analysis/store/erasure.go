@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,15 +12,101 @@ import (
 
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/adapter"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/core"
+	"github.com/abdullah95k/securebrand-microservices/internal/config"
 )
 
-// Erase deletes everything the analysis service holds about an author or a
-// source: the text of their items, analyses, entity mentions, media
-// analyses, queue entries and media jobs. The subject is recorded so items
-// and results arriving later are dropped. Idempotent: an erasure already
-// done is not repeated. Media files still pending are acknowledged so the
-// collector deletes them.
+// Erase handles an erasure event as analysis.erasure.mode says:
+//   - "record" (the default, and what an unset or unknown mode does) stores
+//     the request and deletes nothing, so the owner can apply it later
+//     (ApplyRecordedErasure);
+//   - "off" ignores it;
+//   - "apply" deletes everything the analysis service holds about the
+//     author or source: the text of their items, analyses, entity
+//     mentions, media analyses, queue entries and media jobs. The subject
+//     is remembered so their later items are dropped. Idempotent: an
+//     erasure already done is not repeated. Media files still pending are
+//     acknowledged so the collector deletes them.
 func (s *Store) Erase(ctx context.Context, e core.Erasure, consumer string) (map[string]int64, error) {
+	switch s.ErasureMode {
+	case config.ErasureApply:
+		return s.applyErasure(ctx, e, consumer)
+	case config.ErasureOff:
+		return map[string]int64{"ignored": 1}, nil
+	default: // record, and any unset or unknown mode: never delete by default
+		_, err := s.DB.Exec(ctx, `INSERT INTO analysis.erasures (request_id, subject, subject_key, mode, stats)
+			VALUES ($1, $2, $3, 'record', '{"recorded": 1}') ON CONFLICT (request_id) DO NOTHING`,
+			e.RequestID, e.Subject, adapter.SubjectKey(&e))
+		return map[string]int64{"recorded": 1}, err
+	}
+}
+
+// DeletesOnErasure reports whether erasures and redactions delete data:
+// only in "apply" mode.
+func (s *Store) DeletesOnErasure() bool { return s.ErasureMode == config.ErasureApply }
+
+// RecordedErasure is an erasure request stored by "record" mode.
+type RecordedErasure struct {
+	RequestID, Subject, SubjectKey, Mode string
+	ReceivedAt                           time.Time
+	Done                                 bool
+}
+
+// RecordedErasures lists the erasure requests received, newest first.
+func (s *Store) RecordedErasures(ctx context.Context, limit int) ([]RecordedErasure, error) {
+	rows, err := s.DB.Query(ctx, `SELECT request_id, subject, coalesce(subject_key, ''), mode, received_at, done_at IS NOT NULL
+		FROM analysis.erasures ORDER BY received_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RecordedErasure
+	for rows.Next() {
+		var r RecordedErasure
+		if err := rows.Scan(&r.RequestID, &r.Subject, &r.SubjectKey, &r.Mode, &r.ReceivedAt, &r.Done); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ApplyRecordedErasure deletes the data of an erasure request that
+// "record" mode stored: the owner's explicit order, whatever the mode.
+// consumer names this service in the acknowledgements of the subject's
+// pending media.
+func (s *Store) ApplyRecordedErasure(ctx context.Context, requestID, consumer string) (map[string]int64, error) {
+	var r RecordedErasure
+	err := s.DB.QueryRow(ctx, `SELECT subject, coalesce(subject_key, '') FROM analysis.erasures WHERE request_id = $1`,
+		requestID).Scan(&r.Subject, &r.SubjectKey)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("no erasure request %q", requestID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	// applyErasure itself skips a request already done.
+	e := core.Erasure{RequestID: requestID, Subject: r.Subject}
+	switch r.Subject {
+	case "author":
+		k, err := hex.DecodeString(r.SubjectKey)
+		if err != nil || len(k) == 0 {
+			return nil, fmt.Errorf("erasure %q: no author key recorded", requestID)
+		}
+		e.AuthorKey = k
+	case "source":
+		if r.SubjectKey == "" {
+			return nil, fmt.Errorf("erasure %q: no source recorded", requestID)
+		}
+		e.SourceID = r.SubjectKey
+	default:
+		return nil, fmt.Errorf("erasure %q: unknown subject %q", requestID, r.Subject)
+	}
+	return s.applyErasure(ctx, e, consumer)
+}
+
+// applyErasure deletes the subject's analysis data and remembers the
+// subject, so its later items are dropped at ingest.
+func (s *Store) applyErasure(ctx context.Context, e core.Erasure, consumer string) (map[string]int64, error) {
 	stats := map[string]int64{}
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var done bool
@@ -132,8 +220,10 @@ func (s *Store) Erase(ctx context.Context, e core.Erasure, consumer string) (map
 			}
 		}
 		sb, _ := json.Marshal(stats)
-		_, err = tx.Exec(ctx, `INSERT INTO analysis.erasures (request_id, subject, done_at, stats) VALUES ($1, $2, now(), $3)
-			ON CONFLICT (request_id) DO UPDATE SET done_at = now(), stats = EXCLUDED.stats`, e.RequestID, e.Subject, sb)
+		_, err = tx.Exec(ctx, `INSERT INTO analysis.erasures (request_id, subject, subject_key, mode, done_at, stats)
+			VALUES ($1, $2, $3, 'apply', now(), $4)
+			ON CONFLICT (request_id) DO UPDATE SET done_at = now(), stats = EXCLUDED.stats, mode = 'apply'`,
+			e.RequestID, e.Subject, adapter.SubjectKey(&e), sb)
 		return err
 	})
 	return stats, err
@@ -169,7 +259,7 @@ func eraseItems(ctx context.Context, tx pgx.Tx, s *Store, keys []itemKey, keepRo
 	var tag interface{ RowsAffected() int64 }
 	var err error
 	if keepRow {
-		tag, err = tx.Exec(ctx, `UPDATE analysis.content_items t SET text = NULL, author_key = NULL, hashtags = NULL, media_ids = NULL,
+		tag, err = tx.Exec(ctx, `UPDATE analysis.content_items t SET text = NULL, tag_spans = NULL, author_key = NULL, hashtags = NULL, media_ids = NULL,
 			status = 'redacted' FROM unnest($1::timestamptz[], $2::text[]) AS k(created_at, content_id)
 			WHERE t.created_at = k.created_at AND t.content_id = k.content_id`, ats, ids)
 	} else {

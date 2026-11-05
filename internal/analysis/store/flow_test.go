@@ -11,6 +11,8 @@ import (
 
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/core"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/entities"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/textnorm"
+	"github.com/abdullah95k/securebrand-microservices/internal/config"
 )
 
 func plan(it *core.Item) Plan {
@@ -401,5 +403,100 @@ func TestAuthorErasureRemovesMediaMentions(t *testing.T) {
 	}
 	if n := count(t, s, `SELECT count(*) FROM analysis.entity_mentions WHERE content_id = 'media:m7'`); n != 0 {
 		t.Fatal("erased author's media mentions remain")
+	}
+}
+
+// analysis.erasure.mode: "record" stores the request and deletes, redacts
+// and suppresses nothing; the owner can apply it later. "off" ignores it.
+func TestErasureModes(t *testing.T) {
+	s := testStore(t)
+	s.ErasureMode = config.ErasureRecord
+	ctx := context.Background()
+	at := time.Now().UTC().Add(-2 * time.Hour)
+	a := comment("fb:comment:1", "اسياسيل زين", at, "author-x")
+	if _, err := s.Ingest(ctx, []*core.Item{a}, plan); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.WriteResults(ctx, []ItemResult{{Item: *a, Route: core.RouteComment, InputHash: a.InputHash(),
+		Result: core.Result{Sentiment: "neutral"}, Prov: core.Provenance{Provider: "p", Model: "m", AnalyzedAt: time.Now()}}},
+		RequestOutcome{}); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := s.Erase(ctx, core.Erasure{RequestID: "r1", Subject: "author", AuthorKey: []byte("author-x")}, "analysis")
+	if err != nil || stats["recorded"] != 1 {
+		t.Fatalf("record: %v %v", stats, err)
+	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.content_items WHERE text IS NOT NULL AND status = 'visible'`); n != 1 {
+		t.Fatal("record mode deleted text")
+	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.analyses`); n != 1 {
+		t.Fatal("record mode deleted results")
+	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.erased_subjects`); n != 0 {
+		t.Fatal("record mode would suppress the author's later items")
+	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.erasures WHERE request_id = 'r1' AND mode = 'record' AND done_at IS NULL
+		AND subject_key = $1`, hex.EncodeToString([]byte("author-x"))); n != 1 {
+		t.Fatal("request not recorded with its subject")
+	}
+	// The author's later comment is kept, and a redaction from the
+	// collector deletes nothing.
+	red := comment("fb:comment:1", "", at, "author-x")
+	red.Status = core.StatusRedacted
+	st, err := s.Ingest(ctx, []*core.Item{comment("fb:comment:2", "نص جديد", at, "author-x"), red}, plan)
+	if err != nil || st.Suppressed != 0 || st.New != 1 || st.RedactedKept != 1 || st.Redacted != 0 {
+		t.Fatalf("ingest in record mode: %+v %v", st, err)
+	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.content_items WHERE content_id = 'fb:comment:1' AND text IS NOT NULL`); n != 1 {
+		t.Fatal("a redaction deleted text in record mode")
+	}
+	rows, err := s.RecordedErasures(ctx, 10)
+	if err != nil || len(rows) != 1 || rows[0].RequestID != "r1" || rows[0].Done || rows[0].Mode != config.ErasureRecord {
+		t.Fatalf("list %+v %v", rows, err)
+	}
+	// The owner's explicit order applies it, once.
+	stats, err = s.ApplyRecordedErasure(ctx, "r1", "analysis")
+	if err != nil || stats["analyses"] != 1 {
+		t.Fatalf("apply: %v %v", stats, err)
+	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.content_items WHERE author_key IS NULL AND text IS NULL`); n != 2 {
+		t.Fatal("applied erasure left the author's items")
+	}
+	if st, _ := s.ApplyRecordedErasure(ctx, "r1", "analysis"); st["already_done"] != 1 {
+		t.Fatal("erasure applied twice")
+	}
+	if _, err := s.ApplyRecordedErasure(ctx, "missing", "analysis"); err == nil {
+		t.Fatal("unknown request applied")
+	}
+	// "off": nothing is stored or deleted.
+	s.ErasureMode = config.ErasureOff
+	if stats, err := s.Erase(ctx, core.Erasure{RequestID: "r2", Subject: "source", SourceID: "fb:page:1"}, "analysis"); err != nil || stats["ignored"] != 1 {
+		t.Fatalf("off: %v %v", stats, err)
+	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.erasures WHERE request_id = 'r2'`); n != 0 {
+		t.Fatal("off mode stored the request")
+	}
+}
+
+// A re-scrape with the same text fills tag positions an older row lacks.
+func TestUnchangedRescrapeKeepsTagSpans(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	at := time.Now().UTC().Add(-time.Hour)
+	c := comment("fb:comment:1", "Sara Ahmed شوفي", at, "author-a")
+	if _, err := s.Ingest(ctx, []*core.Item{c}, plan); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.content_items WHERE tag_spans IS NULL`); n != 1 {
+		t.Fatal("spans stored for an item without tags")
+	}
+	again := comment("fb:comment:1", "Sara Ahmed شوفي", at, "author-a")
+	again.RemoveSpans = []textnorm.Span{{Start: 0, End: len("Sara Ahmed")}}
+	st, err := s.Ingest(ctx, []*core.Item{again}, plan)
+	if err != nil || st.Unchanged != 1 {
+		t.Fatalf("%+v %v", st, err)
+	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.content_items WHERE tag_spans = '{0,10}'`); n != 1 {
+		t.Fatal("unchanged re-scrape did not fill the tag spans")
 	}
 }

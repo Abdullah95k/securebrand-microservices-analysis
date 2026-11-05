@@ -153,6 +153,9 @@ func FromFBPost(p *fbv1.Post) *core.Item {
 		Hashtags:       p.Hashtags,
 		MediaIDs:       p.MediaIds,
 		Status:         core.StatusVisible,
+		// Spans index p.Text, the start of the text: the link title is
+		// appended after it.
+		RemoveSpans: FBTagSpans(p.Text, p.TextRanges),
 	}
 	if p.Status == fbv1.PostStatus_POST_STATUS_UNAVAILABLE {
 		it.Status = core.StatusDeleted
@@ -212,13 +215,7 @@ func FromFBComment(c *fbv1.Comment) *core.Item {
 			it.MediaIDs = append(it.MediaIDs, a.MediaId)
 		}
 	}
-	for _, r := range c.TextRanges {
-		if r.EntityType == "User" {
-			if sp, ok := runeSpan(c.Text, int(r.Offset), int(r.Length)); ok {
-				it.RemoveSpans = append(it.RemoveSpans, sp)
-			}
-		}
-	}
+	it.RemoveSpans = FBTagSpans(c.Text, c.TextRanges)
 	switch {
 	case c.Redacted:
 		it.Status, it.Text, it.MediaIDs = core.StatusRedacted, "", nil
@@ -228,35 +225,39 @@ func FromFBComment(c *fbv1.Comment) *core.Item {
 	return it
 }
 
-// runeSpan converts a range in runes (as fbs's parser counts them) to bytes.
-func runeSpan(s string, off, n int) (textnorm.Span, bool) {
-	if off < 0 || n <= 0 {
-		return textnorm.Span{}, false
-	}
-	start, end, i := -1, -1, 0
-	for b := range s {
-		if i == off {
-			start = b
+// FBTagSpans returns the byte spans of the accounts tagged in a Facebook
+// text (ranges of type User). Facebook counts offsets in UTF-16 units. When
+// a range does not land on the tagged name (the text and its ranges
+// disagree), the name's first unused occurrence is taken instead, so a
+// name is never left visible because of an offset slip.
+func FBTagSpans(text string, ranges []*fbv1.TextRange) []textnorm.Span {
+	var out []textnorm.Span
+	used := map[int]bool{}
+	for _, r := range ranges {
+		if r.EntityType != "User" {
+			continue
 		}
-		if i == off+n {
-			end = b
-			break
+		sp, ok := textnorm.UTF16Span(text, int(r.Offset), int(r.Length))
+		if r.Name != "" && (!ok || text[sp.Start:sp.End] != r.Name) {
+			ok = false
+			for from := 0; from < len(text); {
+				i := strings.Index(text[from:], r.Name)
+				if i < 0 {
+					break
+				}
+				if !used[from+i] {
+					sp, ok = textnorm.Span{Start: from + i, End: from + i + len(r.Name)}, true
+					break
+				}
+				from += i + len(r.Name)
+			}
 		}
-		i++
-	}
-	if start < 0 {
-		return textnorm.Span{}, false
-	}
-	if end < 0 {
-		// The loop ran to the end, so i is the rune count. A range past the
-		// end means the offsets do not fit this text: ignore it rather than
-		// risk removing real content.
-		if i < off+n {
-			return textnorm.Span{}, false
+		if ok && !used[sp.Start] {
+			used[sp.Start] = true
+			out = append(out, sp)
 		}
-		end = len(s)
 	}
-	return textnorm.Span{Start: start, End: end}, true
+	return out
 }
 
 // FromFBMediaReady maps a media announcement; acks go to
@@ -377,7 +378,7 @@ func FromContentItem(m *contentv1.ContentItem) *core.Item {
 	}
 	for _, mn := range m.Mentions {
 		if mn.Type == "user" {
-			if sp, ok := runeSpan(m.Text, int(mn.Offset), int(mn.Length)); ok {
+			if sp, ok := textnorm.UTF16Span(m.Text, int(mn.Offset), int(mn.Length)); ok {
 				it.RemoveSpans = append(it.RemoveSpans, sp)
 			}
 		}

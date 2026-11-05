@@ -582,13 +582,15 @@ Example retrieval returns at most 20 texts per call, with phones and e-mails mas
 
 ## 13. Erasure and privacy
 
-- **Erasure** (`fb.erasure.v1` via the adapter, `content.erasure.v1` natively), idempotent and logged in `erasures`:
+- **Erasure mode** (`analysis.erasure.mode`, default **`record`**): the owner keeps all data. An erasure event is stored with its subject and **deletes nothing**: no deletion, no redaction of later redacted comments, no suppression. The owner can apply a recorded request later (`sb-analysis erasures apply --request <id> --yes-delete`). `off` ignores events. `apply` deletes as below.
+- **Erasure** (`fb.erasure.v1` via the adapter, `content.erasure.v1` natively), in `apply` mode or when the owner applies a request, idempotent and logged in `erasures`:
   - **author:** delete the author's items' text, analyses, mentions, media analyses and behaviour profile (`authors`), then mark the affected rollup days dirty;
   - **source:** delete everything from that source (items, analyses, mentions, media), plus its rows in the per-source rollups;
   - **both:** record the subject in `erased_subjects`, so late items and in-flight batch results for it are dropped at write time; delete pending queue and media rows.
   - **ClickHouse (later):** consumes the same erasure topics and runs lightweight deletes.
 - **Data minimisation:**
   - LLMs receive only text (with phones and e-mails masked), post context and media. They never receive author names, ids or keys;
+  - **tagged people are hidden** (`analysis.privacy.mask_tagged_users`, default on). The names of accounts tagged in a text are replaced with `@user` in everything sent: items, the post shown as context, a parent comment, a media owner's text, entity-curation examples and the evaluation sample. Tagged names that are unambiguous registry entities (brands, public figures) stay readable. The stored text stays exactly as received; the tag positions are kept beside it (`content_items.tag_spans`). Facebook gives tag positions in UTF-16 units, and they are converted exactly; a position that misses the name falls back to the name itself. Names people type without tagging can't be found reliably and are still sent;
   - private persons are not stored as entities;
   - logs never contain content or credentials.
 

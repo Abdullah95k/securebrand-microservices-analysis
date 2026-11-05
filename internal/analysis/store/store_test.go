@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/abdullah95k/securebrand-microservices/internal/config"
 	"github.com/abdullah95k/securebrand-microservices/internal/testenv"
 )
 
@@ -16,7 +17,9 @@ func testStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	loc, _ := time.LoadLocation("Asia/Baghdad")
-	return New(db, loc)
+	s := New(db, loc)
+	s.ErasureMode = config.ErasureApply // the erasure tests check deletion; TestErasureModes sets its own
+	return s
 }
 
 func TestMigrateUpDownUp(t *testing.T) {

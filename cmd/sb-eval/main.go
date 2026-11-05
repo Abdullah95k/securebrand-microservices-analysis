@@ -101,6 +101,7 @@ func sample(ctx context.Context, args []string) error {
 	seedFile := fs.String("entities", "", "entity seed (\"\" = built-in) used to oversample brand mentions")
 	seed := fs.Uint64("seed", 1, "sampling seed")
 	repeat := fs.Float64("repeat", 0.1, "share of items repeated at the end for a blind second labelling (consistency)")
+	keepTags := fs.Bool("keep-tags", false, "keep tagged people's names (by default they are written as @user, as production sends them)")
 	_ = fs.Parse(args)
 	if *out == "" {
 		return fmt.Errorf("--out is required")
@@ -122,6 +123,7 @@ func sample(ctx context.Context, args []string) error {
 		return err
 	}
 	sc := eval.DefaultSample
+	sc.KeepTags = *keepTags
 	sc.Comments, sc.Posts, sc.Seed = *comments, *posts, *seed
 	items, err := eval.Sample(ctx, db, reg, sc)
 	if err != nil {

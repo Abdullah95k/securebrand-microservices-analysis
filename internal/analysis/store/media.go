@@ -14,6 +14,7 @@ import (
 	fbv1 "github.com/abdullah95k/securebrand-microservices/gen/go/securebrand/fb/v1"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/adapter"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/core"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/textnorm"
 	"github.com/abdullah95k/securebrand-microservices/internal/topics"
 )
 
@@ -304,18 +305,18 @@ func nullTime(t time.Time) *time.Time {
 	return &t
 }
 
-// OwnerContext returns the owner item's creation time, text and page name
-// for a media job (zero values when the owner is not stored).
-func (s *Store) OwnerContext(ctx context.Context, ownerID string) (time.Time, string, error) {
+// OwnerContext returns the owner item's creation time, text and tagged
+// spans for a media job (zero values when the owner is not stored).
+func (s *Store) OwnerContext(ctx context.Context, ownerID string) (time.Time, string, []textnorm.Span, error) {
 	items, err := s.ItemsByID(ctx, []string{ownerID})
 	if err != nil {
-		return time.Time{}, "", fmt.Errorf("owner: %w", err)
+		return time.Time{}, "", nil, fmt.Errorf("owner: %w", err)
 	}
 	it, ok := items[ownerID]
 	if !ok {
-		return time.Time{}, "", nil
+		return time.Time{}, "", nil, nil
 	}
-	return it.CreatedAt, it.Text, nil
+	return it.CreatedAt, it.Text, it.RemoveSpans, nil
 }
 
 // TTLAtRisk counts pending media jobs within margin of their deletion.

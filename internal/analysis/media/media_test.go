@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,6 +27,7 @@ import (
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/provider/registry"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/store"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/taxonomy"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/textnorm"
 	"github.com/abdullah95k/securebrand-microservices/internal/config"
 	"github.com/abdullah95k/securebrand-microservices/internal/testenv"
 	"github.com/abdullah95k/securebrand-microservices/internal/topics"
@@ -351,5 +354,42 @@ func TestWorkerVideoSpeechCost(t *testing.T) {
 func TestAudioMinutes(t *testing.T) {
 	if got := media.AudioMinutes(make([]byte, 240000)); got != 1 {
 		t.Fatalf("240 kB of 32 kbit/s audio = %v minutes, want 1", got)
+	}
+}
+
+// The owner's text reaches the vision model with the people it tags
+// written as "@user"; the stored text keeps them.
+func TestWorkerHidesTaggedPeople(t *testing.T) {
+	st, w, fp, objs := setup(t)
+	ctx := context.Background()
+	text := "صورة اليوم مع Sara Ahmed"
+	i := strings.Index(text, "Sara Ahmed")
+	owner := &core.Item{ContentID: "fb:post:1", Platform: "facebook", Kind: core.KindPost, SourceID: "fb:page:1",
+		CreatedAt: time.Now().UTC().Add(-time.Hour), ObservedAt: time.Now().UTC(), Text: text, Status: core.StatusVisible,
+		RemoveSpans: []textnorm.Span{{Start: i, End: i + len("Sara Ahmed")}}}
+	if _, err := st.Ingest(ctx, []*core.Item{owner}, w.P.Plan); err != nil {
+		t.Fatal(err)
+	}
+	objs["b/img"] = pngBytes(t, 300, 200)
+	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{job("img", "photo")}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var users []string
+	fp.Fail = func(req provider.Request) error {
+		mu.Lock()
+		users = append(users, req.User)
+		mu.Unlock()
+		return nil
+	}
+	if _, err := w.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 1 || strings.Contains(users[0], "Sara") || !strings.Contains(users[0], textnorm.TagPlaceholder) {
+		t.Fatalf("vision request %q", users)
+	}
+	var stored string
+	if err := st.DB.QueryRow(ctx, `SELECT text FROM analysis.content_items WHERE content_id = 'fb:post:1'`).Scan(&stored); err != nil || stored != text {
+		t.Fatalf("stored text %q %v", stored, err)
 	}
 }

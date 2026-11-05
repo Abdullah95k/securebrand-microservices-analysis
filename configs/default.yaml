@@ -485,6 +485,12 @@ analysis:
       temp_dir: ""
   privacy:
     mask_pii: true         # phones and e-mails masked before text leaves
+    mask_tagged_users: true # tagged people's names become "@user" before text leaves
+  # What an erasure event (fb.erasure.v1, content.erasure.v1) does here.
+  # The owner keeps all data: "record" stores the request and deletes
+  # nothing; "apply" deletes the subject's analysis data; "off" ignores it.
+  erasure:
+    mode: record
   rollups:
     every: 5m
   limits:

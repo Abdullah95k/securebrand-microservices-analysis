@@ -114,6 +114,26 @@ func (r *Registry) Ambiguous(name string) bool {
 	return found
 }
 
+// Known reports whether name, as a whole, is an alias of a registry entity
+// that is neither only ambiguous nor a private person. Tagged accounts with
+// such names (brands, public figures) stay readable when tags are hidden.
+func (r *Registry) Known(name string) bool {
+	if r == nil {
+		return false
+	}
+	for _, k := range nameKeys(name) {
+		for _, id := range r.aliases[k] {
+			if r.ambiguous[pairKey(k, id)] {
+				continue
+			}
+			if e, ok := r.entities[id]; ok && e.Type != "person_private" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // nameKeys are the alias keys a name can match: normalised, and with a
 // leading clitic removed from its first word.
 func nameKeys(name string) []string {

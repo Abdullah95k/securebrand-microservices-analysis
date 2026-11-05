@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"encoding/json"
 	"math/rand/v2"
 	"regexp"
 	"sort"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	fbv1 "github.com/abdullah95k/securebrand-microservices/gen/go/securebrand/fb/v1"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/adapter"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/entities"
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/textnorm"
 )
@@ -22,6 +25,9 @@ type SampleConfig struct {
 	BrandShare  float64
 	ScriptShare float64
 	Seed        uint64
+	// KeepTags keeps the names of tagged people in the texts. By default
+	// they are written as "@user", as production sends them to providers.
+	KeepTags bool
 }
 
 // DefaultSample is the design's gold set: 1,000 comments, 200 posts.
@@ -52,7 +58,8 @@ func Sample(ctx context.Context, db *pgxpool.Pool, reg *entities.Registry, cfg S
 	}
 	perPage := max(3, 4*cfg.Comments/max(pages, 1))
 	rows, err := db.Query(ctx, `
-		SELECT c.comment_id, c.page_id, c.depth, c.text, coalesce(p.text, ''), coalesce(pg.name, ''), coalesce(par.text, '')
+		SELECT c.comment_id, c.page_id, c.depth, c.text, coalesce(p.text, ''), coalesce(pg.name, ''), coalesce(par.text, ''),
+		       c.text_ranges, p.text_ranges, par.text_ranges
 		FROM (SELECT *, row_number() OVER (PARTITION BY page_id ORDER BY md5(comment_id::text || $2::text)) AS rn
 		      FROM comments WHERE text IS NOT NULL AND char_length(btrim(text)) >= 2 AND NOT redacted) c
 		LEFT JOIN post_index pi ON pi.post_id = c.post_id
@@ -69,10 +76,14 @@ func Sample(ctx context.Context, db *pgxpool.Pool, reg *entities.Registry, cfg S
 			id, page                 int64
 			depth                    int
 			text, post, name, parent string
+			textRg, postRg, parentRg []byte
 		)
-		if err := rows.Scan(&id, &page, &depth, &text, &post, &name, &parent); err != nil {
+		if err := rows.Scan(&id, &page, &depth, &text, &post, &name, &parent, &textRg, &postRg, &parentRg); err != nil {
 			rows.Close()
 			return nil, err
+		}
+		if !cfg.KeepTags {
+			text, post, parent = untag(text, textRg, reg), untag(post, postRg, reg), untag(parent, parentRg, reg)
 		}
 		kind := "comment"
 		if depth > 0 {
@@ -121,7 +132,7 @@ func Sample(ctx context.Context, db *pgxpool.Pool, reg *entities.Registry, cfg S
 	left -= take(short, third)
 	left -= take(mid, third)
 	take(long, left)
-	posts, err := samplePosts(ctx, db, cfg)
+	posts, err := samplePosts(ctx, db, reg, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -153,9 +164,9 @@ func spreadPages(cs []candidate) []candidate {
 	return out
 }
 
-func samplePosts(ctx context.Context, db *pgxpool.Pool, cfg SampleConfig) ([]Item, error) {
+func samplePosts(ctx context.Context, db *pgxpool.Pool, reg *entities.Registry, cfg SampleConfig) ([]Item, error) {
 	rows, err := db.Query(ctx, `
-		SELECT p.post_id, p.post_type, p.text, coalesce(pg.name, '')
+		SELECT p.post_id, p.post_type, p.text, coalesce(pg.name, ''), p.text_ranges
 		FROM (SELECT *, row_number() OVER (PARTITION BY page_id, post_type ORDER BY md5(post_id::text || $2::text)) AS rn
 		      FROM posts WHERE text IS NOT NULL AND char_length(btrim(text)) >= 10) p
 		LEFT JOIN pages pg ON pg.page_id = p.page_id
@@ -168,13 +179,40 @@ func samplePosts(ctx context.Context, db *pgxpool.Pool, cfg SampleConfig) ([]Ite
 	for rows.Next() {
 		var id int64
 		var typ, text, name string
-		if err := rows.Scan(&id, &typ, &text, &name); err != nil {
+		var ranges []byte
+		if err := rows.Scan(&id, &typ, &text, &name, &ranges); err != nil {
 			return nil, err
+		}
+		if !cfg.KeepTags {
+			text = untag(text, ranges, reg)
 		}
 		out = append(out, Item{ID: GoldID("fb:post:" + strconv.FormatInt(id, 10)), Kind: "post", Page: name,
 			Text: textnorm.Truncate(text, 4000), Strata: []string{"post", typ}})
 	}
 	return out, rows.Err()
+}
+
+// untag writes the people tagged in a Facebook text as "@user", from fbs's
+// stored text_ranges (JSON with proto field names). Tagged registry
+// entities stay. Unreadable ranges leave the text as it is.
+func untag(text string, rangesJSON []byte, reg *entities.Registry) string {
+	if len(rangesJSON) == 0 || text == "" {
+		return text
+	}
+	var rs []struct {
+		Offset     int32  `json:"offset"`
+		Length     int32  `json:"length"`
+		EntityType string `json:"entity_type"`
+		Name       string `json:"name"`
+	}
+	if err := json.Unmarshal(rangesJSON, &rs); err != nil {
+		return text
+	}
+	ranges := make([]*fbv1.TextRange, 0, len(rs))
+	for _, r := range rs {
+		ranges = append(ranges, &fbv1.TextRange{Offset: r.Offset, Length: r.Length, EntityType: r.EntityType, Name: r.Name})
+	}
+	return textnorm.MaskSpans(text, adapter.FBTagSpans(text, ranges), textnorm.TagPlaceholder, reg.Known)
 }
 
 func countPages(ctx context.Context, db *pgxpool.Pool) (int, error) {

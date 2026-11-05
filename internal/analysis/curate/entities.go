@@ -32,6 +32,9 @@ type EntityCurator struct {
 	// Registry returns the current registry snapshot.
 	Registry func() *entities.Registry
 	MaskPII  bool
+	// MaskTags hides the names of tagged people in the examples
+	// (analysis.privacy.mask_tagged_users).
+	MaskTags bool
 }
 
 // Run decides the pending candidates seen at least MinSeen times; it
@@ -66,7 +69,11 @@ func (c *EntityCurator) Run(ctx context.Context) (int, error) {
 		cand := prompt.EntityCandidate{Key: key, Name: r.Surface, Type: r.Type, Seen: r.Seen, Similar: reg.Similar(r.Surface, 3)}
 		for _, id := range firstN(r.Examples, 2) {
 			if it, ok := texts[id]; ok && it.Text != "" {
-				t := textnorm.Truncate(it.Text, 200)
+				t := it.Text
+				if c.MaskTags {
+					t = textnorm.MaskSpans(t, it.RemoveSpans, textnorm.TagPlaceholder, reg.Known)
+				}
+				t = textnorm.Truncate(t, 200)
 				if c.MaskPII {
 					t = textnorm.MaskPII(t)
 				}

@@ -113,12 +113,20 @@ func TestFacebookToAnalysisEndToEnd(t *testing.T) {
 		len(c.Entities) != 1 || c.Entities[0].EntityId != "asiacell" || c.SourceId != "fb:page:9" {
 		t.Fatalf("result for comment 11: %v", c)
 	}
-	// Erasure of author-1 removes their comment's analysis.
+	// An erasure of author-1 is only recorded by default (the owner keeps
+	// all data): nothing is deleted until the owner applies it.
 	send(topics.Erasure, "r1", &fbv1.ErasureEvent{EventId: "r1", RequestId: "r1", SubjectType: fbv1.SubjectType_SUBJECT_TYPE_AUTHOR,
 		AuthorKey: []byte("author-1")})
 	waitFor(t, ctx, func() bool {
-		return count(t, a, `SELECT count(*) FROM analysis.erasures WHERE request_id = 'r1' AND done_at IS NOT NULL`) == 1
+		return count(t, a, `SELECT count(*) FROM analysis.erasures WHERE request_id = 'r1' AND mode = 'record' AND done_at IS NULL`) == 1
 	})
+	if n := count(t, a, `SELECT count(*) FROM analysis.analyses WHERE content_id = 'fb:comment:11'`); n != 1 {
+		t.Fatal("a recorded erasure deleted the analysis")
+	}
+	// Applied on the owner's order, it removes their comment's analysis.
+	if _, err := a.Store.ApplyRecordedErasure(ctx, "r1", cfg.Analysis.Media.Consumer); err != nil {
+		t.Fatal(err)
+	}
 	if n := count(t, a, `SELECT count(*) FROM analysis.analyses WHERE content_id = 'fb:comment:11'`); n != 0 {
 		t.Fatal("erased author's analysis remains")
 	}

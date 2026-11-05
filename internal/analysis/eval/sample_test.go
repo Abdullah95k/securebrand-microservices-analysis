@@ -3,10 +3,13 @@ package eval
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/abdullah95k/securebrand-microservices/internal/analysis/entities"
+	"github.com/abdullah95k/securebrand-microservices/internal/analysis/textnorm"
 	"github.com/abdullah95k/securebrand-microservices/internal/store"
 	"github.com/abdullah95k/securebrand-microservices/internal/testenv"
 )
@@ -33,8 +36,12 @@ func TestSampleFromPilotTables(t *testing.T) {
 			VALUES ($1, $2, $3, 'photo', 'خبر عن الكهرباء في بغداد اليوم', '\x00', now(), now())`, at, postID, page)
 		exec(`INSERT INTO post_index (post_id, page_id, post_created_at) VALUES ($1, $2, $3)`, postID, page, at)
 		for i, txt := range texts {
-			exec(`INSERT INTO comments (post_created_at, post_id, comment_id, page_id, depth, text, content_hash, first_seen_at, last_seen_at, author_id)
-				VALUES ($1, $2, $3, $4, 0, $5, '\x00', now(), now(), 'secret-author')`, at, postID, postID*10+int64(i), page, txt)
+			// Every comment ends by tagging a person (fbs's text_ranges,
+			// UTF-16 offsets): the gold set must never hold the name.
+			tagged := txt + " Zed Zed"
+			ranges := fmt.Sprintf(`[{"offset":%d,"length":7,"entity_type":"User","name":"Zed Zed"}]`, len(utf16.Encode([]rune(txt+" "))))
+			exec(`INSERT INTO comments (post_created_at, post_id, comment_id, page_id, depth, text, text_ranges, content_hash, first_seen_at, last_seen_at, author_id)
+				VALUES ($1, $2, $3, $4, 0, $5, $6, '\x00', now(), now(), 'secret-author')`, at, postID, postID*10+int64(i), page, tagged, ranges)
 		}
 	}
 	seed, _ := entities.LoadSeed("")
@@ -53,6 +60,9 @@ func TestSampleFromPilotTables(t *testing.T) {
 	var comments, posts, brand, script int
 	pages := map[string]bool{}
 	for _, it := range items {
+		if strings.Contains(it.Text, "Zed") || !strings.HasPrefix(it.Kind, "post") && !strings.HasSuffix(it.Text, textnorm.TagPlaceholder) {
+			t.Fatalf("tagged name not hidden: %q", it.Text)
+		}
 		if it.ID == "" || it.Label != nil || it.Text == "" {
 			t.Fatalf("bad item %+v", it)
 		}
@@ -79,5 +89,24 @@ func TestSampleFromPilotTables(t *testing.T) {
 		if items[i].ID != again[i].ID {
 			t.Fatal("sampling must be reproducible for a seed")
 		}
+	}
+}
+
+// Tagged people in the pilot's texts are written as "@user" in the gold
+// set, from fbs's stored ranges (UTF-16 offsets); tagged registry entities
+// and unreadable ranges leave the text as it is.
+func TestUntag(t *testing.T) {
+	reg := entities.New([]entities.Entity{{ID: "examplebrand", Name: "Example Brand", Type: "brand"}}, nil, nil)
+	text := "😀 Sara Ahmed and Example Brand"
+	ranges := `[{"offset":3,"length":10,"entity_type":"User","name":"Sara Ahmed"},
+		{"offset":18,"length":13,"entity_type":"User","name":"Example Brand"}]`
+	if got := untag(text, []byte(ranges), reg); got != "😀 @user and Example Brand" {
+		t.Fatalf("got %q", got)
+	}
+	if got := untag(text, []byte("not json"), reg); got != text {
+		t.Fatalf("bad ranges changed the text: %q", got)
+	}
+	if got := untag(text, nil, reg); got != text {
+		t.Fatalf("no ranges changed the text: %q", got)
 	}
 }

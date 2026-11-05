@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 6 November 2026 (Iraq time), commit `bf32dd9`.*
+*Kept current for the master session and the owner. Last updated 6 November 2026 (Iraq time).*
 
 ## Where it stands
 
@@ -42,4 +42,9 @@
 - **2 Nov:** the analysis runs as its own Compose project next to the fbs pilot; it creates only its own topics (`sb-analysis kafka-topics`).
 - **5 Nov:** the master reports above. No code, configuration or server changes.
 - **6 Nov:** the owner's read-only check confirmed the 9 schema subjects above on the pilot. Nothing was changed.
-- **6 Nov:** answered the master's REQ-006 questions at the end of `docs/master/analysis-contract-notes.md`. Facts and proposals only; nothing built.
+- **6 Nov:** answered the master's REQ-006 questions at the end of `docs/master/analysis-contract-notes.md`.
+- **6 Nov, owner-approved changes (additions only; no topic, field or schema renamed or removed):**
+  - tagged people's names are hidden from AI providers (`analysis.privacy.mask_tagged_users`, default on);
+  - Facebook's UTF-16 tag offsets are converted exactly (a bug fix);
+  - erasure events delete nothing by default (`analysis.erasure.mode: record`), with new commands `erasures list` and `erasures apply`;
+  - migration `00003` adds `content_items.tag_spans` and two columns of `erasures`.

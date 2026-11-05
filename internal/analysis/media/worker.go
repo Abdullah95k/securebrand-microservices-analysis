@@ -175,7 +175,7 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	if err != nil {
 		return nil, err
 	}
-	ownerAt, postText, err := w.P.Store.OwnerContext(ctx, j.OwnerContentID)
+	ownerAt, postText, postTags, err := w.P.Store.OwnerContext(ctx, j.OwnerContentID)
 	if err != nil {
 		return nil, err
 	}
@@ -237,6 +237,9 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 		}
 		return s
 	}
+	// The owner's text leaves as the text analysis sends it: tagged people
+	// hidden, then cut, then contact details masked.
+	ownerText := w.P.Outbound(postText, postTags, 1000)
 	reg := w.P.Entities()
 	hintText := postText + " " + j.AltText
 	var hints []prompt.Hint
@@ -247,7 +250,7 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 		ID:         uuid.NewString(),
 		Model:      rc.Model,
 		System:     system,
-		User:       prompt.MediaUser(mask(textnorm.Truncate(postText, 1000)), hints, mask(transcript), len(images)),
+		User:       prompt.MediaUser(ownerText, hints, mask(transcript), len(images)),
 		Images:     images,
 		Schema:     schema,
 		SchemaName: "media",
