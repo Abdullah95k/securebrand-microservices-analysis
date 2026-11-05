@@ -6,7 +6,7 @@
 
 | Area | State |
 |---|---|
-| Code | Built and tested: unit and integration tests with race detection against real Postgres, Redpanda and Valkey. Branch `claude/jolly-bell-mb5sct` in the public repository `Abdullah95k/securebrand-microservices-analysis`, **not merged**: the repository has no `main` yet, and the base branch for the pull request is still to decide. |
+| Code | Built and tested: unit and integration tests with race detection against real Postgres, Redpanda and Valkey. Branch `claude/jolly-bell-mb5sct` in the public repository `Abdullah95k/securebrand-microservices-analysis`, in the draft pull request [#1](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/1) into `main` (created 6 Nov with the owner's approval: the fbs baseline the work was built on, `be2ec2f`). |
 | Running | **Nowhere.** Never analysed real content; never called an AI provider with real data. |
 | Pilot server | A separate deployment is ready (`deploy/analysis/compose.yml`, image `sb-analysis:dev`, folder `~/securebrand-analysis`). Not confirmed as cloned or built there; **not started**. |
 | Quality | **Not measured.** The evaluation (`docs/analysis/evaluation.md`) is waiting for the owner's approval and API keys on the server. |
@@ -35,7 +35,6 @@
 2. **The daily AI budget** (after the quality test).
 3. **sb-analysis's own text copy:** keep it, or slim to working state once ClickHouse holds content (the owner's decision 7, "for now").
 4. **A repository of its own** for sb-analysis, without the fbs copy (about 2–3 days; Part D).
-5. **The base branch** for this repository's pull request.
 
 ## Changes since the last update
 
@@ -48,4 +47,5 @@
   - Facebook's UTF-16 tag offsets are converted exactly (a bug fix);
   - erasure events delete nothing by default (`analysis.erasure.mode: record`), with new commands `erasures list` and `erasures apply`;
   - migration `00003` adds `content_items.tag_spans` and two columns of `erasures`.
+- **6 Nov:** `main` created and the draft pull request #1 opened (owner's approval).
 - **6 Nov:** review of the contract draft v0.1 (REQ-015) in [`docs/master/analysis-contract-review.md`](master/analysis-contract-review.md). Review only; nothing built.
