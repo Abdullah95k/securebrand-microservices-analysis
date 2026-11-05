@@ -42,3 +42,4 @@
 - **2 Nov:** the analysis runs as its own Compose project next to the fbs pilot; it creates only its own topics (`sb-analysis kafka-topics`).
 - **5 Nov:** the master reports above. No code, configuration or server changes.
 - **6 Nov:** the owner's read-only check confirmed the 9 schema subjects above on the pilot. Nothing was changed.
+- **6 Nov:** answered the master's REQ-006 questions at the end of `docs/master/analysis-contract-notes.md`. Facts and proposals only; nothing built.

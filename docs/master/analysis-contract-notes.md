@@ -200,3 +200,129 @@ Every other field in the text-analysis table is not used by sb-analysis's own co
 | **Must provide** | id; platform; kind; text in full; account id; post id on comments; parent comment id on replies; published_at; observed_at; version; status. For bots: `author_key` and `is_by_owner` on every comment with an author. For media: the media events above. |
 | **Should provide** | account display name; mentions with type and offsets; links with titles; hashtags; the platform's stated language; alt text; captions or subtitles. |
 | **Not needed by analysis** | metrics; reactions; raw author IDs, names and pictures; profile links. Other parts of the platform need these: dashboards and entity linking. |
+
+## REQ-006: answers to the master session's questions (6 November 2026, Iraq time)
+
+*Facts from the code at commit `6692739`. Where a fix is proposed, it is a proposal for the owner, not built.*
+
+### 1. Overlap with the platform: what the tables are for
+
+**Entities**
+
+| Tables | What they are for today | Keep as sb-analysis working state? |
+|---|---|---|
+| `entities`, `entity_aliases` | The registry of things **mentioned in text** (brands, products, organisations, public figures, positions, places, events, outlets). Aliases are normalized spellings in Arabic, Kurdish, English and Arabizi, with an `ambiguous` flag for bare titles ("رئيس الوزراء"). It links model output to IDs, gives the model hints, and drives the `@<entity>` topics. | **Keep a synced copy.** Matching text needs the aliases and ambiguity flags locally, on every item. **Proposal:** the platform owns entity IDs, names and types (09 section 7). sb-analysis keeps the aliases as its own working data, under the platform's IDs. |
+| `entity_candidates` | Names the model found that aren't in the registry yet, with counts and 2 masked example items. The AI curation (every 6 hours, the owner's decision 5) approves, merges or rejects them. | **Keep** (it's a work queue), but an approval should become a **proposal to the platform's entity layer** instead of sb-analysis creating the entity itself. That needs the owner's decision, because decision 5 asked for automatic approval by AI. |
+
+**Clients**
+
+| Tables | What they are for today | Keep as sb-analysis working state? |
+|---|---|---|
+| `clients`, `client_entities` | Client names, and which entities each client tracks (own, competitor, watch). **The pipeline uses this:** an entity in `client_entities` is "tracked", so a mention of it goes to the **real-time lane**, can be **escalated** to the stronger model, and is never collapsed with its duplicates. | **No:** the client app owns tenants and watchlists. sb-analysis needs only a **feed of tracked entity IDs and hot sources** (for example, a compacted Kafka topic or a read-only view), kept as a local cache. |
+| `client_sources` | Sources (pages) a client monitors. Used only to scope the read-only agent views. | **No** (the client app's) |
+| `client_roles` | Maps a Postgres login role to a client, for the read-only `agent.*` views with row filtering | **No.** It goes when ClickHouse row policies or the client app replace the agent views. |
+
+**Authors and rollups**
+
+| Tables | What they are for today | Keep as sb-analysis working state? |
+|---|---|---|
+| `authors` | Bot-detection state per pseudonymous author: behaviour features over 30 days, score, level, reasons, and a person's override. Not a profile: no names, no IDs. | **Keep** (bot detection's working state). Its output is `analysis.author.v1`. |
+| `author_overrides` | The log of people's corrections (who, when, why, before and after) | **Keep** (the owner's decision 12), or move it to the client app if corrections are made there |
+| `rollup_source_daily`, `rollup_entity_daily`, `rollup_entity_topic_daily`, `rollup_topic_daily`, `rollup_flag_daily`, `rollup_dirty` | Daily aggregates per Iraq day (items and sentiment per source, entity, topic and flag; bot items) for the pilot's dashboards and the read-only agent views | **No.** They become redundant once the platform's ClickHouse rollups exist. Keep them only for the pilot. |
+
+### 2. Erasure: what publishes `fb.erasure.v1`
+
+- **Publisher:** only fbs, from its eraser (`internal/gdpr/erasure.go`, running inside `fbs-scheduler`). It publishes one `ErasureEvent` per processed erasure request.
+- **How a request is created** (fbs `main`, read on 6 Nov). All paths need fbs's **`admin` API scope**:
+  1. `POST /erasure-requests` (an author or a page);
+  2. `DELETE /pages/{id}?purge=true`;
+  3. a cascade inside the eraser: an author erasure also erases, as pages, any profiles of that person that fbs's mention checker had added.
+- **Nothing creates one automatically** from collected data.
+- **What sb-analysis does with it:**
+  - it deletes the subject's analysis data: texts, analyses, entity mentions, media analyses, bot state and the correction log;
+  - it marks the queue entries;
+  - it records the request in `analysis.erasures`.
+- **A second, dependent path:** fbs later publishes matching comments as `redacted` (suppression of erased authors). sb-analysis then drops their text and results. That path also exists only after an erasure.
+- **Gate today:** fbs's admin scope only. **sb-analysis has no switch of its own.**
+
+**Proposal, if the owner wants a guarantee on the analysis side too:** a setting `analysis.erasure.mode`, which would replace any attempt to rely on the input switch alone:
+
+| Mode | What it does |
+|---|---|
+| `apply` | Today's behaviour |
+| `record` | Log and store the request without deleting anything |
+| `off` | Ignore the request |
+
+**Proposed default:** `record`. Effort about half a day. Turning off the `fb` input isn't an option, because erasures arrive on the same input as content.
+
+### 3. Tagged names are sent to the AI provider
+
+**Yes, that's how the code behaves today.**
+- `analysis.privacy.mask_pii` masks **only e-mails and phone numbers** (9 or more digits) before text leaves.
+- **What stays in the text** sent to the provider:
+  - the names of **tagged users**: Facebook writes them into the comment text and marks them in `text_ranges` as `User`;
+  - any names people type themselves.
+- The tag spans are used only to decide whether a comment has content of its own. They aren't removed from what is sent or stored.
+
+**The owner's decision of 1 November was about authors:** comment authors' names and IDs are never sent, and sb-analysis never receives them. Tagged names weren't raised then, so this is **a gap, not an intended choice.**
+
+**Proposed fix** (needs the owner's approval):
+- **What:** before sending, replace each tagged-user span with a placeholder (`@user`). Keep tagged pages' names, because they are often brands.
+- **Unchanged:** the stored text stays as received (contract rule 1).
+- **Effect on results:** tag-only comments are still recognised as tagging, and private persons are still counted (`private_person_mentions`), never stored.
+- **Effort:** half a day with tests.
+- **What it can't do:** names typed as plain text can't be removed reliably, so they would still be sent.
+
+### 4. Raw author fields in v1 (the owner's decision D-003)
+
+**What sb-analysis uses today:** only `author_key` (the HMAC fbs computes with `privacy.author_hmac_key`), for bot detection, `author_bot` on results, and erasure matching. It never receives or sends author names or raw IDs.
+
+**What changes if v1 carries raw author IDs and names:**
+1. **The adapter reads `author_id` and never forwards the name anywhere.** Names are not stored, not sent to a provider, and not logged. Raw IDs stay out of provider requests too (they aren't part of the model's input today, and that stays).
+2. **sb-analysis computes its own pseudonymous key:** `HMAC(own secret, platform + ":" + author_id)`, with a secret of its own (for example `SB_ANALYSIS__AUTHOR_KEY_SECRET`).
+   - **The shared HMAC key with fbs is then no longer needed.**
+   - If v1 also carries the collector's `author_key`, sb-analysis can keep using that instead. Either works; one is enough.
+3. **Joins on the platform side.** The platform will store raw author IDs, so `AuthorFlag` should carry the platform's author ID too, as an **added** field (`author_id`, restricted). `author_key` stays.
+   - The same applies to the erasure path, if it is ever used.
+   - Without this, the platform can't join bot flags to its comments unless it computes sb-analysis's key.
+4. **Effort:** about 1 day (adapter, key derivation, the added `AuthorFlag` field, tests). No stored data has to change, because no production data exists.
+
+### 5. What the alert engine will need
+
+**Result fields** (`analysis.result.v1`; field details in analysis-outputs.md):
+
+| Purpose | Fields |
+|---|---|
+| Identity and routing | `content_id`, `platform`, `kind`, `source_id`, `thread_id`, `created_at` |
+| Sentiment drops | `sentiment.label`, `sentiment.score`, `sentiment.calibrated_confidence` |
+| Brand and entity mentions | `entities[]` (`entity_id`, `type`, `sentiment`, `aspect`, `origin`) and the `@<entity_id>` entries in `topics` |
+| Topic rules | `topics` (hierarchical IDs: a rule on `services.electricity` also matches its sub-topics by prefix) |
+| Complaint, churn and purchase signals | `intent` (`complaint`, `churn_threat`, `purchase_intent`…), `emotion` |
+| Risk | `toxicity`, `legal[]` (allegations for review), `spam`, `ad_type` |
+| Attention | `urgent` (the **model's** judgement that an item needs attention fast, for example a safety complaint) |
+| Trust | `author_bot` at analysis time (current level from `analysis.author.v1`), `refused` (skip such items) |
+| Versions | `provenance.analysis_version` and `analyzed_at`. **An item can get a second result later** (an escalation to the stronger model, or an edit), so the engine must update or retract an alert by `content_id` and `analysis_version`. |
+
+**Other topics:**
+- `analysis.media.v1`: logos and entities in images;
+- `analysis.author.v1`: an author becomes `likely` or `confirmed`;
+- `analysis.topic.v1`: a newly approved topic (input for "new topic" alerts).
+
+**Latency** (estimates, not measured; the collector's revisit interval comes on top):
+
+| Lane | Latency after sb-analysis ingests the item |
+|---|---|
+| Real-time | ~30–60 seconds: a 20-second wait for a thread's siblings (`analysis.realtime.wait`), then one model call of a few seconds |
+| Batch | submitted every 10 minutes; most provider batches finish within an hour; at most 24 hours |
+| Escalation | a later second result: batch for normal items; real time when the original item was urgent |
+
+**How urgent items are marked today:**
+
+| Step | What happens |
+|---|---|
+| **Routing (sb-analysis's code)** | An item goes to the real-time lane when its text contains an alias of a **tracked** entity (`client_entities`) or its source is in `analysis.urgent.sources`. |
+| **On the result** | This shows only as `provenance.lane = "realtime"`. The model's own judgement is the separate `urgent` boolean. |
+| **What isn't on the result** | There is no field that says **why** an item went real time. A fallback to the backup provider can also be real time, marked `provenance.fallback = true`. |
+| **Proposal** (additive, half a day) | A `priority` field on `ItemAnalysis` (`tracked_entity`, `urgent_source`, `normal`) and the matched `entity_id`s, so the alert engine needn't infer it |
+
+**For alerts within 1–5 minutes on everything,** every item would need the real-time lane: about +$1,800 a month per 1,000 accounts (analysis-operations.md, section 13). Otherwise only watchlist (hot) items go in real time. The owner decides.
