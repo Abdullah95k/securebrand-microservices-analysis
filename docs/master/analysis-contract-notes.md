@@ -21,9 +21,24 @@
 | Does any collector publish it? | **No.** fbs publishes only `fb.*`. In this repository, nothing produces `content.item.v1` or `content.media.ready.v1`. I can't see the igs, tks or yts repositories, so I can't confirm what they publish. 05-unified-schema-plan.md lists `content.item.v1` among igs's topics. If igs publishes its own message there, it is a **different message under the same topic name**, and it must not reach sb-analysis. |
 | Does sb-analysis read it? | **Not by default.** `analysis.inputs` is `[fb]`, so sb-analysis reads `fb.post.v1`, `fb.comment.v1`, `fb.media.ready.v1` and `fb.erasure.v1` through its Facebook adapter (`internal/analysis/adapter`). The `content` input exists in code but is switched off. **It must stay off until the master publishes v1.** |
 | What else uses it? | (1) `analysis.proto` imports its enums `Platform`, `ContentKind` and `MediaKind`. (2) sb-analysis's media acknowledgement code can answer on `content.media.processed.v1` (only for `content.*` input, which is off). (3) This repository's **copy** of fbs's topic and schema lists (`internal/topics/topics.go`, `schemas.go`, `configs/topics.yaml`) includes the `content.*` and `analysis.*` topics. That is the risk in section 3. |
-| Is it registered in a Schema Registry? | **sb-analysis never registers schemas.** However, `fbctl schemas apply` built from this repository's copy would register `content.*` and `analysis.*` subjects. If the pilot was ever started with `make pilot-up` from this repository's copy (it may have been on 1 November), the pilot's registry may already hold them. 09-architecture-v1.md says the pilot's Kafka has `content.item.v1` and `content.media.*` topics, which points that way. A read-only check for the owner is below. |
+| Is it registered in a Schema Registry? | **sb-analysis never registers schemas.** However, `fbctl schemas apply` built from this repository's copy would register `content.*` and `analysis.*` subjects. **The pilot's registry does hold them** (confirmed 6 Nov; see below). |
 
-**Owner check (read-only, on the pilot server, prints only subject names):**
+**Confirmed by the owner's check on 6 November (00:58 Iraq time).** The pilot's shared Schema Registry already holds 9 subjects from this repository's copy, almost certainly from a `make pilot-up` run from this copy around 1 November:
+- `content.item.v1-value`, `content.media.ready.v1-value`, `content.media.processed.v1-value`, `content.erasure.v1-value`;
+- the file subject `securebrand/content/v1/content.proto`;
+- `analysis.result.v1-value`, `analysis.media.v1-value`, `analysis.author.v1-value`, `analysis.topic.v1-value`.
+
+Nothing produces to those topics. This happened before the owner's standing instruction (5 Nov); nothing has been registered since.
+
+**Why it matters:** the master's v1 is planned under the same package name, `securebrand.content.v1`. Registering it against these subjects in `BACKWARD_TRANSITIVE` mode would **fail**, because the drafts are incompatible.
+
+**Before the master registers v1 on the pilot,** one of these is needed:
+- delete these 9 subjects (they are unused); this needs the owner's approval at the time;
+- or use subject or topic names that don't collide.
+
+Until then, leave them as they are.
+
+**The owner's check (read-only, on the pilot server, prints only subject names):**
 
 ```bash
 curl -s http://127.0.0.1:18081/subjects

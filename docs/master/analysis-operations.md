@@ -59,7 +59,8 @@ The analysis needs a chart of its own (analysis-gaps.md, A3).
 - **Not running anywhere.** It has never analysed real content and has never called an AI provider with real data.
 - **The code** is on GitHub, in the **public** repository `Abdullah95k/securebrand-microservices-analysis`. It's only on the branch `claude/jolly-bell-mb5sct`, which is not merged (the repository has no `main`). *(09-architecture-v1.md says it is "only on the pilot server and not yet on GitHub": that is out of date.)*
 - **On the pilot server (201.79.36.209), not confirmed.** On 2 November the owner was given steps to clone it into `~/securebrand-analysis`, run the counts-only statistics, and build `sb-analysis:dev`. I have no confirmation of those steps, of any API key on the server, or that it was ever started.
-- **Possibly on the pilot's Kafka:** the `content.*` and `analysis.*` topics, and their Schema Registry subjects, if fbs's pilot was ever started from this repository's copy (09 says the topics exist). They would be empty, since no producer exists.
+- **On the pilot's Schema Registry (confirmed 6 Nov, 00:58 Iraq time):** 9 subjects from this repository's copy: the 4 `content.*` value subjects, `securebrand/content/v1/content.proto`, and the 4 `analysis.*` value subjects. They must be deleted (with the owner's approval) or avoided before the master registers its v1 (analysis-contract-notes.md, section 2).
+- **Probably on the pilot's Kafka:** the matching `content.*` and `analysis.*` topics (09 says they exist). They are empty, since no producer exists.
 
 **Read-only checks for the owner on the pilot server** (they print only names and states):
 

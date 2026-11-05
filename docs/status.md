@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 5 November 2026 (Iraq time), commit `bf32dd9`.*
+*Kept current for the master session and the owner. Last updated 6 November 2026 (Iraq time), commit `bf32dd9`.*
 
 ## Where it stands
 
@@ -11,7 +11,7 @@
 | Pilot server | A separate deployment is ready (`deploy/analysis/compose.yml`, image `sb-analysis:dev`, folder `~/securebrand-analysis`). Not confirmed as cloned or built there; **not started**. |
 | Quality | **Not measured.** The evaluation (`docs/analysis/evaluation.md`) is waiting for the owner's approval and API keys on the server. |
 | Contract | Reads `fb.*` through its Facebook adapter (`analysis.inputs: [fb]`). This repository's draft `securebrand.content.v1` is **not used and will be retired** for the master's v1. Publishes `analysis.result.v1`, `analysis.media.v1`, `analysis.author.v1`, `analysis.topic.v1`; nobody consumes them yet. |
-| Schema Registry | Registers nothing (standing instruction: no `securebrand.content.*` until the master publishes v1) |
+| Schema Registry | sb-analysis registers nothing (standing instruction: no `securebrand.content.*` until the master publishes v1). **But the pilot's shared registry already holds 9 subjects from this repository's copy** (confirmed 6 Nov, 00:58 Iraq time): the 4 `content.*` subjects, `securebrand/content/v1/content.proto`, and the 4 `analysis.*` subjects, almost certainly from a `make pilot-up` run from this copy around 1 November. They would block the master's v1 under the same name; delete them (with the owner's approval) or avoid them first. |
 
 ## Reports for the master (5 Nov)
 
@@ -41,3 +41,4 @@
 
 - **2 Nov:** the analysis runs as its own Compose project next to the fbs pilot; it creates only its own topics (`sb-analysis kafka-topics`).
 - **5 Nov:** the master reports above. No code, configuration or server changes.
+- **6 Nov:** the owner's read-only check confirmed the 9 schema subjects above on the pilot. Nothing was changed.
