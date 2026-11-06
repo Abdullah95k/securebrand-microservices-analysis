@@ -21,7 +21,7 @@ func registered(t *testing.T) map[string]bool {
 	t.Helper()
 	names := map[string]bool{}
 	fq := regexp.MustCompile(`fqName: "([^"]+)"`)
-	for _, c := range []prometheus.Collector{AnalysisIngested, AnalysisUndecodable, AnalysisAnalyzed, AnalysisItemsFailed,
+	for _, c := range []prometheus.Collector{AnalysisIngested, AnalysisUndecodable, AnalysisIngestPaused, AnalysisAnalyzed, AnalysisItemsFailed,
 		AnalysisRequests, AnalysisRequestSecs, AnalysisTokens, AnalysisCostUSD, AnalysisFallbacks, AnalysisRepairs,
 		AnalysisRefusals, AnalysisFollowUps, AnalysisDeduplicated, AnalysisDeadLetters, AnalysisQueueDepth, AnalysisQueueAge,
 		AnalysisSpentToday, AnalysisBudgetUSD, AnalysisBudgetPaused, AnalysisOpenBatches, AnalysisMedia, AnalysisMediaAtRisk,

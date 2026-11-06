@@ -33,6 +33,10 @@ type Consumer struct {
 	media    bool
 	maxBatch int
 	linger   time.Duration
+	// gate pauses the content topics (paused) while the queue is full.
+	gate    *Gate
+	content []string
+	paused  bool
 }
 
 // Config configures the consumer.
@@ -46,6 +50,9 @@ type Config struct {
 	Consumer string // media ack consumer name
 	MaxBatch int
 	Linger   time.Duration
+	// Gate, when set, pauses the content topics while the analysis queue is
+	// full; media announcements and erasures keep flowing.
+	Gate *Gate
 }
 
 // New creates the consumer over the decoder's topics.
@@ -79,14 +86,20 @@ func New(cfg Config) (*Consumer, error) {
 	if cfg.Linger <= 0 {
 		cfg.Linger = 500 * time.Millisecond
 	}
+	content := make([]string, 0, len(cfg.Decoder.ContentTopics()))
+	for _, t := range cfg.Decoder.ContentTopics() {
+		content = append(content, cfg.Kafka.TopicPrefix+t)
+	}
 	return &Consumer{cl: cl, prefix: cfg.Kafka.TopicPrefix, dec: cfg.Decoder, store: cfg.Store, plan: cfg.Plan,
-		consumer: cfg.Consumer, media: cfg.Media, maxBatch: cfg.MaxBatch, linger: cfg.Linger}, nil
+		consumer: cfg.Consumer, media: cfg.Media, maxBatch: cfg.MaxBatch, linger: cfg.Linger,
+		gate: cfg.Gate, content: content}, nil
 }
 
 // Run consumes until ctx ends.
 func (c *Consumer) Run(ctx context.Context) error {
 	defer c.cl.Close()
 	for {
+		c.backpressure(ctx)
 		var recs []*kgo.Record
 		deadline := time.Now().Add(c.linger)
 		for len(recs) < c.maxBatch {
@@ -134,6 +147,28 @@ func (c *Consumer) Run(ctx context.Context) error {
 		}
 		c.cl.AllowRebalance()
 	}
+}
+
+// backpressure pauses the content topics while the gate says the queue is
+// full, and resumes them once it has room. Paused records stay in Kafka.
+func (c *Consumer) backpressure(ctx context.Context) {
+	if c.gate == nil {
+		return
+	}
+	full := c.gate.Full(ctx)
+	if full == c.paused {
+		return
+	}
+	c.paused = full
+	if full {
+		c.cl.PauseFetchTopics(c.content...)
+		ametrics.IngestPaused.Set(1)
+		slog.Warn("ingest: analysis queue full; new content waits in Kafka", "max", c.gate.Max, "resume_at", c.gate.Resume)
+		return
+	}
+	c.cl.ResumeFetchTopics(c.content...)
+	ametrics.IngestPaused.Set(0)
+	slog.Info("ingest: analysis queue has room again; content resumes")
 }
 
 // Flush stores one batch: items first, then media jobs, then erasures, so

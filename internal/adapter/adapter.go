@@ -61,6 +61,19 @@ func (d Decoder) ItemTopics() []string {
 	return ts
 }
 
+// ContentTopics are the item topics without the erasure topics: the ones
+// ingest pauses while the analysis queue is full (erasures keep flowing).
+func (d Decoder) ContentTopics() []string {
+	var ts []string
+	if d.FB {
+		ts = append(ts, topics.Post, topics.Comment)
+	}
+	if d.Content {
+		ts = append(ts, topics.ContentItem)
+	}
+	return ts
+}
+
 // MediaTopics are the topics announcing media files to analyse.
 func (d Decoder) MediaTopics() []string {
 	var ts []string

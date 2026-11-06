@@ -32,6 +32,10 @@ The Helm chart (`deploy/helm/sb-analysis`) runs `analysis` (all roles but media)
 3. **Batches not collected** (`sb_analysis_open_batches` grows): check that a pipeline replica runs and can reach the provider. Batches finish within 24h; results stay downloadable for 29 days, so a restart collects them.
 4. **Real-time lane slow** at a burst: raise `analysis.realtime.workers`, or set `analysis.urgent.tracked_entities: false` to send fewer items there.
 
+**The queue's cap (backpressure):** at `analysis.backpressure.max_queue` items (200,000), ingest stops taking new posts and comments: `sb_analysis_ingest_paused` is 1, and they wait in Kafka. Media announcements and erasures keep flowing. Ingest resumes once the queue is down to `resume_queue` (150,000); the queue can pass the cap by at most one ingest batch.
+- **Kafka keeps 7 days.** Content paused longer than that is gone from Kafka, and comes back only through a backfill from the permanent store. `AnalysisIngestPaused` warns after an hour paused.
+- **To clear it,** fix the cause above. Raise `max_queue` only if Postgres has room: each queued item is a row.
+
 ## Media
 
 `sb_analysis_media_ttl_at_risk > 0` means files are within 6h of deletion (`delete_after`). Files deleted before analysis are lost for it: fbs logs `ttl_expired`.

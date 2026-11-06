@@ -400,3 +400,10 @@ func (s *Store) DeadLetterCount(ctx context.Context) (int64, error) {
 	err := s.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.dead_letters`).Scan(&n)
 	return n, err
 }
+
+// QueueDepth counts the items waiting for analysis (all lanes and routes).
+func (s *Store) QueueDepth(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.analysis_queue`).Scan(&n)
+	return n, err
+}
