@@ -2,7 +2,7 @@
 
 *For the master session, in the layout of 07-operations-questionnaire.md. From the code at `Abdullah95k/securebrand-microservices-analysis`, branch `claude/jolly-bell-mb5sct`, commit `bf32dd9`, 5 November 2026 (Iraq time).*
 
-**Nothing in this file is measured on real data.** sb-analysis has never run on real content, and the evaluation hasn't been run. Every number marked "estimate" comes from the cost model (`internal/analysis/eval/cost.go`, `docs/design/analysis-service.md` section 16), from list prices checked on 1 November 2026, or from the pilot ratios fbs reported.
+**Nothing in this file is measured on real data.** sb-analysis has never run on real content, and the evaluation hasn't been run. Every number marked "estimate" comes from the cost model (`internal/eval/cost.go`, `docs/design/analysis-service.md` section 16), from list prices checked on 1 November 2026, or from the pilot ratios fbs reported.
 
 ## 1. Components
 
@@ -210,12 +210,12 @@ There are also read-only `agent.*` views filtered per client (row-level, by logi
 
 | Secret | When needed |
 |---|---|
-| `FBS_ANALYSIS__PROVIDERS__ANTHROPIC__API_KEY` | Always |
-| `FBS_ANALYSIS__PROVIDERS__GEMINI__API_KEY` | Optional backup |
-| `FBS_ANALYSIS__PROVIDERS__OPENAI__API_KEY` | Optional |
-| `FBS_POSTGRES__DSN` (or `FBS_ANALYSIS__POSTGRES__DSN`) | Always |
-| `FBS_KAFKA__SASL__USERNAME` / `PASSWORD` | When the cluster needs them |
-| `FBS_S3__ACCESS_KEY` / `SECRET_KEY` | Media role |
+| `SB_ANALYSIS_ANALYSIS__PROVIDERS__ANTHROPIC__API_KEY` | Always |
+| `SB_ANALYSIS_ANALYSIS__PROVIDERS__GEMINI__API_KEY` | Optional backup |
+| `SB_ANALYSIS_ANALYSIS__PROVIDERS__OPENAI__API_KEY` | Optional |
+| `SB_ANALYSIS_POSTGRES__DSN` (or `SB_ANALYSIS_ANALYSIS__POSTGRES__DSN`) | Always |
+| `SB_ANALYSIS_KAFKA__SASL__USERNAME` / `PASSWORD` | When the cluster needs them |
+| `SB_ANALYSIS_S3__ACCESS_KEY` / `SECRET_KEY` | Media role |
 | One password file per read-only client role | `sb-analysis agent-role --password-file` |
 
 **Logging of secrets:** none are logged. A keyless hosted provider is skipped, with its name logged, never a key.
@@ -238,7 +238,7 @@ There are also read-only `agent.*` views filtered per client (row-level, by logi
 
 - **Health:** `/healthz` always answers; `/readyz` checks Postgres.
 - **Metrics:**
-  - **Prefix:** `fbs_analysis_` (shared with fbs; analysis-gaps.md).
+  - **Prefix:** `sb_analysis_` (shared with fbs; analysis-gaps.md).
   - **Families:** `items_ingested_total`, `items_analyzed_total`, `items_failed_total`, `items_deduplicated_total`, `records_undecodable_total`, `queue_depth`, `queue_oldest_seconds`, `provider_requests_total`, `provider_request_seconds`, `tokens_total`, `cost_usd_total`, `spent_today_usd`, `budget_daily_usd`, `budget_paused`, `refusals_total`, `fallback_total`, `output_repairs_total`, `follow_ups_total`, `media_total`, `media_ttl_at_risk`, `dead_letters`, `published_total`, `erasures_total`, `rollup_days_total`, `outbox_backlog`.
   - **Is it working:** `queue_oldest_seconds` by lane, `items_analyzed_total`, `spent_today_usd`, `budget_paused`, `dead_letters`, `media_ttl_at_risk`.
 - **Logs:** JSON (slog). No text, keys or author data, with one exception: a failed entity-curation decision logs the candidate name (analysis-gaps.md, F2).
@@ -506,9 +506,9 @@ sb-analysis's own code is about 17,400 lines of Go (4,200 of them tests), plus i
 
 **Yes.** Moving it takes about **2–3 working days:**
 1. **The new repository** (for example `securebrand-analysis`, module `github.com/abdullah95k/securebrand-analysis`) gets:
-   - `internal/analysis/…`, `cmd/sb-analysis`, `cmd/sb-eval`;
+   - `internal/…`, `cmd/sb-analysis`, `cmd/sb-eval`;
    - `api/proto/securebrand/analysis` (and this repository's `content` draft only until the master's v1);
-   - `migrations/analysis`, `configs/analysis`, `deploy/analysis`, `scripts/analysis`, `testdata/analysis`;
+   - `migrations`, `configs/analysis`, `deploy/analysis`, `scripts/analysis`, `testdata/analysis`;
    - the analysis docs (design, ADRs 0004–0007, runbook, evaluation, labelling guide, owner guide, content-v1).
 2. **Copy the generic platform packages** (~2,100 lines) into it, until the shared platform library (Q12).
 3. **Give it its own config package** with only the sections it uses: service, log, http, postgres, kafka, s3, privacy, analysis. Use the env prefix `SB_ANALYSIS_` (keeping `FBS_` accepted for a release).

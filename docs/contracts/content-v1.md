@@ -3,7 +3,7 @@
 Every normalisation service (Instagram, TikTok, X, Telegram, YouTube, and later Facebook itself) publishes the same small contract. The analysis service ([design](../design/analysis-service.md)) reads it and does not care which platform an item came from.
 - **Proto files:** `api/proto/securebrand/content/v1/content.proto` and `api/proto/securebrand/analysis/v1/analysis.proto`.
 - **Generated Go:** `gen/go/securebrand/content/v1` and `gen/go/securebrand/analysis/v1`.
-- **Wire format:** as for fb.v1 ([kafka-schemas.md](kafka-schemas.md)), plain protobuf with the message name in the `fbs-type` header, registered with the Schema Registry as `BACKWARD_TRANSITIVE`.
+- **Wire format:** as for fb.v1 ([fbs's kafka-schemas.md](https://github.com/Abdullah95k/securebrand-microservices/blob/main/docs/contracts/kafka-schemas.md)), plain protobuf with the message name in the `fbs-type` header, registered with the Schema Registry as `BACKWARD_TRANSITIVE`.
 
 | Topic | Key | Value | Producer |
 |---|---|---|---|

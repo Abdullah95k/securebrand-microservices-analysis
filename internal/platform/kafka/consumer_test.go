@@ -43,9 +43,9 @@ func TestRevokeAfterDrainDoesNotWait(t *testing.T) {
 // group revokes its partition, and the drain is already over. A stop that
 // overruns the container's grace period is killed before its last commit.
 func TestShutdownDoesNotWaitForRecordsNeverStarted(t *testing.T) {
-	b := os.Getenv("FBS_TEST_KAFKA_BROKERS")
+	b := os.Getenv("SB_TEST_KAFKA_BROKERS")
 	if b == "" {
-		t.Skip("FBS_TEST_KAFKA_BROKERS not set")
+		t.Skip("SB_TEST_KAFKA_BROKERS not set")
 	}
 	cfg := ClientConfig{Brokers: strings.Split(b, ","), TopicPrefix: fmt.Sprintf("t%d.", time.Now().UnixNano())}
 	const topic = "fbs.test.shutdown"

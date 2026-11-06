@@ -8,10 +8,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/abdullah95k/securebrand-microservices/configs"
-	appcfg "github.com/abdullah95k/securebrand-microservices/internal/app"
-	"github.com/abdullah95k/securebrand-microservices/internal/config"
-	"github.com/abdullah95k/securebrand-microservices/internal/platform/kafka"
+	"github.com/abdullah95k/securebrand-microservices-analysis/configs"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/app"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/config"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/kafka"
 )
 
 // ownTopicPrefixes are the topics the analysis service owns: the canonical
@@ -62,7 +62,7 @@ func kafkaTopicsCmd(args []string) error {
 	if *repl > 0 {
 		replicas = int16(*repl)
 	}
-	kc, err := appcfg.KafkaClient(cfg, "-analysis-admin")
+	kc, err := app.KafkaClient(cfg, "-analysis-admin")
 	if err != nil {
 		return err
 	}

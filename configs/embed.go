@@ -1,10 +1,10 @@
-// Package configs embeds the default configuration files so every binary
+// Package configs embeds the default configuration files so sb-analysis always
 // starts with a complete config even without a mounted file.
 package configs
 
 import "embed"
 
-//go:embed *.yaml analysis/*.yaml discovery/*.yaml
+//go:embed *.yaml analysis/*.yaml
 var FS embed.FS
 
 // Default returns the embedded default.yaml.

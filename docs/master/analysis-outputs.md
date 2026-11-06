@@ -1,6 +1,6 @@
 # sb-analysis: what it produces (Part B)
 
-*For the master session. From `api/proto/securebrand/analysis/v1/analysis.proto` and the code that fills it (`internal/analysis/store/results.go`, `media.go`, `authors.go`, `topics.go`), commit `bf32dd9`, 5 November 2026 (Iraq time). Machine-readable copy: `analysis-outputs.yaml`. Every example is synthetic.*
+*For the master session. From `api/proto/securebrand/analysis/v1/analysis.proto` and the code that fills it (`internal/store/results.go`, `media.go`, `authors.go`, `topics.go`), commit `bf32dd9`, 5 November 2026 (Iraq time). Machine-readable copy: `analysis-outputs.yaml`. Every example is synthetic.*
 
 ## 1. Overview
 

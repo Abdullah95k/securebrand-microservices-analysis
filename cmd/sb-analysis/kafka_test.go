@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/abdullah95k/securebrand-microservices/configs"
+	"github.com/abdullah95k/securebrand-microservices-analysis/configs"
 )
 
 // Next to a running fbs the analysis creates only its own topics: an fbs

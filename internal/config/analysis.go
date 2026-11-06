@@ -163,7 +163,7 @@ type Provider struct {
 	// Kind: anthropic | openai_compat | fake.
 	Kind    string `koanf:"kind"`
 	BaseURL string `koanf:"base_url"`
-	// APIKey: set through FBS_ANALYSIS__PROVIDERS__<NAME>__API_KEY or a
+	// APIKey: set through SB_ANALYSIS_ANALYSIS__PROVIDERS__<NAME>__API_KEY or a
 	// secret config file, never in a committed file.
 	APIKey     string        `koanf:"api_key"`
 	Timeout    time.Duration `koanf:"timeout"`

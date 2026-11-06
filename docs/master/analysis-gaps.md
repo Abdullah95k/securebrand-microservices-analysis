@@ -12,8 +12,8 @@
 | A2 Non-root, read-only root filesystem, no capabilities | **Met** (Kubernetes) / **Partly** (Compose) | The chart's shared security context (`deploy/helm/fbs/values.yaml`: `runAsNonRoot`, `readOnlyRootFilesystem`, drop `ALL`); a distroless non-root image. `deploy/analysis/compose.yml` doesn't set `read_only` or `cap_drop`. | Add `read_only: true`, `cap_drop: [ALL]` and a `tmpfs` for temporary files to the Compose file | 0.1 |
 | A3 Helm chart with every setting in values | **Partly** | Components `analysis` and `analysis-media` live inside **fbs's** chart (`deploy/helm/fbs`), tested by `make chart-check` and `chart-smoke` | A chart of its own (`deploy/helm/sb-analysis`), with its alerts, KEDA, migrate hook and values | 1 |
 | A4 Config validated at start-up | **Met** | `internal/config/analysis.go` `Validate()` (routes, providers, budget, media, topics, entities, bots). sb-analysis refuses to start and prints why. | — | — |
-| A5 Secrets from env or files, never baked in | **Met** | API keys as `FBS_ANALYSIS__PROVIDERS__*__API_KEY` from `deploy/analysis/analysis.env` (gitignored; `make analysis-up` refuses unless it is mode 600) or the chart's `secretEnv`. A keyless hosted provider is skipped, never logged with a key. | — | — |
-| A6 Versioned migrations by a hook; backward compatible for one release | **Partly** | goose migrations in `migrations/analysis` (own version table), run by the Helm hook `analysisMigrate` or `run --migrate`. Backward compatibility isn't tested. | A CI job that runs the previous release's tests against the new schema; a written rule (add columns, never drop in the same release) | 0.5 |
+| A5 Secrets from env or files, never baked in | **Met** | API keys as `SB_ANALYSIS_ANALYSIS__PROVIDERS__*__API_KEY` from `deploy/analysis/analysis.env` (gitignored; `make analysis-up` refuses unless it is mode 600) or the chart's `secretEnv`. A keyless hosted provider is skipped, never logged with a key. | — | — |
+| A6 Versioned migrations by a hook; backward compatible for one release | **Partly** | goose migrations in `migrations` (own version table), run by the Helm hook `analysisMigrate` or `run --migrate`. Backward compatibility isn't tested. | A CI job that runs the previous release's tests against the new schema; a written rule (add columns, never drop in the same release) | 0.5 |
 
 ## B. Runtime behaviour
 
@@ -34,10 +34,10 @@
 | C1 Bounded retries, DLQ, caps | **Met** | 5 attempts per item, then `analysis.dead_letters`, replayed with `sb-analysis replay-failed`. Provider retries are capped (`max_retries: 2`). Media gets 5 tries with backoff capped at 30 minutes. | — | — |
 | C2 Retention on every topic | **Met** (own topics) | `analysis.result.v1` and `analysis.media.v1` 7 days; `analysis.author.v1` and `analysis.topic.v1` 30 days (`configs/topics.yaml`). sb-analysis never changes fbs's topics (`sb-analysis kafka-topics` creates only its own). | — | — |
 | C3 Stuck jobs closed | **Met** | Queue and media leases expire and are retried. Batch requests are leased for 26 hours. After 12 hours of batch failures, items move to the backup in real time. | — | — |
-| C4 Circuit breakers | **Met** | One breaker per provider (`internal/platform/breaker`, used by `internal/analysis/provider/registry`). Not per query (not applicable). | — | — |
+| C4 Circuit breakers | **Met** | One breaker per provider (`internal/platform/breaker`, used by `internal/provider/registry`). Not per query (not applicable). | — | — |
 | C5 Session pool | **N/A** | No platform sessions. The analogue is provider availability: the backup provider plus alerts. | — | — |
 | C6 Backpressure | **Partly** | Ingest never slows down: Postgres is the buffer, so a slow provider grows the queue on disk. The daily budget pauses non-urgent work. | A cap on queue depth that pauses ingest (Kafka keeps the rest for 7 days), plus an alert on queue size | 0.5 |
-| C7 Daily budget cap | **Met** | `analysis.budget.daily_usd` (speech-to-text included; urgent items optionally exempt); `fbs_analysis_budget_paused` | — | — |
+| C7 Daily budget cap | **Met** | `analysis.budget.daily_usd` (speech-to-text included; urgent items optionally exempt); `sb_analysis_budget_paused` | — | — |
 
 ## D. Platform access
 
@@ -62,8 +62,8 @@
 
 | # | Status | Evidence | Fix | Effort |
 |---|---|---|---|---|
-| F1 Metrics with a per-service prefix | **Partly** | 25 metric families (analysis-operations.md, section 9), but with the prefix **`fbs_analysis_`**, shared with fbs | Rename to `sb_analysis_` while keeping the old names for one release, and update the alerts | 0.5 |
-| F2 Logs without content or personal data | **Partly** | JSON logs with IDs, counts and reasons. **One exception:** `internal/analysis/curate/entities.go` logs a candidate entity's name when a decision fails. It could be a private person's name before the model rejects it. | Log the candidate's hash instead | 0.1 |
+| F1 Metrics with a per-service prefix | **Partly** | 25 metric families (analysis-operations.md, section 9), but with the prefix **`sb_analysis_`**, shared with fbs | Rename to `sb_analysis_` while keeping the old names for one release, and update the alerts | 0.5 |
+| F2 Logs without content or personal data | **Partly** | JSON logs with IDs, counts and reasons. **One exception:** `internal/curate/entities.go` logs a candidate entity's name when a decision fails. It could be a private person's name before the model rejects it. | Log the candidate's hash instead | 0.1 |
 | F3 Alert rules with runbook links | **Partly** | 8 rules in fbs's PrometheusRule (group `fbs.analysis`, `deploy/helm/fbs/files/alerts.yaml`): real-time and batch lanes stale, media deadline at risk, dead letters, refusals, backup share, budget 80% spent, outbox backlog. **Missing:** no ingest for N minutes; consumer lag on `fb.comment.v1`; queue size; disk and memory. | Its own PrometheusRule with those added | 0.5 |
 | F4 Grafana dashboard | **Missing** | fbs's dashboard has no analysis panels | An sb-analysis dashboard: throughput, queue age, spend, refusals, backup share, media | 1 |
 | F5 Owner health check | **Met** | `make analysis-status` (counts and spend per Iraq day); owner guide `docs/owner/analysis-decisions.md`; runbook `docs/runbooks/analysis.md` | — | — |
@@ -73,7 +73,7 @@
 | # | Status | Evidence | Fix | Effort |
 |---|---|---|---|---|
 | G1 Unit and integration tests in CI, race detector | **Met** | `.github/workflows/ci.yml`: `go test -race -count=1 ./...` against real Postgres, Redpanda and Valkey. New tests are mutation-checked by hand. | — | — |
-| G2 Fake platform | **Met** | A deterministic fake AI provider (`internal/analysis/provider/fake`) and fbs's fakefb; the pipeline's end-to-end tests run on them | — | — |
+| G2 Fake platform | **Met** | A deterministic fake AI provider (`internal/provider/fake`) and fbs's fakefb; the pipeline's end-to-end tests run on them | — | — |
 | G3 Load and soak tests (24 hours or more) | **Missing** | None for sb-analysis | A soak test with the fake provider at the pilot's volume (~450,000 items a day) for 24 hours, watching memory, disk, queue age and the outbox | 1–2 |
 | G4 CI guards against secrets and real data | **Partly** | A CI step fails on committed gold or labelled data (`*.labels.jsonl`, `*.gold.jsonl`, `gold/`, `results.jsonl`). The evaluation tool refuses to write inside a git checkout. No secret scanner. | Add gitleaks to CI | 0.1 |
 | G5 Contract conformance tests | **N/A until the master's kit exists** | — | Run the kit against the `content.*` adapter and the `analysis.*` output | 0.5 |

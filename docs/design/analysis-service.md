@@ -36,7 +36,7 @@ The brief's direction is right. These points change the design or the numbers.
 | 6 | Escalate low-confidence comments to the strong model | LLM self-reported confidence is poorly calibrated, so escalating "everything below 0.6" escalates a random-looking set. Also, most of the money's value is in a small subset: comments that mention a **client's tracked brand**. | Escalate only when an item mentions a tracked entity (found by a free alias matcher before the LLM call) **and** its *calibrated* confidence is low, or it is sarcastic or mixed. Calibration maps are fitted on the gold set per model. |
 | 7 | Prior estimate $30-55k/year for the mix | It holds only if posts, images and videos go to Sonnet. Those are ~3% of items but ~70% of the bill in that mix. Haiku for everything plus Sonnet escalation is ~$9-11k/year at 300M. | Start lean and promote a route to a stronger model only when the evaluation shows a measured gap on that route. |
 | 8 | Self-hosting pays off at 1.5-3B items/year | Confirmed. Haiku 5.5 batch costs ~$15 per 1M comments, while 2x H100 cost ~$44k/year before staff. Break-even is ~3B comments/year. Self-hosting is also the answer if privacy rules forbid third-party processors. | Keep an OpenAI-compatible provider so a self-hosted vLLM (Gemma, or a distilled model) is a config change. |
-| 9 | One call returns all fields; separate models per task multiply cost | Agreed for the LLM. Two **non-LLM** steps cost nothing and help: (a) skip items with no analyzable text (tags of friends only, sticker-only, empty), and (b) an alias matcher that finds tracked brands in the text. The alias matcher routes urgent items to the real-time lane and gives the LLM entity candidates, which improves linking and shortens output. | Both are built (`internal/analysis/content`, `internal/analysis/entities`). |
+| 9 | One call returns all fields; separate models per task multiply cost | Agreed for the LLM. Two **non-LLM** steps cost nothing and help: (a) skip items with no analyzable text (tags of friends only, sticker-only, empty), and (b) an alias matcher that finds tracked brands in the text. The alias matcher routes urgent items to the real-time lane and gives the LLM entity candidates, which improves linking and shortens output. | Both are built (`internal/content`, `internal/entities`). |
 | 10 | Batch for bulk, real time for urgent | Agreed. "Urgent" needs a definition that works before analysis. | Urgent = matches a tracked-brand alias, or comes from a source marked priority. Everything else goes to the batch lane. |
 | 11 | Fine-tuned Arabic encoder reaches ~83-84% macro-F1 (2026 shared task) | Not verified here, and sentiment-only. Aspect sentiment, linking and topics need a generative model or several encoders. Some Arabic encoders' licences are research-only. | Later option, trained on audited labels from the service. Check licences first. |
 | 12 | Model retirements can create fake trends | Agreed, and the stored text makes it fixable. Every result records model, prompt, taxonomy and schema versions. A switch is gated on the gold set plus an overlap sample, and history can be re-analysed with the new model at batch prices (~$15 per 1M comments on Haiku 5.5). | See section 7.6. |
@@ -139,7 +139,7 @@ Re-analysis publishes a higher `analysis_version` for the same content id. Consu
 
 ### 5.3 Facebook adapter (runs today)
 
-`internal/analysis/adapter/fb` maps:
+`internal/adapter/fb` maps:
 - **`fb.post.v1`** → `POST`: `fb:post:<id>`, source `fb:page:<page_id>`, `author_is_source=true`;
 - **`fb.comment.v1`** → `COMMENT` or `REPLY` (depth > 0). Thread `fb:post:<post_id>`, parent the parent comment or the post. `author_key` comes as is; `is_op` becomes `author_is_source`. Text ranges of type `User` become mentions *without* ids or names (private persons), and `Page` mentions keep their name. `COMMENT_STATUS_DELETED` → `DELETED`, `redacted` → `REDACTED` (text dropped);
 - **`fb.media.ready.v1`** → a media job (`media_id`, owner content id, S3 object, `delete_after`); acks go to `fb.media.processed.v1` with consumer `analysis` (the value in `media.required_consumers`);
@@ -149,7 +149,7 @@ When a Facebook normaliser exists, it publishes `content.item.v1`, and the adapt
 
 ## 6. What is extracted
 
-One result per item. The model answers in a compact JSON format enforced by JSON-schema structured output (`internal/analysis/prompt/schema.go`, schema `s2`); code validates it and expands it into the stored fields below. The model writes one language code (`ar-iq`, `ar-msa`, `ckb`, ...) for language and dialect, the yes/no signals as a list of `flags` (usually empty), and scores as whole numbers (−100..100, 0..100). The script and comment keywords are computed from the text, not asked of the model.
+One result per item. The model answers in a compact JSON format enforced by JSON-schema structured output (`internal/prompt/schema.go`, schema `s2`); code validates it and expands it into the stored fields below. The model writes one language code (`ar-iq`, `ar-msa`, `ckb`, ...) for language and dialect, the yes/no signals as a list of `flags` (usually empty), and scores as whole numbers (−100..100, 0..100). The script and comment keywords are computed from the text, not asked of the model.
 
 | Field | Values |
 |---|---|
@@ -198,7 +198,7 @@ The taxonomy file (`configs/analysis/taxonomy.v1.yaml`) is only the starting lis
    - a name that is a registry entity becomes that entity's topic (`@asiacell`);
    - a name whose duplicate key matches a known topic becomes that topic. The key is the name normalised, without function words and clitics, singular, words sorted, in English and in Arabic (`textnorm.TopicKey`): "Electricity cuts", "cuts of electricity" and "انقطاع الكهرباء / انقطاع كهرباء" share keys. A merged topic leads to the one it was merged into; a rejected topic is dropped;
    - anything else becomes a **candidate** topic under the proposed parent (`services.water_shortage`). The item keeps it, so nothing is lost while it waits.
-3. **Curation, daily** (`internal/analysis/curate`, role `rollup`). Candidates used by at least `topics.approve_min_items` items (default 10) go to the curation model (Sonnet 5.5, a few cents a day). It merges synonyms the key cannot catch ("power outages" into "Electricity cuts"), rejects names, one-off details and vague topics, and approves the rest with clean names. Without a curation provider, candidates are approved on the count alone.
+3. **Curation, daily** (`internal/curate`, role `rollup`). Candidates used by at least `topics.approve_min_items` items (default 10) go to the curation model (Sonnet 5.5, a few cents a day). It merges synonyms the key cannot catch ("power outages" into "Electricity cuts"), rejects names, one-off details and vague topics, and approves the rest with clean names. Without a curation provider, candidates are approved on the count alone.
 4. **A change is a version.** Each change of the active list records a taxonomy version (`tax-v1.1`, `tax-v1.2`...), which results carry. Merges and rejections re-point or remove the topic in stored analyses and mentions (GIN indexes on the topic arrays), rebuild their rollup days, and publish a `TopicUpdate` on `analysis.topic.v1` so downstream stores follow. Every replica reloads the list each minute. The system prompt changes only with the version, so the prompt cache breaks at most once per change.
 5. **The owner decides last:** `sb-analysis topics list | approve | rename | merge | reject | curate | import`.
 
@@ -279,13 +279,13 @@ Breaches are stored per item (`legal[]`), counted per day and source (`rollup_fl
 - when the primary's circuit breaker is open;
 - when the primary refuses after isolation (section 8.4).
 
-The batch lane keeps retrying the primary's batch API (every submission round, without counting attempts) for `batch.fallback_after` (default 12h), because mixing models in the bulk data is itself a consistency risk (section 7.6). After that, the backlog goes to real time: to the primary if its real-time API still works, else to the fallback. A successful batch submission ends the outage. Every result records the model that produced it, and `fbs_analysis_fallback_total` counts fallback use.
+The batch lane keeps retrying the primary's batch API (every submission round, without counting attempts) for `batch.fallback_after` (default 12h), because mixing models in the bulk data is itself a consistency risk (section 7.6). After that, the backlog goes to real time: to the primary if its real-time API still works, else to the fallback. A successful batch submission ends the outage. Every result records the model that produced it, and `sb_analysis_fallback_total` counts fallback use.
 
 ### 7.2 Grouping and prompt caching
 
 - **Grouping:** a request = one thread context (the post text, truncated to 1,500 characters) + up to `grouping.max_items` (40) items of that thread, capped by an estimated token size. Items carry an index; the response is an array keyed by index. Kafka keys comments by post, so a thread's comments arrive together. The real-time lane waits `grouping.realtime_wait` (20 s) for siblings, and the batch lane groups within each 10-minute window.
 - **Static prefix** (system prompt: instructions, taxonomy, output rules; ~2.5k tokens) is byte-identical across requests and marked `cache_control`. Cache reads cost 0.1x on Haiku 5.5 and 0.05x on Sonnet/Opus 5.5, and stack with the batch discount. In the Batch API, cache hits are best-effort. The minimum cacheable prefix on the 5.5 models is 512 tokens.
-- **Identical items are sent once** (`internal/analysis/pipeline/dedup.go`). Contest posts ("علق تم للمشاركة"), condolence and prayer threads collect hundreds of identical comments. Within a claim, items of one thread with the same parent and the same input hash (text, kind, media) collapse onto the first: it alone is shown to the model, and the others ride in the same request as followers. They get its answer and their share of the cost, and they fail and retry with it. The model's input for them would be identical, so its answer would be too. Followers count toward neither group limit, so a thread of 3,000 "تم" costs one prompt slot per claim. The batch lane recomputes the mapping from the request's stored input hashes when results arrive. Posts and audits are never collapsed. `fbs_analysis_items_deduplicated_total` counts followers, and `make analysis-stats` measures the share (assumed 10%).
+- **Identical items are sent once** (`internal/pipeline/dedup.go`). Contest posts ("علق تم للمشاركة"), condolence and prayer threads collect hundreds of identical comments. Within a claim, items of one thread with the same parent and the same input hash (text, kind, media) collapse onto the first: it alone is shown to the model, and the others ride in the same request as followers. They get its answer and their share of the cost, and they fail and retry with it. The model's input for them would be identical, so its answer would be too. Followers count toward neither group limit, so a thread of 3,000 "تم" costs one prompt slot per claim. The batch lane recomputes the mapping from the request's stored input hashes when results arrive. Posts and audits are never collapsed. `sb_analysis_items_deduplicated_total` counts followers, and `make analysis-stats` measures the share (assumed 10%).
 - **Entity hints:** per item, the alias matcher's candidates (`id`, canonical name). They are not the whole brand list (hundreds of brands × aliases would bloat every prompt).
 - **PII masking:** phone numbers (Western and Arabic-Indic digits) and e-mail addresses are replaced with `[phone]` / `[email]` before the text leaves the service.
 
@@ -455,7 +455,7 @@ Full rationale in [ADR 0006](../adr/0006-analysis-storage.md).
 
 ### 12.1 Postgres (system of record; built)
 
-Own migrations (`migrations/analysis`, goose table `analysis_goose_db_version`) and own DSN (`analysis.postgres.dsn`, default: the fbs database). The service can move to its own database without code changes.
+Own migrations (`migrations`, goose table `analysis_goose_db_version`) and own DSN (`analysis.postgres.dsn`, default: the fbs database). The service can move to its own database without code changes.
 
 | Table | Partitioning | Key / main indexes |
 |---|---|---|
@@ -606,7 +606,7 @@ Example retrieval returns at most 20 texts per call, with phones and e-mails mas
 
 ## 14. Observability
 
-Metrics (`fbs_analysis_*`, Prometheus):
+Metrics (`sb_analysis_*`, Prometheus):
 - items ingested, skipped and analysed, by platform, kind and route;
 - queue depth and oldest age, by route and lane;
 - provider requests, by provider, model, lane and outcome;
@@ -663,7 +663,7 @@ The harness is `cmd/sb-eval`, with guide [docs/analysis/evaluation.md](../analys
 - **Speech-to-text:** Gemini 3.5 Transcribe at $0.0051/min, or an own Whisper server at a fixed ~$2k/year (mix `lean+whisper`).
 - **Prices:** list prices of 2026-11-01. Batch is 50% off where offered. Media uses the real-time lane.
 
-`sb-eval cost` (`make eval-cost`) prints these tables from code (`internal/analysis/eval/cost.go`); `--measured results.jsonl` replaces the token assumptions with measured ones.
+`sb-eval cost` (`make eval-cost`) prints these tables from code (`internal/eval/cost.go`); `--measured results.jsonl` replaces the token assumptions with measured ones.
 
 **Per 1M comments:**
 
@@ -773,17 +773,16 @@ Result: lean **$3.7k / $9.2k / $25.9k** at 100M / 300M / 1B (taking the cheaper 
   - **commands:** `migrate`, `entities`, `sources`, `reanalyze`, `replay-failed`, `agent-role`, `rollups`.
 - **`cmd/sb-eval`** ([guide](../analysis/evaluation.md)): `sample`, `label` (web tool), `agreement`, `run`, `report`, `calibrate`, `cost`. Plus the [labelling guide](../analysis/labelling-guide.md) and a synthetic gold example.
 - **Deployment:**
-  - **Compose:** local stack with the fake provider.
+  - **Local tests:** a test stack of its own (`deploy/dev/compose.yml`: Postgres, Redpanda, Valkey).
   - **Pilot:** a Compose project of its own (`deploy/analysis/compose.yml`, image `sb-analysis:dev`), run from its own checkout of this repository next to the fbs pilot. It joins the pilot's network to read Redpanda and keep its `analysis` schema in the pilot's Postgres. It creates only its own topics (`content.*`, `analysis.*`), so fbs's restarts never touch it and it never touches fbs. Nothing is sent before the owner runs `make analysis-up`; `make analysis-stats` gives counts only.
-  - **Helm:** `analysis` and `analysis-media` components, a migrate hook, the ffmpeg image target; `make chart-check` and `make chart-smoke` pass.
+  - **Kubernetes:** a Helm chart of its own (REQ-011 fix 2; until 6 November the analysis ran as components of fbs's chart).
   - **Retention:** fbs comment retention is now indefinite.
 - **Tests:**
   - unit tests;
   - integration tests against Postgres and Redpanda: store, agent scoping, pipeline lanes and failure modes, media with real ffmpeg, Facebook topics to `analysis.result.v1` end to end, the sampler;
-  - the existing fbs suites still pass;
   - a mutation check of the new tests: 16 of 16 deliberate faults caught, and 11 of 11 for the cost revision (compact format, local script and keywords, duplicate collapsing).
 
-- **Ads (affiliate included), legal and policy flags, dynamic topics with sub-topics and search, bot and network detection, ambiguous aliases** (sections 6.1-6.3, 11): prompt `p4` / schema `s4`; migration `00002`; `store.ResolveTopics`, `ApplyTopicDecisions`, `ScoreAuthors`; `internal/analysis/curate`, `internal/analysis/bots`; `sb-analysis topics` and `authors`; `AuthorFlag` and `TopicUpdate` events; agent views with `ad_type`, `legal`, `author_bot`, `agent.topics`, `agent.rollup_flag_daily`; ad and breach labels in the labelling tool and the report; positions in the brand list (14 Iraqi offices seeded).
+- **Ads (affiliate included), legal and policy flags, dynamic topics with sub-topics and search, bot and network detection, ambiguous aliases** (sections 6.1-6.3, 11): prompt `p4` / schema `s4`; migration `00002`; `store.ResolveTopics`, `ApplyTopicDecisions`, `ScoreAuthors`; `internal/curate`, `internal/bots`; `sb-analysis topics` and `authors`; `AuthorFlag` and `TopicUpdate` events; agent views with `ad_type`, `legal`, `author_bot`, `agent.topics`, `agent.rollup_flag_daily`; ad and breach labels in the labelling tool and the report; positions in the brand list (14 Iraqi offices seeded).
 
 **Not built:** ClickHouse, embeddings and `sb-eval retrieval`, the agent itself, the speech-to-text evaluation, and the own Whisper server's deployment (added only if it passes that evaluation).
 
