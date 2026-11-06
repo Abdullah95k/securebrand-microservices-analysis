@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -98,6 +99,10 @@ func TestPostgresConnString(t *testing.T) {
 		if cc.Host != "db.internal" || cc.Port != 5433 || cc.Database != "analysis" || cc.User != "analysis" || cc.Password != pw {
 			t.Fatalf("%q: parsed %s:%d/%s user %s password %q", pw, cc.Host, cc.Port, cc.Database, cc.User, cc.Password)
 		}
+	}
+	withCA := Postgres{Host: "db", SSLMode: "require", SSLRootCert: "/etc/sb-analysis-certs/postgres-ca.pem"}.ConnString()
+	if !strings.Contains(withCA, "sslrootcert='/etc/sb-analysis-certs/postgres-ca.pem'") {
+		t.Fatalf("CA file missing: %q", withCA)
 	}
 	if got := (Postgres{DSN: "postgres://a@b/c"}).ConnString(); got != "postgres://a@b/c" {
 		t.Fatalf("without host: %q", got)

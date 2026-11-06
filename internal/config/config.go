@@ -51,8 +51,10 @@ type HTTP struct {
 
 // Postgres is the default database; analysis.postgres.dsn overrides it.
 // Either a DSN, or its parts (host, port, database, user, password,
-// sslmode), as a platform secret provides them; when host is set the parts
-// win, so a deployment never needs to build a URL around a password.
+// sslmode, sslrootcert), as a platform secret provides them; when host is
+// set the parts win, so a deployment never needs to build a URL around a
+// password. sslrootcert is a CA file: with it, sslmode=require also
+// verifies the server's certificate chain.
 type Postgres struct {
 	DSN      string `koanf:"dsn"`
 	Host     string `koanf:"host"`
@@ -61,7 +63,9 @@ type Postgres struct {
 	User     string `koanf:"user"`
 	Password string `koanf:"password"`
 	SSLMode  string `koanf:"sslmode"`
-	MaxConns int32  `koanf:"max_conns"`
+	// SSLRootCert is the path of the server's CA certificate (PEM).
+	SSLRootCert string `koanf:"sslrootcert"`
+	MaxConns    int32  `koanf:"max_conns"`
 }
 
 // ConnString returns the connection string: the parts as libpq
@@ -87,6 +91,7 @@ func (p Postgres) ConnString() string {
 	add("user", p.User)
 	add("password", p.Password)
 	add("sslmode", p.SSLMode)
+	add("sslrootcert", p.SSLRootCert)
 	return b.String()
 }
 

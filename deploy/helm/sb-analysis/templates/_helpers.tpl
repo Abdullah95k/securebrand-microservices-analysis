@@ -62,22 +62,38 @@ envFrom:
 - name: config
   mountPath: /etc/sb-analysis
   readOnly: true
+{{- if and .Values.platformCredentials.enabled .Values.platformCredentials.files }}
+- name: certs
+  mountPath: /etc/sb-analysis-certs
+  readOnly: true
+{{- end }}
 - name: tmp
   mountPath: /tmp
 {{- end -}}
 
 {{- define "sba.volumes" -}}
-{{- include "sba.volumesFor" (dict "configMap" (printf "%s-config" (include "sba.fullname" .))) -}}
+{{- include "sba.volumesFor" (dict "root" . "configMap" (printf "%s-config" (include "sba.fullname" .))) -}}
 {{- end -}}
 
 {{- define "sba.hookVolumes" -}}
-{{- include "sba.volumesFor" (dict "configMap" (printf "%s-hook-config" (include "sba.fullname" .))) -}}
+{{- include "sba.volumesFor" (dict "root" . "configMap" (printf "%s-hook-config" (include "sba.fullname" .))) -}}
 {{- end -}}
 
 {{- define "sba.volumesFor" -}}
+{{- $pc := .root.Values.platformCredentials -}}
 - name: config
   configMap:
     name: {{ .configMap }}
+{{- if and $pc.enabled $pc.files }}
+- name: certs
+  secret:
+    secretName: {{ $pc.secret }}
+    defaultMode: 0440
+    items:
+      {{- range $key, $file := $pc.files }}
+      - {key: {{ $key }}, path: {{ $file }}}
+      {{- end }}
+{{- end }}
 - name: tmp
   emptyDir: {}
 {{- end -}}

@@ -41,10 +41,9 @@
 
 ## Open decisions (owner or master)
 
-1. **Where the platform's conventions file (`infra/README.md`) is** (asked the master, 6 Nov). The master answered the rest of question 1: the platform builds the images, the namespace is `analysis`.
-2. **Where account tiers come from,** for the real-time lane's hot-tier accounts (asked the master, 6 Nov).
-3. **Which permanent store a backfill reads** (asked the master, 6 Nov).
-4. **sb-analysis's own text copy:** keep it, or slim it to working state once the platform's entity layer and the client app exist (the owner's decision 7, "keep both for now"; REQ-011, later).
+1. **For the owner: run in production before REQ-022?** The master suggests reading fbs's `fb.*` topics in production until the contract is adopted. That needs a switch, not in REQ-011, that keeps results in Postgres and off the platform's `analysis.*` topics, whose contract format the draft results don't match. The canary also waits for fixes 3 to 6.
+2. **For the owner: is the $5 a day a hard stop for urgent items too?** Today `analysis.budget.urgent_exempt: true` lets urgent real-time items continue over the cap. The master asks for a hard stop.
+3. **sb-analysis's own text copy:** keep it, or slim it to working state once the platform's entity layer and the client app exist (the owner's decision 7, "keep both for now"; REQ-011, later).
 
 ## Changes since the last update
 
@@ -83,3 +82,8 @@
 - **6 Nov, REQ-011 fix 2 (in review):** its own Helm chart with `values-production.yaml`, images on a tag, chart checks in CI, and the alert rules moved from fbs's chart.
   - **Both workloads are at 0 replicas in production until REQ-022:** the platform's topics carry the contract's schemas, not sb-analysis's draft ones.
   - **New, nothing removed:** the database settings as parts (host, port, and so on) alongside the DSN.
+- **6 Nov, the master's answers:**
+  - **conventions:** the secret's keys match the chart's mapping; the CA certificates are mounted as files;
+  - **account tiers:** from `registry.account_request.v1`, with a config list until it publishes;
+  - **backfill:** from ClickHouse (`clickhouse-ro`) only;
+  - **production images:** built by the platform (`registry.digitalocean.com/securebrand/analysis`).

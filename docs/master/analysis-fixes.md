@@ -27,7 +27,13 @@
   - the database is PostgreSQL 18, `analysis`;
   - the cap is $5 a day until the owner sets another figure.
 
-  Questions 2 (account tiers) and 3 (the backfill store) are still open, and so is where the platform's `infra/README.md` is.
+- **The master's answers on the rest (6 Nov):**
+  - **The platform's conventions:** they are in `infra/README.md` of the platform's private repository. The master sent the exact secret keys. Every name in `platform-credentials` matches the chart's mapping, so nothing is renamed; the CA certificates (`KAFKA_CA_CERT`, `POSTGRES_CA_CERT`) are mounted as files.
+  - **Order:** in production, sb-analysis may read fbs's `fb.*` topics until REQ-022. Its Kafka user can also consume `fb.*` and `registry.*` and produce `fb.media.processed.v1`.
+  - **Images:** the platform builds them to `registry.digitalocean.com/securebrand/analysis:<commit>`.
+  - **Account tiers (fix 8):** from `registry.account_request.v1`. Until the registry publishes, a config list of hot accounts by id, empty by default.
+  - **Backfill (fix 9):** from ClickHouse, through the secret `clickhouse-ro` (read-only). Until the platform's writer has filled it, a backfill reads nothing and logs that; never a collector's database.
+  - **Budget:** $5 a day, as a hard stop.
 
 ## Fix 2: its own packaging
 
@@ -45,6 +51,8 @@
   - the namespace `analysis`, the platform's two secrets, and $5 a day;
   - **both workloads at 0 replicas until REQ-022.** Until then sb-analysis reads and writes its draft schemas, while the platform's `content.*` and `analysis.*` topics carry the contract's, and the draft media topic has the contract's name, `content.media.ready.v1`. Running now would misread the platform's media events and put draft records on the platform's topics.
   - The migrate hook still runs. CI fails if production renders a workload with replicas.
+  - **Why the master's "read fbs's topics first" can't simply be switched on:** sb-analysis's results are in its draft format, which is not wire-compatible with the contract's `securebrand.analysis.v1` on the platform's `analysis.*` topics. The same field numbers carry different types: field 3 is text in the contract and a number code in the draft, and field 5 is a number in one and text in the other. Running early needs a switch that keeps results in Postgres and off those topics, while media acknowledgements still go to fbs (`fb.media.processed.v1`). That switch is not in REQ-011, so it is proposed to the owner first; the canary also waits for fixes 3 to 6.
+- **The CA certificates** (`KAFKA_CA_CERT`, `POSTGRES_CA_CERT`) are mounted as files from the same secret. The config gains `postgres.sslrootcert`, so the database's certificate is verified too.
 - **Images on a tag:** pushing `vX.Y.Z` publishes `ghcr.io/abdullah95k/sb-analysis:X.Y.Z`, `ghcr.io/abdullah95k/sb-analysis-media:X.Y.Z` and the chart (`oci://ghcr.io/abdullah95k/charts/sb-analysis`), after the vet and unit tests pass. Production uses the platform's own builds instead (the master, 6 Nov).
 - **CI** checks the chart: lint with both values files, render, Kubernetes schemas (kubeconform), and the monitoring resources.
 - **Alerts:** the analysis's 8 alert rules moved from fbs's chart into `files/alerts.yaml`, renamed to `sb_analysis_*`, with links to this repository's runbook. New tests fail when an alert names a metric sb-analysis does not expose, or links to a runbook heading that does not exist; both were checked by breaking each on purpose.
