@@ -1,12 +1,12 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 6 November 2026 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 6 November 2026, 04:00 Iraq time.*
 
 ## Where it stands
 
 | Area | State |
 |---|---|
-| Code | Built and tested: unit and integration tests with race detection against real Postgres, Redpanda and Valkey. Branch `claude/jolly-bell-mb5sct` in the public repository `Abdullah95k/securebrand-microservices-analysis`, in the draft pull request [#1](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/1) into `main` (created 6 Nov with the owner's approval: the fbs baseline the work was built on, `be2ec2f`). |
+| Code | Built and tested: unit and integration tests with race detection against real Postgres, Redpanda and Valkey. In `main` of the public repository `Abdullah95k/securebrand-microservices-analysis` since 6 Nov (pull request [#1](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/1), merge `0706a71`, after green CI). `main` started as the fbs baseline the work was built on (`be2ec2f`). |
 | Running | **Nowhere.** Never analysed real content; never called an AI provider with real data. |
 | Pilot server | A separate deployment is ready (`deploy/analysis/compose.yml`, image `sb-analysis:dev`, folder `~/securebrand-analysis`). Not confirmed as cloned or built there; **not started**. |
 | Quality | **Not measured.** The evaluation (`docs/analysis/evaluation.md`) is waiting for the owner's approval and API keys on the server. |
@@ -59,3 +59,4 @@
   Adoption comes in its own request after v1.0.0.
 - **6 Nov:** review of the contract draft v0.1 (REQ-015) in [`docs/master/analysis-contract-review.md`](master/analysis-contract-review.md). Review only; nothing built.
 - **6 Nov:** fixed the failing chart test ("deploy" check) in pull request #1. It was a test-only problem: the small test broker holds 256 partitions; the topic setup fills them, and with this branch's 8 extra topics no room was left for Kafka's own consumer-offsets topic, so nothing could read. The test script (`scripts/chart-smoke.py`) now has the broker create that topic first. No topic, field, schema or endpoint changed.
+- **6 Nov, 04:00:** pull request #1 merged into `main` after all three CI checks passed (test, integration, deploy), under the owner's rule that a pull request may be merged once CI is green. Nothing was deployed or started anywhere.
