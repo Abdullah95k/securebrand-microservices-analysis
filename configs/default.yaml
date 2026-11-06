@@ -57,7 +57,9 @@ s3:
 
 analysis:
   # fb: read fb.post.v1, fb.comment.v1, fb.media.ready.v1 and fb.erasure.v1
-  # through the Facebook adapter. content: read the canonical content.* topics.
+  # through the Facebook adapter; results stay in Postgres. content: read the
+  # platform's contract v1.0.0 (content.post.v1, content.comment.v1);
+  # results also go to the contract's analysis.* topics.
   inputs: [fb]
   consumer_group: sb-analysis
   postgres:
@@ -210,7 +212,8 @@ analysis:
   privacy:
     mask_pii: true         # phones and e-mails masked before text leaves
     mask_tagged_users: true # tagged people's names become "@user" before text leaves
-  # What an erasure event (fb.erasure.v1, content.erasure.v1) does here.
+  # What an erasure event (fb.erasure.v1) does here. The contract's
+  # lifecycle.erasure.v1 is dormant (no erasure process yet).
   # The owner keeps all data: "record" stores the request and deletes
   # nothing; "apply" deletes the subject's analysis data; "off" ignores it.
   erasure:

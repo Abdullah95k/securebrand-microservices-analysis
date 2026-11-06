@@ -6,11 +6,11 @@ DEV_COMPOSE = docker compose -f deploy/dev/compose.yml
 ANALYSIS_IMAGE ?= sb-analysis:dev
 MEDIA_IMAGE ?= sb-analysis-media:dev
 
-.PHONY: all build test vet lint generate infra-up infra-down test-integration docker docker-media docker-prebuilt \
+.PHONY: all build test vet lint infra-up infra-down test-integration docker docker-media docker-prebuilt \
 	analysis-image docker-analysis-media analysis-stats analysis-up analysis-down analysis-cmd analysis-status \
 	eval-sample eval-silver eval-label eval-agreement eval-run eval-report eval-cost clean
 
-all: generate build test
+all: build test
 
 build:
 	$(GO) build ./...
@@ -25,11 +25,6 @@ vet:
 # A lint failure fails the target (`a && b || c` ran c, and passed, when b failed).
 lint: vet
 	@if command -v golangci-lint >/dev/null; then golangci-lint run ./...; else echo "golangci-lint not installed; ran go vet only"; fi
-	@if command -v buf >/dev/null; then buf lint; else echo "buf not installed; skipped proto lint"; fi
-
-## Regenerate protobuf code (requires buf + protoc-gen-go).
-generate:
-	buf generate
 
 ## Start Postgres, Redpanda and Valkey for the integration tests: a Compose
 ## project of its own (sb-analysis-dev), never an fbs stack.

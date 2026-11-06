@@ -12,13 +12,15 @@ const (
 	Erasure       = "fb.erasure.v1"
 )
 
-// The draft platform-neutral contract (securebrand.content.v1, analysis.inputs:
-// [content]), and the analysis results (securebrand.analysis.v1).
+// The platform's contract (github.com/abdullah95k/securebrand-contracts,
+// registry/topics.yaml): what sb-analysis reads (analysis.inputs:
+// [content]) and the results it publishes. The platform creates them all.
 const (
-	ContentItem           = "content.item.v1"
+	ContentPost           = "content.post.v1"
+	ContentComment        = "content.comment.v1"
 	ContentMediaReady     = "content.media.ready.v1"
 	ContentMediaProcessed = "content.media.processed.v1"
-	ContentErasure        = "content.erasure.v1"
+	ContentMediaDeleted   = "content.media.deleted.v1"
 	AnalysisResult        = "analysis.result.v1"
 	AnalysisMedia         = "analysis.media.v1"
 	AnalysisAuthor        = "analysis.author.v1"

@@ -1,5 +1,7 @@
 # Canonical content contract (securebrand.content.v1) and analysis results (securebrand.analysis.v1)
 
+> **Retired (6 November 2026, REQ-022).** This draft was never published by any collector. Its protos and generated code were deleted; sb-analysis now uses the platform's contract, [`securebrand-contracts`](https://github.com/abdullah95k/securebrand-contracts) v1.0.0, for its input and its results. See [analysis-contract-adoption.md](../master/analysis-contract-adoption.md). This page is kept as a record.
+
 Every normalisation service (Instagram, TikTok, X, Telegram, YouTube, and later Facebook itself) publishes the same small contract. The analysis service ([design](../design/analysis-service.md)) reads it and does not care which platform an item came from.
 - **Proto files:** `api/proto/securebrand/content/v1/content.proto` and `api/proto/securebrand/analysis/v1/analysis.proto`.
 - **Generated Go:** `gen/go/securebrand/content/v1` and `gen/go/securebrand/analysis/v1`.

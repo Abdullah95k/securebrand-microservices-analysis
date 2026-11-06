@@ -138,9 +138,11 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 				continue
 			case seen:
 				b.Queue(`UPDATE analysis.content_items SET text = $3, media_ids = $4, hashtags = $5, status = 'visible',
-					skip_reason = $6, edit_count = edit_count + 1, last_seen_at = $7, tag_spans = $8
+					skip_reason = $6, edit_count = edit_count + 1, last_seen_at = $7, tag_spans = $8,
+					content_version = GREATEST(content_version, $9), depth = $10, author_id = coalesce($11, author_id)
 					WHERE created_at = $1 AND content_id = $2`,
-					ex.createdAt, it.ContentID, nilIfEmpty(it.Text), it.MediaIDs, it.Hashtags, skip, now, textnorm.SpansToInts(it.RemoveSpans))
+					ex.createdAt, it.ContentID, nilIfEmpty(it.Text), it.MediaIDs, it.Hashtags, skip, now, textnorm.SpansToInts(it.RemoveSpans),
+					it.Version, it.Depth, nilIfEmpty(it.AuthorID))
 				b.Queue(`UPDATE analysis.content_index SET text_hash = $2, state = $3, visible = true, updated_at = now() WHERE content_id = $1`,
 					it.ContentID, hash, state)
 				it.CreatedAt = ex.createdAt
@@ -148,12 +150,13 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 			default:
 				b.Queue(`INSERT INTO analysis.content_items (created_at, content_id, platform, kind, source_id, source_name,
 					thread_id, parent_id, author_key, author_is_source, text, lang_hint, hashtags, media_ids, status, skip_reason,
-					first_seen_at, last_seen_at, tag_spans)
-					VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'visible',$15,$16,$16,$17)
+					first_seen_at, last_seen_at, tag_spans, content_version, depth, author_id)
+					VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'visible',$15,$16,$16,$17,$18,$19,$20)
 					ON CONFLICT (created_at, content_id) DO NOTHING`,
 					it.CreatedAt, it.ContentID, it.Platform, it.Kind, it.SourceID, nilIfEmpty(it.SourceName),
 					nilIfEmpty(it.ThreadID), nilIfEmpty(it.ParentID), nilIfEmptyBytes(it.AuthorKey), it.AuthorIsSource,
-					nilIfEmpty(it.Text), nilIfEmpty(it.LangHint), it.Hashtags, it.MediaIDs, skip, now, textnorm.SpansToInts(it.RemoveSpans))
+					nilIfEmpty(it.Text), nilIfEmpty(it.LangHint), it.Hashtags, it.MediaIDs, skip, now, textnorm.SpansToInts(it.RemoveSpans),
+					it.Version, it.Depth, nilIfEmpty(it.AuthorID))
 				b.Queue(`INSERT INTO analysis.content_index (content_id, created_at, text_hash, state) VALUES ($1,$2,$3,$4)
 					ON CONFLICT (content_id) DO NOTHING`, it.ContentID, it.CreatedAt, hash, state)
 				st.New++

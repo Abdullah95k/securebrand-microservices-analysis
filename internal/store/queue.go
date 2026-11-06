@@ -94,7 +94,8 @@ func (s *Store) LoadItems(ctx context.Context, createdAt []time.Time, ids []stri
 	rows, err := s.DB.Query(ctx, `
 		SELECT c.content_id, c.created_at, c.platform, c.kind, c.source_id, coalesce(c.source_name, ''), coalesce(c.thread_id, ''),
 		       coalesce(c.parent_id, ''), c.author_key, c.author_is_source, coalesce(c.text, ''), coalesce(c.lang_hint, ''),
-		       coalesce(c.hashtags, '{}'), coalesce(c.media_ids, '{}'), c.status, coalesce(c.tag_spans, '{}')
+		       coalesce(c.hashtags, '{}'), coalesce(c.media_ids, '{}'), c.status, coalesce(c.tag_spans, '{}'),
+		       c.content_version, c.depth, coalesce(c.author_id, '')
 		FROM unnest($1::timestamptz[], $2::text[]) AS k(created_at, content_id)
 		JOIN analysis.content_items c ON c.created_at = k.created_at AND c.content_id = k.content_id`, createdAt, ids)
 	if err != nil {
@@ -106,7 +107,8 @@ func (s *Store) LoadItems(ctx context.Context, createdAt []time.Time, ids []stri
 		var it core.Item
 		var spans []int32
 		if err := rows.Scan(&it.ContentID, &it.CreatedAt, &it.Platform, &it.Kind, &it.SourceID, &it.SourceName, &it.ThreadID,
-			&it.ParentID, &it.AuthorKey, &it.AuthorIsSource, &it.Text, &it.LangHint, &it.Hashtags, &it.MediaIDs, &it.Status, &spans); err != nil {
+			&it.ParentID, &it.AuthorKey, &it.AuthorIsSource, &it.Text, &it.LangHint, &it.Hashtags, &it.MediaIDs, &it.Status, &spans,
+			&it.Version, &it.Depth, &it.AuthorID); err != nil {
 			return nil, err
 		}
 		it.RemoveSpans = textnorm.IntsToSpans(spans)

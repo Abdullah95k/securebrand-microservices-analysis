@@ -10,13 +10,13 @@
 | Running | **Nowhere.** Never analysed real content; never called an AI provider with real data. From 6 Nov, testing happens on the production cluster, at full scale (owner's D-026): no new runs on the shared server. |
 | Pilot server | **No new runs there** (owner's D-026, 6 Nov). The Compose deployment next to the fbs pilot (`deploy/analysis/compose.yml`) stays in the repository; it was never started. |
 | Quality | **Not measured.** The evaluation (`docs/analysis/evaluation.md`, about $3–5) is approved; it runs on the production cluster once fbs collects there (owner, 6 Nov). |
-| Contract | Reads `fb.*` through its Facebook adapter (`analysis.inputs: [fb]`). The platform's contract **v1.0.0 is published** (6 Nov); adopting it (REQ-022) comes after the fixes REQ-011 lists before the canary. It retires this repository's draft `securebrand.content.v1` and its copy of `securebrand.analysis.v1`. Publishes `analysis.result.v1`, `analysis.media.v1`, `analysis.author.v1`, `analysis.topic.v1`; nobody consumes them yet. |
+| Contract | **Adopting v1.0.0 (REQ-022), step 1 in review:** reads the contract's `content.post.v1` and `content.comment.v1` (`analysis.inputs: [content]`) and publishes the contract's `securebrand.analysis.v1`, checked by the contract's conformance test in CI. The draft `securebrand.content.v1` and our copy of `securebrand.analysis.v1` are deleted. Still reads `fb.*` too (`[fb]`, the default), but those results stay in Postgres. Media (part C) and captions (part E) come next. Record: [`analysis-contract-adoption.md`](master/analysis-contract-adoption.md). |
 | Schema Registry | sb-analysis registers nothing (standing instruction: no `securebrand.content.*` until the master publishes v1). **But the pilot's shared registry already holds 9 subjects from this repository's copy** (confirmed 6 Nov, 00:58 Iraq time): the 4 `content.*` subjects, `securebrand/content/v1/content.proto`, and the 4 `analysis.*` subjects, almost certainly from a `make pilot-up` run from this copy around 1 November. The master (6 Nov): they don't block the platform, since staging and production get their own registry. **Leave them in place; delete nothing.** |
 
 ## Work in progress (from 6 Nov)
 
-- **REQ-011, the fixes:** one row per fix in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md). Fixes 1 to 6 (all those before the canary) and 8 (the real-time lane) are merged. Fix 9's plan, [`analysis-backfill-plan.md`](master/analysis-backfill-plan.md), is in review. Fix 7 (the quality evaluation) waits for fbs to collect in production. REQ-022 (the contract) is next.
-- **REQ-022, adopting contract v1.0.0:** after the fixes REQ-011 lists before the canary; its record will be `docs/master/analysis-contract-adoption.md`.
+- **REQ-011, the fixes:** one row per fix in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md). Fixes 1 to 6 (all those before the canary) and 8 (the real-time lane) are merged, and so is fix 9's plan ([`analysis-backfill-plan.md`](master/analysis-backfill-plan.md)). Fix 7 (the quality evaluation) waits for fbs to collect in production.
+- **REQ-022, adopting contract v1.0.0:** in progress, in steps. Step 1 (contract in and out, posts and comments) is in review. Next: the media hand-off, the `authors` commands by account ID, captions as transcript, and the full end-to-end test. Record: [`docs/master/analysis-contract-adoption.md`](master/analysis-contract-adoption.md).
 - **Questions for the master:** [`docs/master/questions-for-master-2026-11-06.md`](master/questions-for-master-2026-11-06.md).
 
 ## Reports for the master (5 Nov)
@@ -99,3 +99,10 @@
 - **6 Nov, REQ-011 fix 8 (in review):** items from hot-tier accounts go to the real-time lane, along with mentions of tracked entities; everything else goes batch. The hot tier is a config list plus the clients' watchlists until the platform's registry publishes tiers. All new settings; nothing removed.
 - **6 Nov:** REQ-011 fix 8 merged (pull request #9, `8cc528d`). The master re-pinned production to fix 6's commit; the platform's ClickHouse keeps one table per message type plus `_latest` views, in database `securebrand`.
 - **6 Nov, REQ-011 fix 9 (plan, in review):** a backfill reads older items from ClickHouse through `clickhouse-ro`. It goes through the same adapter as Kafka, stays in the batch lane within the daily budget, can resume after a stop, and shows a dry-run estimate first. Built after REQ-022, with the owner's approval.
+- **6 Nov:** REQ-011 fix 9's plan merged (pull request #10, `4002dfd`).
+- **6 Nov, REQ-022 step 1 (in review):** the contract in and out.
+  - **Reads** `content.post.v1` and `content.comment.v1` when `analysis.inputs` has `content` (it meant the never-published draft before).
+  - **Publishes** the contract's `securebrand.analysis.v1` with the headers `sb-type` and `sb-contract`; every result passes the contract's conformance check in CI.
+  - **Deleted, as REQ-022 asked:** the draft `securebrand.content.v1`, our copy of `securebrand.analysis.v1`, and the draft topics `content.item.v1` and `content.erasure.v1` from the local test topic list. Nobody produced or consumed them.
+  - **Changed:** results of fbs's own `fb.*` items stay in Postgres (they have no contract IDs).
+  - **Added:** migration `00004`, three columns on `analysis.content_items`. Nothing removed.

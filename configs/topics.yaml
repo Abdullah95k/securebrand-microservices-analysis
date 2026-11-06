@@ -4,13 +4,14 @@
 # never run kafka-topics there. Names get kafka.topic_prefix prepended.
 replicas: 3
 topics:
-  # The draft content contract (securebrand.content.v1), retired when the
-  # platform's contract v1.0.0 is adopted.
-  - {name: content.item.v1,            partitions: 96, retention: 168h}
+  # The platform's contract v1.0.0 (github.com/abdullah95k/securebrand-contracts):
+  # what sb-analysis reads, for local and test brokers.
+  - {name: content.post.v1,            partitions: 96, retention: 168h}
+  - {name: content.comment.v1,         partitions: 96, retention: 168h}
   - {name: content.media.ready.v1,     partitions: 24, retention: 168h}
   - {name: content.media.processed.v1, partitions: 24, retention: 168h}
-  - {name: content.erasure.v1,         partitions: 6,  retention: 720h}
-  # Analysis results (securebrand.analysis.v1).
+  - {name: content.media.deleted.v1,   partitions: 24, retention: 168h}
+  # Analysis results (the contract's securebrand.analysis.v1).
   - {name: analysis.result.v1,         partitions: 96, retention: 168h}
   - {name: analysis.media.v1,          partitions: 24, retention: 168h}
   - {name: analysis.author.v1,         partitions: 12, retention: 720h}

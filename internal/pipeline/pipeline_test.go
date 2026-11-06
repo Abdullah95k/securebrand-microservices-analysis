@@ -97,13 +97,14 @@ var at = time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Second)
 
 func post() *core.Item {
 	return &core.Item{ContentID: "fb:post:1", Platform: "facebook", Kind: core.KindPost, SourceID: "fb:page:1", SourceName: "Asiacell Iraq",
-		CreatedAt: at.Add(-time.Hour), ObservedAt: at, Text: "عرض جديد على باقات الانترنت", Status: core.StatusVisible}
+		CreatedAt: at.Add(-time.Hour), ObservedAt: at, Text: "عرض جديد على باقات الانترنت", Status: core.StatusVisible, Version: 1}
 }
 
 func comment(n int, text string) *core.Item {
 	id := "fb:comment:" + string(rune('0'+n))
 	return &core.Item{ContentID: id, Platform: "facebook", Kind: core.KindComment, SourceID: "fb:page:1", ThreadID: "fb:post:1",
-		ParentID: "fb:post:1", AuthorKey: []byte{byte(n)}, CreatedAt: at, ObservedAt: at, Text: text, Status: core.StatusVisible}
+		ParentID: "fb:post:1", AuthorKey: []byte{byte(n)}, CreatedAt: at, ObservedAt: at, Text: text, Status: core.StatusVisible,
+		Version: 1} // a contract item: its results are published
 }
 
 func TestBatchLaneEndToEnd(t *testing.T) {

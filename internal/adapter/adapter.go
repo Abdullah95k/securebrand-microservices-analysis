@@ -1,12 +1,10 @@
-// Package adapter turns input records into canonical analysis events: the
-// canonical content.* topics (securebrand.content.v1) natively, and the
-// Facebook collector's fb.* topics through the Facebook adapter, so the
-// service runs before any normalisation service exists.
+// Package adapter turns input records into analysis events: the platform's
+// contract (content.post.v1 and content.comment.v1, contract.go) and the
+// Facebook collector's own fb.* topics (the Facebook adapter).
 package adapter
 
 import (
 	"encoding/hex"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -14,7 +12,6 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	contentv1 "github.com/abdullah95k/securebrand-microservices-analysis/gen/go/securebrand/content/v1"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/textnorm"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/topics"
@@ -35,7 +32,8 @@ type Decoder struct {
 	Content bool
 }
 
-// NewDecoder enables the adapters named in inputs ("fb", "content").
+// NewDecoder enables the adapters named in inputs: "fb" (fbs's own topics)
+// and "content" (the platform's contract).
 func NewDecoder(inputs []string) Decoder {
 	var d Decoder
 	for _, in := range inputs {
@@ -56,7 +54,7 @@ func (d Decoder) ItemTopics() []string {
 		ts = append(ts, topics.Post, topics.Comment, topics.Erasure)
 	}
 	if d.Content {
-		ts = append(ts, topics.ContentItem, topics.ContentErasure)
+		ts = append(ts, topics.ContentPost, topics.ContentComment)
 	}
 	return ts
 }
@@ -69,7 +67,7 @@ func (d Decoder) ContentTopics() []string {
 		ts = append(ts, topics.Post, topics.Comment)
 	}
 	if d.Content {
-		ts = append(ts, topics.ContentItem)
+		ts = append(ts, topics.ContentPost, topics.ContentComment)
 	}
 	return ts
 }
@@ -79,9 +77,6 @@ func (d Decoder) MediaTopics() []string {
 	var ts []string
 	if d.FB {
 		ts = append(ts, topics.MediaReady)
-	}
-	if d.Content {
-		ts = append(ts, topics.ContentMediaReady)
 	}
 	return ts
 }
@@ -116,30 +111,8 @@ func (d Decoder) Decode(topic string, value []byte) ([]Event, error) {
 			return []Event{{Erasure: e}}, nil
 		}
 		return nil, nil
-	case topics.ContentItem:
-		var m contentv1.ContentItem
-		if err := proto.Unmarshal(value, &m); err != nil {
-			return nil, err
-		}
-		if m.ContentId == "" {
-			return nil, fmt.Errorf("content item without content_id")
-		}
-		return []Event{{Item: FromContentItem(&m)}}, nil
-	case topics.ContentMediaReady:
-		var m contentv1.MediaReady
-		if err := proto.Unmarshal(value, &m); err != nil {
-			return nil, err
-		}
-		return []Event{{Media: FromContentMediaReady(&m)}}, nil
-	case topics.ContentErasure:
-		var m contentv1.Erasure
-		if err := proto.Unmarshal(value, &m); err != nil {
-			return nil, err
-		}
-		if e := FromContentErasure(&m); e != nil {
-			return []Event{{Erasure: e}}, nil
-		}
-		return nil, nil
+	case topics.ContentPost, topics.ContentComment:
+		return decodeContract(topic, value)
 	}
 	return nil, nil
 }
@@ -310,134 +283,6 @@ func FromFBErasure(e *fbv1.ErasureEvent) *core.Erasure {
 			return nil
 		}
 		return &core.Erasure{RequestID: requestID(e.RequestId, e.EventId), Subject: "source", SourceID: FBPageID(e.PageId)}
-	}
-	return nil
-}
-
-// Canonical ---------------------------------------------------------------------
-
-var platforms = map[contentv1.Platform]string{
-	contentv1.Platform_PLATFORM_FACEBOOK:  "facebook",
-	contentv1.Platform_PLATFORM_INSTAGRAM: "instagram",
-	contentv1.Platform_PLATFORM_TIKTOK:    "tiktok",
-	contentv1.Platform_PLATFORM_X:         "x",
-	contentv1.Platform_PLATFORM_TELEGRAM:  "telegram",
-	contentv1.Platform_PLATFORM_YOUTUBE:   "youtube",
-}
-
-// PlatformName returns the store's name of a platform.
-func PlatformName(p contentv1.Platform) string {
-	if n, ok := platforms[p]; ok {
-		return n
-	}
-	return "unknown"
-}
-
-// PlatformEnum is the inverse of PlatformName.
-func PlatformEnum(name string) contentv1.Platform {
-	for k, v := range platforms {
-		if v == name {
-			return k
-		}
-	}
-	return contentv1.Platform_PLATFORM_UNSPECIFIED
-}
-
-// KindEnum maps a store kind to the contract's enum.
-func KindEnum(kind string) contentv1.ContentKind {
-	switch kind {
-	case core.KindPost:
-		return contentv1.ContentKind_CONTENT_KIND_POST
-	case core.KindComment:
-		return contentv1.ContentKind_CONTENT_KIND_COMMENT
-	case core.KindReply:
-		return contentv1.ContentKind_CONTENT_KIND_REPLY
-	}
-	return contentv1.ContentKind_CONTENT_KIND_UNSPECIFIED
-}
-
-// FromContentItem maps the canonical contract.
-func FromContentItem(m *contentv1.ContentItem) *core.Item {
-	it := &core.Item{
-		ContentID:      m.ContentId,
-		Platform:       PlatformName(m.Platform),
-		Kind:           core.KindComment,
-		SourceID:       m.SourceId,
-		SourceName:     m.SourceName,
-		ThreadID:       m.ThreadId,
-		ParentID:       m.ParentId,
-		AuthorKey:      m.AuthorKey,
-		AuthorIsSource: m.AuthorIsSource,
-		CreatedAt:      ts(m.CreatedAt),
-		ObservedAt:     ts(m.ObservedAt),
-		Text:           m.Text,
-		LangHint:       m.LangHint,
-		Hashtags:       m.Hashtags,
-		Status:         core.StatusVisible,
-	}
-	switch m.Kind {
-	case contentv1.ContentKind_CONTENT_KIND_POST:
-		it.Kind = core.KindPost
-	case contentv1.ContentKind_CONTENT_KIND_REPLY:
-		it.Kind = core.KindReply
-	}
-	if it.CreatedAt.IsZero() {
-		it.CreatedAt = it.ObservedAt
-	}
-	for _, md := range m.Media {
-		if md.MediaId != "" {
-			it.MediaIDs = append(it.MediaIDs, md.MediaId)
-		}
-	}
-	for _, mn := range m.Mentions {
-		if mn.Type == "user" {
-			if sp, ok := textnorm.UTF16Span(m.Text, int(mn.Offset), int(mn.Length)); ok {
-				it.RemoveSpans = append(it.RemoveSpans, sp)
-			}
-		}
-	}
-	switch m.Status {
-	case contentv1.ContentStatus_CONTENT_STATUS_DELETED:
-		it.Status = core.StatusDeleted
-	case contentv1.ContentStatus_CONTENT_STATUS_REDACTED:
-		it.Status, it.Text, it.MediaIDs = core.StatusRedacted, "", nil
-	}
-	return it
-}
-
-// FromContentMediaReady maps a canonical media announcement; acks go to
-// content.media.processed.v1.
-func FromContentMediaReady(m *contentv1.MediaReady) *core.MediaJob {
-	return &core.MediaJob{
-		MediaID:        m.MediaId,
-		OwnerContentID: m.OwnerContentId,
-		Platform:       PlatformName(m.Platform),
-		SourceID:       m.SourceId,
-		Kind:           strings.ToLower(strings.TrimPrefix(m.Kind.String(), "MEDIA_KIND_")),
-		Bucket:         m.Bucket,
-		Key:            m.Key,
-		Size:           m.Size,
-		ContentType:    m.ContentType,
-		DurationMS:     m.DurationMs,
-		AltText:        m.AltText,
-		DeleteAfter:    ts(m.DeleteAfter),
-		AckFormat:      "content",
-	}
-}
-
-// FromContentErasure maps a canonical erasure.
-func FromContentErasure(e *contentv1.Erasure) *core.Erasure {
-	switch e.Subject {
-	case contentv1.ErasureSubject_ERASURE_SUBJECT_AUTHOR:
-		if len(e.AuthorKey) == 0 {
-			return nil
-		}
-		return &core.Erasure{RequestID: requestID(e.RequestId, e.EventId), Subject: "author", AuthorKey: e.AuthorKey}
-	case contentv1.ErasureSubject_ERASURE_SUBJECT_SOURCE:
-		if e.SourceId == "" {
-			return nil
-		}
-		return &core.Erasure{RequestID: requestID(e.RequestId, e.EventId), Subject: "source", SourceID: e.SourceId}
 	}
 	return nil
 }

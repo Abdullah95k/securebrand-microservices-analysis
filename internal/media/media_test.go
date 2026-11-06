@@ -202,8 +202,9 @@ func TestWorkerAnalysesSkipsAndFails(t *testing.T) {
 	objs["b/img"] = pngBytes(t, 2000, 1000)
 	objs["b/bad"] = []byte("garbage")
 	objs["b/canon"] = pngBytes(t, 200, 200)
-	canon := job("canon", "image") // canonical content.media.ready.v1 kind
-	canon.AckFormat = "content"
+	canon := job("canon", "image") // announced through the contract (content.media.ready.v1)
+	canon.MediaID, canon.Key, canon.OwnerContentID, canon.SourceID = "fb:media:canon", "canon", "fb:post:1", "fb:account:1"
+	canon.AckFormat = store.AckContract
 	jobs := []*core.MediaJob{job("img", "photo"), job("stk", "sticker"), job("bad", "photo"), job("gone", "photo"), canon}
 	if _, err := st.InsertMediaJobs(ctx, jobs, "analysis"); err != nil {
 		t.Fatal(err)
@@ -230,13 +231,19 @@ func TestWorkerAnalysesSkipsAndFails(t *testing.T) {
 		}
 	}
 	var n int
-	_ = st.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.media_analyses WHERE media_id IN ('img', 'canon') AND description <> ''`).Scan(&n)
+	_ = st.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.media_analyses WHERE media_id IN ('img', 'fb:media:canon') AND description <> ''`).Scan(&n)
 	if n != 2 {
-		t.Fatal("image analyses not stored (Facebook photo and canonical image)")
+		t.Fatal("image analyses not stored (Facebook photo and contract image)")
 	}
-	_ = st.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.outbox WHERE topic = 'content.media.processed.v1' AND key = 'canon'`).Scan(&n)
+	// The contract's image is published on analysis.media.v1; fbs's photo
+	// is only acknowledged on fbs's topic.
+	_ = st.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.outbox WHERE topic = 'analysis.media.v1' AND key = 'fb:media:canon'`).Scan(&n)
 	if n != 1 {
-		t.Fatal("canonical image not acknowledged on content.media.processed.v1")
+		t.Fatal("contract image not published on analysis.media.v1")
+	}
+	_ = st.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.outbox WHERE topic = 'analysis.media.v1' AND key = 'img'`).Scan(&n)
+	if n != 0 {
+		t.Fatal("fbs's photo published on the contract's analysis.media.v1")
 	}
 	_ = st.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.provider_requests WHERE route = 'image' AND status = 'done'`).Scan(&n)
 	if n != 2 {

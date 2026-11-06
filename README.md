@@ -9,9 +9,14 @@ SecureBrand's content analysis service. For every post and comment it finds:
 - intent, emotion, toxicity, spam, sarcasm and urgency;
 - ad types, and legal or policy flags for human review.
 
-Images and videos get logos, text in the image, a description, entities and topics. Bot and coordinated-account detection runs on authors. Results go to Postgres (schema `analysis`, every version kept) and to Kafka (`analysis.*`).
+Images and videos get logos, text in the image, a description, entities and topics. Bot and coordinated-account detection runs on authors. Results go to Postgres (schema `analysis`, every version kept) and, for items that came through the platform's contract, to Kafka (`analysis.*`, the contract's `securebrand.analysis.v1`).
 
-It reads what fbs collects from Facebook (`fb.*` topics) through a Facebook adapter. The platform's shared contract (`securebrand-contracts` v1.0.0) is adopted next. fbs itself lives in its own repository, [`Abdullah95k/securebrand-microservices`](https://github.com/Abdullah95k/securebrand-microservices); this repository takes only fbs's public protos and migrations, as a Go module dependency.
+It reads two inputs, chosen by `analysis.inputs`:
+
+- `content`: the platform's shared contract (`securebrand-contracts` v1.0.0): `content.post.v1` and `content.comment.v1`;
+- `fb`: what fbs collects from Facebook (`fb.*` topics), through a Facebook adapter. These results stay in Postgres: they have no contract IDs, so they can't go on the contract's `analysis.*` topics.
+
+fbs itself lives in its own repository, [`Abdullah95k/securebrand-microservices`](https://github.com/Abdullah95k/securebrand-microservices); this repository takes only fbs's public protos and migrations, as a Go module dependency.
 
 ## Documents
 
@@ -51,7 +56,7 @@ make test-integration
 make lint
 ```
 
-Protobuf code is generated with `buf` (`make generate`); CI checks it is up to date and that the protos stay compatible.
+The messages come from the platform's contract, the Go module `github.com/abdullah95k/securebrand-contracts` (pinned at v1.0.0); this repository has no protos of its own. fbs's `securebrand.fb.v1` comes from fbs's module.
 
 ## Configuration
 
@@ -94,8 +99,6 @@ cmd/sb-analysis      the service and its owner commands
 cmd/sb-eval          the quality evaluation tool
 internal/            adapter, pipeline, prompt, provider, store, media, bots, curate, taxonomy, entities, ...
 internal/platform/   Kafka, Postgres, logging, metrics, ops server, S3
-api/proto            securebrand.analysis.v1 and the draft securebrand.content.v1
-gen/go               generated protobuf code
 migrations           the analysis's SQL migrations (schema "analysis")
 configs              default config, topics for local brokers, entity and taxonomy seeds
 deploy/docker        the images
