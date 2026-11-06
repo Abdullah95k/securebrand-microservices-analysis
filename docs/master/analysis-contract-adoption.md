@@ -11,10 +11,10 @@
 |---|---|---|
 | A | Contract in: posts and comments (`content.post.v1`, `content.comment.v1`) | **Merged** (step 1, `cbf46fd`) |
 | B | Contract out: `securebrand.analysis.v1` from the contract; delete our own protos | **Merged** (step 1, `cbf46fd`) |
-| C | The media hand-off (`content.media.ready.v1`, `.processed.v1`, `.deleted.v1`) | **Built** (step 2, in review) |
-| D | Bots keyed by the author's account ID; hidden authors left out | Mostly built in step 1: scoring is keyed by `author.account.id`, hidden authors are left out, and `AuthorFlag` carries `author_id`. Still to do: the owner's `authors` commands take and show the account ID (today a hex key). |
-| E | Captions used as the transcript (`transcript_source`) | To do |
-| F | The full end-to-end test: every kind produced, a deletion and an estimate | Step 1 covers posts, comments, replies and a deletion; the rest comes with C and E |
+| C | The media hand-off (`content.media.ready.v1`, `.processed.v1`, `.deleted.v1`) | **Merged** (step 2, `a0d6a6f`) |
+| D | Bots keyed by the author's account ID; hidden authors left out | **Built** (step 1, merged; the `authors` commands in step 3, in review) |
+| E | Captions used as the transcript (`transcript_source`) | **Built** (step 3, in review) |
+| F | The full end-to-end test: every kind produced, a deletion and an estimate | **Built** (step 4, in review) |
 
 ## Step 1: contract in and out
 
@@ -146,6 +146,85 @@ When an announced file's SHA-256 matches a file already analysed under another m
 - The existing media test still passes: fbs's acknowledgements are as before.
 - All unit tests with race detection, all integration tests and golangci-lint pass.
 - **Not yet:** conformance checks on `MediaProcessed` and `MediaAnalysis`. They need contract v1.2.0 (question 1), and come with part F.
+
+## Step 3: authors by account ID, and captions
+
+### Part D: the owner's `authors` commands
+
+- **Since step 1:**
+  - bot scoring of contract items is keyed by the author's account ID (`author.account.id`; for a post without an author, its account);
+  - authors the platform hides are never scored;
+  - `AuthorFlag` is published only for authors with an account ID, with `author_id` set and keyed by it.
+- **Now:** `sb-analysis authors list` shows the account ID for those authors (fbs's authors keep their hex key). `authors mark --key` and `authors log --key` take either form, and `mark` takes the platform from the account ID.
+
+### Part E: captions as the transcript
+
+- **Which captions:** a contract post's caption track is stored with the post (`content_items.captions`, with its language and source).
+  - The uploader's own captions come first, then the platform's speech-to-text captions.
+  - Among equals, the post's language comes first.
+  - A machine translation is never used: it isn't what was said.
+- **How they're used:** a video belonging to that post uses the captions as its transcript, and no speech-to-text is bought. The captions leave masked like any transcript: phone numbers and e-mails are hidden (D-010).
+- **What's published:** `MediaAnalysis` carries `transcript_lang`, and `transcript_source`, which is `platform_captions` or the speech-to-text model's name.
+- **Edits:** a re-scrape with captions added or changed updates them, even when the post's text is the same.
+
+### Changed (for the owner)
+
+- **Migration `00006`** adds `captions`, `captions_lang` and `captions_source` to `analysis.content_items`. Nothing removed.
+- **The `authors` output:** its first column is now headed AUTHOR, not AUTHOR KEY, and shows account IDs as text.
+- **Stored media results** gain `transcript_lang` and `transcript_source`.
+
+### Evidence
+
+- **`TestWorkerVideoUsesCaptions`** (Postgres and ffmpeg): a TikTok video whose post has captions.
+  - No speech-to-text is bought.
+  - The transcript is the captions, with `platform_captions` and `ar`, stored and published.
+  - The caption's phone number never reaches the provider.
+- **`TestWorkerVideoSpeechCost`:** without captions, the transcript's source is the speech-to-text model.
+- **`TestBestCaptions`:** the order of choice, and never a translation. The contract's TikTok sample gives its ASR captions.
+- **`TestAuthorKeysAndLabels`:** the commands read and print account IDs and hex keys.
+- All unit tests with race detection, all integration tests and golangci-lint pass.
+
+## Step 4: every kind, end to end
+
+**`TestContractEveryKindEndToEnd`** (Postgres and Redpanda; runs in CI's integration job). A fake platform publishes, with the contract's headers:
+- a post whose time is an **estimate**: "1d", precision DAY, at 00:00 Iraq time, as D-013 says;
+- 32 copies of one comment from one account across four posts, so bot scoring flags it;
+- a normal comment, later **deleted by a partial event**;
+- three files: an image to analyse, a sticker (skipped by policy), and an image the platform **deletes** before analysis.
+
+sb-analysis runs ingest, pipeline, media and relay. Then the owner's two commands run: bot scoring, and the approval of a new topic.
+
+**Every kind sb-analysis produces then comes off Kafka** with `sb-type` and `sb-contract: 1.0.0`, and passes the contract's checks:
+
+| Kind | Topic | Check |
+|---|---|---|
+| `ItemAnalysis` (34 items) | `analysis.result.v1` | `conformance.ItemAnalysis`, production mode |
+| `MediaAnalysis` | `analysis.media.v1` | the rules of v1.2.0's `conformance.MediaAnalysis` |
+| `AuthorFlag` (the copying account) | `analysis.author.v1` | the rules of v1.2.0's `conformance.AuthorFlag` |
+| `TopicUpdate` (the approved topic) | `analysis.topic.v1` | the rules of v1.2.0's `conformance.TopicUpdate` |
+| `MediaProcessed` (`PROCESSED`, `SKIPPED`) | `content.media.processed.v1` | the rules of v1.2.0's `conformance.MediaProcessed` |
+
+Also checked:
+- the estimated time is kept as the post's time, and published as its `created_at`;
+- the deleted comment is marked deleted;
+- the deleted file is never fetched or acknowledged.
+- **The test catches a broken message:** with the `reason` removed from acknowledgements on purpose, it failed on the sticker's `SKIPPED`.
+
+**Why "the rules of v1.2.0":** v1.0.0's `conformance` package has no checks for those four kinds. The test applies v1.2.0's rules itself, and switches to the package's own functions once the owner agrees to pin v1.2.0 (question 1).
+
+**Two fixes the checks led to** (merged with step 3):
+- a transcript always carries its language (`und` when unknown) and its source;
+- a `document` keeps its type.
+
+## Switching on (after the owner's approval)
+
+REQ-022 is complete with step 4. Production stays at 0 replicas until the owner decides. To switch on:
+1. **The input:** set `analysis.inputs` in `values-production.yaml`:
+   - `[content]` when the platform's collectors publish the contract;
+   - `[fb]` (the early-running option) until then, with results kept in Postgres;
+   - or both.
+2. **The master restores write access** to `analysis.*` for `analysis-kafka`: it asked to be told in the same message as the commit to pin.
+3. **Replicas up** (`components.analysis.replicas`, `components.analysis-media.replicas`), with the $5 daily budget.
 
 ### Questions for the master
 

@@ -10,13 +10,13 @@
 | Running | **Nowhere.** Never analysed real content; never called an AI provider with real data. From 6 Nov, testing happens on the production cluster, at full scale (owner's D-026): no new runs on the shared server. |
 | Pilot server | **No new runs there** (owner's D-026, 6 Nov). The Compose deployment next to the fbs pilot (`deploy/analysis/compose.yml`) stays in the repository; it was never started. |
 | Quality | **Not measured.** The evaluation (`docs/analysis/evaluation.md`, about $3–5) is approved; it runs on the production cluster once fbs collects there (owner, 6 Nov). |
-| Contract | **Adopting v1.0.0 (REQ-022), in steps.** Step 1 merged (`cbf46fd`): reads the contract's `content.post.v1` and `content.comment.v1` (`analysis.inputs: [content]`) and publishes the contract's `securebrand.analysis.v1`, checked by the contract's conformance test in CI; the draft protos are deleted. Step 2 (in review): the media hand-off (`content.media.ready.v1`, `.processed.v1` as `sb-analysis`, `.deleted.v1`). Still reads `fb.*` too (`[fb]`, the default); those results stay in Postgres. Record: [`analysis-contract-adoption.md`](master/analysis-contract-adoption.md). |
+| Contract | **Adopting v1.0.0 (REQ-022), in steps.** Merged: step 1 (`cbf46fd`): posts and comments in, the contract's `securebrand.analysis.v1` out; step 2 (`a0d6a6f`): the media hand-off. In review: step 3 (the `authors` commands by account ID, captions as the video transcript) and step 4 (an end-to-end test where every kind sb-analysis produces passes the contract's checks). Still reads `fb.*` too (`[fb]`, the default); those results stay in Postgres. Record: [`analysis-contract-adoption.md`](master/analysis-contract-adoption.md). |
 | Schema Registry | sb-analysis registers nothing (standing instruction: no `securebrand.content.*` until the master publishes v1). **But the pilot's shared registry already holds 9 subjects from this repository's copy** (confirmed 6 Nov, 00:58 Iraq time): the 4 `content.*` subjects, `securebrand/content/v1/content.proto`, and the 4 `analysis.*` subjects, almost certainly from a `make pilot-up` run from this copy around 1 November. The master (6 Nov): they don't block the platform, since staging and production get their own registry. **Leave them in place; delete nothing.** |
 
 ## Work in progress (from 6 Nov)
 
 - **REQ-011, the fixes:** one row per fix in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md). Fixes 1 to 6 (all those before the canary) and 8 (the real-time lane) are merged, and so is fix 9's plan ([`analysis-backfill-plan.md`](master/analysis-backfill-plan.md)). Fix 7 (the quality evaluation) waits for fbs to collect in production.
-- **REQ-022, adopting contract v1.0.0:** in progress, in steps. Step 1 (contract in and out, posts and comments) is merged; step 2 (the media hand-off) is in review. Next: the `authors` commands by account ID, captions as transcript, and the full end-to-end test. Record: [`docs/master/analysis-contract-adoption.md`](master/analysis-contract-adoption.md).
+- **REQ-022, adopting contract v1.0.0:** steps 1 (contract in and out) and 2 (the media hand-off) are merged; steps 3 (the `authors` commands by account ID, captions as transcript) and 4 (the every-kind end-to-end test) are in review. With them REQ-022 is complete; switching production on waits for the owner (see "Switching on" in the record). Record: [`docs/master/analysis-contract-adoption.md`](master/analysis-contract-adoption.md).
 - **Questions for the master:** [`docs/master/questions-for-master-2026-11-06.md`](master/questions-for-master-2026-11-06.md).
 
 ## Reports for the master (5 Nov)
@@ -115,3 +115,12 @@
   - **Policy:** a new setting, `analysis.media.contract_kinds`, says which (type, role) pairs are analysed.
   - **Reuse:** a file identical to one already analysed (same SHA-256) reuses that analysis.
   - **Added:** migration `00005`, five columns and an index. fbs's acknowledgements are unchanged.
+- **6 Nov:** REQ-022 step 2 merged (pull request #12, `a0d6a6f`).
+- **6 Nov, REQ-022 step 3 (in review):**
+  - **`authors` commands:** `sb-analysis authors list`, `mark` and `log` show and take authors' account IDs.
+  - **Captions:** a contract post's captions become its video's transcript, so no speech-to-text is bought. `MediaAnalysis` says where the transcript came from (`transcript_source`).
+  - **Added:** migration `00006`, three columns on `analysis.content_items`. Nothing removed.
+- **6 Nov, REQ-022 step 4 (in review, with step 3):**
+  - **The test:** a fake platform publishes posts (one with an estimated time), comments, a partial deletion and media, including a file deleted before analysis.
+  - **What it checks:** every kind sb-analysis produces comes off Kafka with the contract's headers and passes the contract's checks: `ItemAnalysis`, `MediaAnalysis`, `AuthorFlag`, `TopicUpdate`, `MediaProcessed`.
+  - **Small fixes:** a media transcript always carries its language and source; documents keep their type.

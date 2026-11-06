@@ -80,6 +80,10 @@ func FromContractPost(m *contentv1.Post) *core.Item {
 	}
 	it.Text, it.RemoveSpans = joinTexts(m.GetTitle(), m.GetText(), m.GetDescription())
 	it.LangHint = firstNonEmpty(m.GetText().GetPlatformLanguage(), m.GetTitle().GetPlatformLanguage(), m.GetDescription().GetPlatformLanguage())
+	if c := bestCaptions(m.GetCaptions(), it.LangHint); c != nil {
+		it.Captions, it.CaptionsLang = strings.TrimSpace(c.GetText()), c.GetLanguage()
+		it.CaptionsSource = enumName(c.GetSource().String(), "CAPTION_SOURCE_")
+	}
 	for _, md := range m.GetMedia() {
 		if md.GetMediaId() != "" {
 			it.MediaIDs = append(it.MediaIDs, md.GetMediaId())
@@ -240,4 +244,35 @@ func PlatformName(code string) string {
 		return n
 	}
 	return code
+}
+
+// bestCaptions picks the caption track used as the post's video transcript:
+// the uploader's own captions first, then the platform's speech-to-text;
+// among equals, the post's language first. Machine translations are never
+// used: they aren't what was said.
+func bestCaptions(tracks []*contentv1.CaptionTrack, lang string) *contentv1.CaptionTrack {
+	rank := func(c *contentv1.CaptionTrack) int {
+		r := 0
+		switch c.GetSource() {
+		case contentv1.CaptionSource_CAPTION_SOURCE_UPLOADER:
+		case contentv1.CaptionSource_CAPTION_SOURCE_PLATFORM_ASR, contentv1.CaptionSource_CAPTION_SOURCE_UNSPECIFIED:
+			r = 2
+		default:
+			return -1
+		}
+		if lang == "" || c.GetLanguage() != lang {
+			r++
+		}
+		return r
+	}
+	var best *contentv1.CaptionTrack
+	for _, c := range tracks {
+		if strings.TrimSpace(c.GetText()) == "" || rank(c) < 0 {
+			continue
+		}
+		if best == nil || rank(c) < rank(best) {
+			best = c
+		}
+	}
+	return best
 }

@@ -8,7 +8,9 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"unicode/utf8"
 
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/adapter"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/app"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/store"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/taxonomy"
@@ -138,8 +140,8 @@ func authorsCmd(args []string) error {
 	fs := flag.NewFlagSet("authors "+sub, flag.ExitOnError)
 	all := fs.Bool("all", false, "list: every scored author, not only flagged ones")
 	limit := fs.Int("limit", 100, "list: at most this many")
-	key := fs.String("key", "", "mark: author key (hex, as list prints it)")
-	platform := fs.String("platform", "facebook", "mark: platform")
+	key := fs.String("key", "", "mark, log: the author, as list prints it: an account ID (tt:account:123) or a hex author key")
+	platform := fs.String("platform", "facebook", "mark: platform (taken from an account ID when one is given)")
 	as := fs.String("as", "", "mark: bot, human (not a bot) or none (back to the score)")
 	by := fs.String("by", "", "mark: who decides (your name), kept in the log")
 	note := fs.String("note", "", "mark: why (kept in the log)")
@@ -151,16 +153,19 @@ func authorsCmd(args []string) error {
 				return err
 			}
 			w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
-			_, _ = fmt.Fprintln(w, "AUTHOR KEY\tPLATFORM\tBOT\tSCORE\tITEMS\tPER DAY\tREASONS\tOWNER")
+			_, _ = fmt.Fprintln(w, "AUTHOR\tPLATFORM\tBOT\tSCORE\tITEMS\tPER DAY\tREASONS\tOWNER")
 			for _, r := range rows {
-				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%.1f\t%s\t%s\n", hex.EncodeToString(r.Key), r.Platform, r.Bot, r.Score,
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%.1f\t%s\t%s\n", authorLabel(r.Key), r.Platform, r.Bot, r.Score,
 					r.Items, r.PerDay, strings.Join(r.Reasons, ","), r.Override)
 			}
 			return w.Flush()
 		case "mark":
-			k, err := hex.DecodeString(*key)
-			if err != nil || len(k) == 0 {
-				return fmt.Errorf("mark: --key must be the hex author key")
+			k, err := authorKey(*key)
+			if err != nil {
+				return fmt.Errorf("mark: --key: %w", err)
+			}
+			if code := accountPlatform(*key); code != "" {
+				*platform = adapter.PlatformName(code)
 			}
 			override := *as
 			switch override {
@@ -178,8 +183,8 @@ func authorsCmd(args []string) error {
 			var k []byte
 			if *key != "" {
 				var err error
-				if k, err = hex.DecodeString(*key); err != nil {
-					return fmt.Errorf("log: --key must be the hex author key")
+				if k, err = authorKey(*key); err != nil {
+					return fmt.Errorf("log: --key: %w", err)
 				}
 			}
 			rows, err := a.Store.AuthorOverrides(ctx, k, *limit)
@@ -187,13 +192,13 @@ func authorsCmd(args []string) error {
 				return err
 			}
 			w := tabwriter.NewWriter(os.Stdout, 2, 4, 2, ' ', 0)
-			_, _ = fmt.Fprintln(w, "WHEN (Iraq time)\tAUTHOR KEY\tDECISION\tBEFORE\tAFTER\tBY\tNOTE")
+			_, _ = fmt.Fprintln(w, "WHEN (Iraq time)\tAUTHOR\tDECISION\tBEFORE\tAFTER\tBY\tNOTE")
 			for _, o := range rows {
 				dec := o.Override
 				if dec == "" {
 					dec = "back to score"
 				}
-				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", o.At.In(a.Store.Loc).Format("2006-01-02 15:04"), hex.EncodeToString(o.Key),
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", o.At.In(a.Store.Loc).Format("2006-01-02 15:04"), authorLabel(o.Key),
 					dec, o.Before, o.After, o.By, o.Note)
 			}
 			return w.Flush()
@@ -207,4 +212,39 @@ func authorsCmd(args []string) error {
 		}
 		return fmt.Errorf("authors: unknown subcommand %q", sub)
 	})
+}
+
+// Authors are keyed by the contract's account ID ("tt:account:123") for
+// items read from the contract, and by fbs's opaque author key for items
+// read from fb.* topics. The commands take and print either.
+
+// authorKey reads an author named on the command line.
+func authorKey(s string) ([]byte, error) {
+	if accountPlatform(s) != "" {
+		return []byte(s), nil
+	}
+	k, err := hex.DecodeString(s)
+	if err != nil || len(k) == 0 {
+		return nil, fmt.Errorf("want an account ID (tt:account:123) or a hex author key, as authors list prints it")
+	}
+	return k, nil
+}
+
+// authorLabel prints a stored author key: an account ID as it is, any
+// other key in hex.
+func authorLabel(k []byte) string {
+	if utf8.Valid(k) && accountPlatform(string(k)) != "" {
+		return string(k)
+	}
+	return hex.EncodeToString(k)
+}
+
+// accountPlatform is the platform code of a contract account ID
+// ("tt:account:123" gives "tt"), or "" for anything else.
+func accountPlatform(s string) string {
+	p := strings.SplitN(s, ":", 3)
+	if len(p) != 3 || p[0] == "" || p[1] != "account" || p[2] == "" {
+		return ""
+	}
+	return p[0]
 }

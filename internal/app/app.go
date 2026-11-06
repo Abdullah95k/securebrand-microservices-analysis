@@ -45,6 +45,9 @@ type App struct {
 	Pipeline *pipeline.Pipeline
 	Kafka    kafka.ClientConfig
 	S3       *minio.Client
+	// Objects, when set, is where the media role reads files instead of
+	// S3 (tests).
+	Objects  media.Objects
 	Producer *kafka.Producer
 	// File is the taxonomy file: the fixed list, or the seed of the
 	// dynamic one.
@@ -191,10 +194,14 @@ func (a *App) Components(roles []string) ([]func(context.Context) error, error) 
 			if !cfg.Media.Enabled {
 				continue
 			}
-			if a.S3 == nil {
-				return nil, errors.New("media role needs S3")
+			objs := a.Objects
+			if objs == nil {
+				if a.S3 == nil {
+					return nil, errors.New("media role needs S3")
+				}
+				objs = media.MinioObjects{Client: a.S3}
 			}
-			w := &media.Worker{P: a.Pipeline, Objects: media.MinioObjects{Client: a.S3}, Cfg: cfg.Media}
+			w := &media.Worker{P: a.Pipeline, Objects: objs, Cfg: cfg.Media}
 			fns = append(fns, w.Run, func(ctx context.Context) error {
 				return Every(ctx, "media-ttl", time.Minute, func(ctx context.Context) error {
 					n, err := a.Store.TTLAtRisk(ctx, 6*time.Hour)

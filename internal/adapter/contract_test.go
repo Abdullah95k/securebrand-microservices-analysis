@@ -183,3 +183,35 @@ func TestDecodeContractMedia(t *testing.T) {
 		t.Fatalf("deleted %v %v", evs, err)
 	}
 }
+
+func TestBestCaptions(t *testing.T) {
+	tr := func(lang string, src contentv1.CaptionSource, text string) *contentv1.CaptionTrack {
+		return &contentv1.CaptionTrack{Language: lang, Source: src, Text: text}
+	}
+	up, asr, mt := contentv1.CaptionSource_CAPTION_SOURCE_UPLOADER, contentv1.CaptionSource_CAPTION_SOURCE_PLATFORM_ASR,
+		contentv1.CaptionSource_CAPTION_SOURCE_MACHINE_TRANSLATION
+	for name, c := range map[string]struct {
+		tracks []*contentv1.CaptionTrack
+		lang   string
+		want   string
+	}{
+		"uploader over asr":        {[]*contentv1.CaptionTrack{tr("ar", asr, "asr"), tr("ar", up, "up")}, "ar", "up"},
+		"post's language first":    {[]*contentv1.CaptionTrack{tr("en", up, "en"), tr("ar", up, "ar")}, "ar", "ar"},
+		"uploader in another lang": {[]*contentv1.CaptionTrack{tr("ar", asr, "asr-ar"), tr("en", up, "up-en")}, "ar", "up-en"},
+		"never a translation":      {[]*contentv1.CaptionTrack{tr("ar", mt, "mt")}, "ar", ""},
+		"empty text skipped":       {[]*contentv1.CaptionTrack{tr("ar", up, "  "), tr("ar", asr, "asr")}, "ar", "asr"},
+		"none":                     {nil, "ar", ""},
+	} {
+		got := bestCaptions(c.tracks, c.lang)
+		if got.GetText() != c.want {
+			t.Errorf("%s: %q, want %q", name, got.GetText(), c.want)
+		}
+	}
+	// The contract's TikTok sample carries the platform's ASR captions.
+	var p contentv1.Post
+	sample(t, "post.tt.json", &p)
+	it := FromContractPost(&p)
+	if it.Captions != "example subtitle text" || it.CaptionsLang != "ar" || it.CaptionsSource != "platform_asr" {
+		t.Fatalf("sample captions %q %q %q", it.Captions, it.CaptionsLang, it.CaptionsSource)
+	}
+}

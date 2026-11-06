@@ -237,7 +237,8 @@ func mediaEvent(r *MediaResult) *analysisv1.MediaAnalysis {
 		OwnerId: r.Job.OwnerContentID, OwnerKind: ownerKind(r.Job.OwnerContentID), Platform: core.PlatformCode(r.Job.MediaID),
 		AccountId: r.Job.SourceID, Type: mediaType(r.Job.Kind),
 		TextInImage: m.TextInImage, Description: m.Description, Labels: m.Labels,
-		PeopleCount: int32(m.PeopleCount), Topics: m.Topics, Transcript: m.Transcript, AdType: m.AdType, Legal: m.Legal,
+		PeopleCount: int32(m.PeopleCount), Topics: m.Topics, Transcript: m.Transcript, TranscriptLang: m.TranscriptLang,
+		TranscriptSource: m.TranscriptSource, AdType: m.AdType, Legal: m.Legal,
 		Sentiment: &analysisv1.Sentiment{Label: m.Sentiment, Score: float32(m.Score), Confidence: float32(m.Confidence)},
 		Provenance: &analysisv1.Provenance{Producer: Producer, ProducerVersion: ProducerVersion, Provider: r.Prov.Provider,
 			Model: r.Prov.Model, PromptVersion: r.Prov.PromptVersion, TaxonomyVersion: r.Prov.TaxonomyVersion,
@@ -273,6 +274,8 @@ func mediaType(kind string) contentv1.MediaType {
 		return contentv1.MediaType_MEDIA_TYPE_STICKER
 	case "audio":
 		return contentv1.MediaType_MEDIA_TYPE_AUDIO
+	case "document":
+		return contentv1.MediaType_MEDIA_TYPE_DOCUMENT
 	}
 	return contentv1.MediaType_MEDIA_TYPE_IMAGE
 }
@@ -389,18 +392,33 @@ func nullTime(t time.Time) *time.Time {
 	return &t
 }
 
-// OwnerContext returns the owner item's creation time, text and tagged
-// spans for a media job (zero values when the owner is not stored).
-func (s *Store) OwnerContext(ctx context.Context, ownerID string) (time.Time, string, []textnorm.Span, error) {
+// Owner is what a media job needs of the item it belongs to.
+type Owner struct {
+	CreatedAt time.Time
+	Text      string
+	Tags      []textnorm.Span
+	// The post's caption track (contract posts), its language and source.
+	Captions, CaptionsLang, CaptionsSource string
+}
+
+// OwnerContext returns the owner item of a media job (zero values when the
+// owner is not stored).
+func (s *Store) OwnerContext(ctx context.Context, ownerID string) (Owner, error) {
 	items, err := s.ItemsByID(ctx, []string{ownerID})
 	if err != nil {
-		return time.Time{}, "", nil, fmt.Errorf("owner: %w", err)
+		return Owner{}, fmt.Errorf("owner: %w", err)
 	}
 	it, ok := items[ownerID]
 	if !ok {
-		return time.Time{}, "", nil, nil
+		return Owner{}, nil
 	}
-	return it.CreatedAt, it.Text, it.RemoveSpans, nil
+	o := Owner{CreatedAt: it.CreatedAt, Text: it.Text, Tags: it.RemoveSpans}
+	if err := s.DB.QueryRow(ctx, `SELECT coalesce(captions, ''), coalesce(captions_lang, ''), coalesce(captions_source, '')
+		FROM analysis.content_items WHERE created_at = $1 AND content_id = $2`, it.CreatedAt, ownerID).
+		Scan(&o.Captions, &o.CaptionsLang, &o.CaptionsSource); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return Owner{}, fmt.Errorf("owner captions: %w", err)
+	}
+	return o, nil
 }
 
 // TTLAtRisk counts pending media jobs within margin of their deletion.
