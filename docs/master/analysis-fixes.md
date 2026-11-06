@@ -5,8 +5,8 @@
 | # | Fix | PR | Status | Evidence |
 |---|---|---|---|---|
 | 1 | A repository of its own (Part D) | [#3](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/3) | **Done** (merged 6 Nov, `b080a72`) | See [Fix 1](#fix-1-a-repository-of-its-own) |
-| 2 | Its own packaging: Helm chart, images on a tag, CI, metric prefix `sb_analysis_` (A1, A3) | [#4](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/4) | In review | See [Fix 2](#fix-2-its-own-packaging) |
-| 3 | No unlimited budget by accident (C7) | – | Not started | – |
+| 2 | Its own packaging: Helm chart, images on a tag, CI, metric prefix `sb_analysis_` (A1, A3) | [#4](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/4) | **Done** (merged 6 Nov, `22f8938`) | See [Fix 2](#fix-2-its-own-packaging) |
+| 3 | No unlimited budget by accident (C7) | this repository's pull request for fix 3 | In review | See [Fix 3](#fix-3-no-unlimited-budget-by-accident) |
 | 4 | Media memory: stream files to disk (B2) | – | Not started | – |
 | 5 | The provider's rate limit, fleet-wide (B6) | – | Not started | – |
 | 6 | Backpressure: cap the queue, pause ingest (C6) | – | Not started | – |
@@ -34,6 +34,23 @@
   - **Account tiers (fix 8):** from `registry.account_request.v1`. Until the registry publishes, a config list of hot accounts by id, empty by default.
   - **Backfill (fix 9):** from ClickHouse, through the secret `clickhouse-ro` (read-only). Until the platform's writer has filled it, a backfill reads nothing and logs that; never a collector's database.
   - **Budget:** $5 a day, as a hard stop.
+
+## Fix 3: no unlimited budget by accident
+
+- **New setting `analysis.budget.allow_unlimited`** (default `false`).
+- **The service refuses to start** with a daily cap of 0 (meaning no cap) unless that setting is `true`.
+  - This applies to every `service.env` except `dev`: production, the pilot, a staging setup, or no environment set. The owner asked for production; the other environments get the same protection against a missing setting.
+  - Local development and the tests (`dev`) keep running without a cap.
+  - The error names both ways out: set a cap, or set `allow_unlimited: true`.
+- **The caps:**
+  - production (`values-production.yaml`) and the chart's defaults: $5 a day;
+  - the pilot (`deploy/analysis/pilot.yaml`): $5 a day, unchanged.
+- **Still the owner's to decide:** whether urgent real-time items stop at the cap too (`urgent_exempt`, today `true`). The master asks for a hard stop.
+- **Evidence:**
+  - `TestBudgetNeverUnlimitedByAccident` covers 8 cases: production, the pilot, staging and no environment are refused without a cap and accepted with one or with `allow_unlimited`; dev is accepted.
+  - `TestProductionBudgetFile` loads a production file with and without a cap.
+  - With the check disabled on purpose, 5 cases fail.
+  - Unit and integration tests and lint pass.
 
 ## Fix 2: its own packaging
 

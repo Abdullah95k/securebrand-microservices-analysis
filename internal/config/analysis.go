@@ -192,6 +192,9 @@ type ModelPrice struct {
 // AnalysisBudget caps spend per day (in Timezone).
 type AnalysisBudget struct {
 	DailyUSD float64 `koanf:"daily_usd"` // 0 = unlimited
+	// AllowUnlimited must be set for daily_usd 0 outside service.env dev:
+	// no cap only by an explicit choice, never by a missing setting.
+	AllowUnlimited bool `koanf:"allow_unlimited"`
 	// UrgentExempt lets urgent real-time work continue over budget.
 	UrgentExempt bool `koanf:"urgent_exempt"`
 }

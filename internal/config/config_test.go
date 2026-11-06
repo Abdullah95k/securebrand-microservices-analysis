@@ -142,3 +142,49 @@ func TestPlatformCredentialsEnv(t *testing.T) {
 		t.Fatalf("s3: %+v", c.S3)
 	}
 }
+
+// No unlimited budget by accident: a daily cap of 0 (none) is refused
+// outside dev unless allow_unlimited says so on purpose.
+func TestBudgetNeverUnlimitedByAccident(t *testing.T) {
+	for name, tc := range map[string]struct {
+		env       string
+		daily     float64
+		allow, ok bool
+	}{
+		"prod, no cap":                 {"prod", 0, false, false},
+		"prod, no cap on purpose":      {"prod", 0, true, true},
+		"prod, $5":                     {"prod", 5, false, true},
+		"pilot, no cap":                {"pilot", 0, false, false},
+		"pilot, $5":                    {"pilot", 5, false, true},
+		"staging, no cap":              {"staging", 0, false, false},
+		"no env set, no cap":           {"", 0, false, false},
+		"dev, no cap (local and test)": {"dev", 0, false, true},
+	} {
+		c, err := Load("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Service.Env, c.Analysis.Budget.DailyUSD, c.Analysis.Budget.AllowUnlimited = tc.env, tc.daily, tc.allow
+		if err := c.Validate(); (err == nil) != tc.ok {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// The chart's production values set the cap; Load must accept them as a
+// production file would arrive (env prod, $5).
+func TestProductionBudgetFile(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "prod.yaml")
+	_ = os.WriteFile(f, []byte("service: {env: prod}\nanalysis:\n  budget: {daily_usd: 5}\n"), 0o644)
+	c, err := Load(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Analysis.Budget.DailyUSD != 5 || c.Analysis.Budget.AllowUnlimited {
+		t.Fatalf("budget %+v", c.Analysis.Budget)
+	}
+	_ = os.WriteFile(f, []byte("service: {env: prod}\n"), 0o644)
+	if _, err := Load(f); err == nil || !strings.Contains(err.Error(), "allow_unlimited") {
+		t.Fatalf("a production file without a cap loaded: %v", err)
+	}
+}

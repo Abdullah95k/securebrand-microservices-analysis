@@ -173,6 +173,10 @@ func (c *Config) Validate() error {
 	default:
 		errs = append(errs, fmt.Errorf("kafka.sasl.mechanism %q must be plain, scram-sha-256 or scram-sha-512", c.Kafka.SASL.Mechanism))
 	}
+	if b := c.Analysis.Budget; b.DailyUSD == 0 && !b.AllowUnlimited && c.Service.Env != "dev" {
+		errs = append(errs, fmt.Errorf("analysis.budget.daily_usd is 0 (no daily cap) with service.env %q: set a cap, "+
+			"or analysis.budget.allow_unlimited: true to spend without one", c.Service.Env))
+	}
 	if err := c.Analysis.Validate(); err != nil {
 		errs = append(errs, err)
 	}
