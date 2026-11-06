@@ -71,8 +71,9 @@ envFrom:
   mountPath: /tmp
 {{- end -}}
 
+{{/* A component's volumes: dict "root" and "c" (the component). */}}
 {{- define "sba.volumes" -}}
-{{- include "sba.volumesFor" (dict "root" . "configMap" (printf "%s-config" (include "sba.fullname" .))) -}}
+{{- include "sba.volumesFor" (dict "root" .root "configMap" (printf "%s-config" (include "sba.fullname" .root)) "tmpSizeLimit" .c.tmpSizeLimit) -}}
 {{- end -}}
 
 {{- define "sba.hookVolumes" -}}
@@ -95,5 +96,9 @@ envFrom:
       {{- end }}
 {{- end }}
 - name: tmp
+  {{- if .tmpSizeLimit }}
+  emptyDir: {sizeLimit: {{ .tmpSizeLimit }}}
+  {{- else }}
   emptyDir: {}
+  {{- end }}
 {{- end -}}

@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,7 +48,7 @@ func pngBytes(t *testing.T, w, h int) []byte {
 }
 
 func TestResize(t *testing.T) {
-	out, err := media.Resize(pngBytes(t, 3000, 1500), 1024)
+	out, err := media.Resize(pngBytes(t, 3000, 1500), 1024, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,17 +59,17 @@ func TestResize(t *testing.T) {
 	if b := img.Bounds(); b.Dx() != 1024 || b.Dy() != 512 {
 		t.Fatalf("resized to %v", b)
 	}
-	small, _ := media.Resize(pngBytes(t, 300, 600), 1024)
+	small, _ := media.Resize(pngBytes(t, 300, 600), 1024, 0)
 	img, _ = jpeg.Decode(bytes.NewReader(small))
 	if b := img.Bounds(); b.Dx() != 300 || b.Dy() != 600 {
 		t.Fatalf("small image resized to %v", b)
 	}
-	tall, _ := media.Resize(pngBytes(t, 500, 2000), 1000)
+	tall, _ := media.Resize(pngBytes(t, 500, 2000), 1000, 0)
 	img, _ = jpeg.Decode(bytes.NewReader(tall))
 	if b := img.Bounds(); b.Dx() != 250 || b.Dy() != 1000 {
 		t.Fatalf("tall image resized to %v", b)
 	}
-	if _, err := media.Resize([]byte("not an image"), 100); err == nil {
+	if _, err := media.Resize([]byte("not an image"), 100, 0); err == nil {
 		t.Fatal("garbage decoded")
 	}
 }
@@ -120,15 +121,12 @@ func TestExtractFrames(t *testing.T) {
 
 type objects map[string][]byte
 
-func (o objects) Get(_ context.Context, bucket, key string, max int64) ([]byte, error) {
+func (o objects) Fetch(_ context.Context, bucket, key string, max int64, dst io.Writer) (int64, error) {
 	b, ok := o[bucket+"/"+key]
 	if !ok {
-		return nil, media.ErrGone
+		return 0, media.ErrGone
 	}
-	if int64(len(b)) > max {
-		return nil, media.ErrTooLarge
-	}
-	return b, nil
+	return media.CopyLimited(dst, bytes.NewReader(b), max)
 }
 
 func setup(t *testing.T) (*store.Store, *media.Worker, *fake.Provider, objects) {

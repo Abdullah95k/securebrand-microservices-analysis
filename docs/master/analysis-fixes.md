@@ -6,8 +6,8 @@
 |---|---|---|---|---|
 | 1 | A repository of its own (Part D) | [#3](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/3) | **Done** (merged 6 Nov, `b080a72`) | See [Fix 1](#fix-1-a-repository-of-its-own) |
 | 2 | Its own packaging: Helm chart, images on a tag, CI, metric prefix `sb_analysis_` (A1, A3) | [#4](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/4) | **Done** (merged 6 Nov, `22f8938`) | See [Fix 2](#fix-2-its-own-packaging) |
-| 3 | No unlimited budget by accident (C7) | [#5](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/5) | In review | See [Fix 3](#fix-3-no-unlimited-budget-by-accident) |
-| 4 | Media memory: stream files to disk (B2) | – | Not started | – |
+| 3 | No unlimited budget by accident (C7) | [#5](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/5) | **Done** (merged 6 Nov, `3f18a15`) | See [Fix 3](#fix-3-no-unlimited-budget-by-accident) |
+| 4 | Media memory: stream files to disk (B2) | [#6](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/6) | In review | See [Fix 4](#fix-4-media-memory) |
 | 5 | The provider's rate limit, fleet-wide (B6) | – | Not started | – |
 | 6 | Backpressure: cap the queue, pause ingest (C6) | – | Not started | – |
 | 7 | The quality evaluation | – | Waiting: runs on the production cluster once fbs collects there (owner, 6 Nov) | – |
@@ -34,6 +34,25 @@
   - **Account tiers (fix 8):** from `registry.account_request.v1`. Until the registry publishes, a config list of hot accounts by id, empty by default.
   - **Backfill (fix 9):** from ClickHouse, through the secret `clickhouse-ro` (read-only). Until the platform's writer has filled it, a backfill reads nothing and logs that; never a collector's database.
   - **Budget:** $5 a day, as a hard stop.
+
+## Fix 4: media memory
+
+- **Videos stream to disk.** The worker used to read a whole file into memory (up to 500 MiB) and then write it out for ffmpeg. Now the object store's stream is copied through a fixed 32 KiB buffer straight to a temporary file; one byte over `max_bytes` stops the copy and deletes the file.
+- **Images have their own limits,** because they are decoded in memory:
+  - `image_max_bytes` (32 MiB);
+  - `image_max_pixels` (40 megapixels, about 160 MiB decoded), checked from the image's header before decoding. A file of a few bytes can claim a picture that decodes to gigabytes.
+  - Over either limit, the job fails permanently and is acknowledged, as an oversized video always was.
+- **ffmpeg** decodes with 2 threads; its memory grows with its threads and counts against the same container.
+- **Concurrency sized to the container:**
+  - at start, `workers` is lowered to fit the container's memory limit, read from its cgroup: `worker_memory_mib` (384) per worker, after 256 MiB for the rest of the process, never below 1, with a warning when lowered;
+  - the chart's `analysis-media` limit (2 GiB) fits the default 4 workers, and a test keeps those numbers in step;
+  - its `/tmp` is limited to 3 GiB: 4 videos of 500 MiB, plus frames.
+- **New settings, nothing removed:** `image_max_bytes`, `image_max_pixels`, `worker_memory_mib`, and the chart's `tmpSizeLimit`.
+- **Evidence:**
+  - **`TestLargestVideoStreamsToDisk`:** the largest allowed video (500 MiB) is fetched with **32 KiB** of memory allocated; one byte more is refused and leaves no file. With the old in-memory read put back on purpose, the same fetch allocated 1,024 MiB and the test failed.
+  - **`TestImageLimits`:** an image over 32 MiB is refused, and a GIF header claiming 65535 × 65535 pixels is refused without decoding (under 1 MiB allocated).
+  - `TestFitWorkers`, `TestContainerMemoryLimit` (cgroup v1 and v2) and `TestChartMediaLimitFitsWorkers`.
+  - The worker's image and video tests pass with real ffmpeg; unit and integration tests and lint pass.
 
 ## Fix 3: no unlimited budget by accident
 

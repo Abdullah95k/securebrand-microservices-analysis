@@ -50,7 +50,7 @@ spec:
           resources: {{- toYaml $c.resources | nindent 12 }}
           securityContext: {{- toYaml $root.Values.securityContext | nindent 12 }}
           volumeMounts: {{- include "sba.volumeMounts" $root | nindent 12 }}
-      volumes: {{- include "sba.volumes" $root | nindent 8 }}
+      volumes: {{- include "sba.volumes" (dict "root" $root "c" $c) | nindent 8 }}
 {{- if $c.pdb }}
 ---
 apiVersion: policy/v1

@@ -15,7 +15,7 @@
 
 ## Work in progress (from 6 Nov)
 
-- **REQ-011, the fixes:** one row per fix in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md). Fixes 1 (a repository of its own) and 2 (its own chart, `values-production.yaml`, images on a tag) are merged; fix 3 (no unlimited budget by accident) is in review.
+- **REQ-011, the fixes:** one row per fix in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md). Fixes 1 (a repository of its own), 2 (its own chart, `values-production.yaml`, images on a tag) and 3 (no unlimited budget by accident) are merged; fix 4 (media memory) is in review.
 - **REQ-022, adopting contract v1.0.0:** after the fixes REQ-011 lists before the canary; its record will be `docs/master/analysis-contract-adoption.md`.
 - **Questions for the master:** [`docs/master/questions-for-master-2026-11-06.md`](master/questions-for-master-2026-11-06.md).
 
@@ -89,3 +89,5 @@
   - **production images:** built by the platform (`registry.digitalocean.com/securebrand/analysis`).
 - **6 Nov:** REQ-011 fix 2 merged (pull request #4, `22f8938`); the master has the commit, the two images and the chart for its production pin.
 - **6 Nov, REQ-011 fix 3 (in review):** outside `dev`, a daily cap of 0 (no cap) is refused unless `analysis.budget.allow_unlimited: true` is set. This is a new setting; nothing was removed.
+- **6 Nov:** REQ-011 fix 3 merged (pull request #5, `3f18a15`).
+- **6 Nov, REQ-011 fix 4 (in review):** media files stream to disk; images get their own limits (bytes, and pixels checked before decoding); the number of media workers fits the container's memory. All new settings; nothing removed.
