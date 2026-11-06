@@ -4,7 +4,7 @@
 
 | # | Fix | PR | Status | Evidence |
 |---|---|---|---|---|
-| 1 | A repository of its own (Part D) | this repository's pull request for fix 1 (`claude/jolly-bell-mb5sct`) | In review | See [Fix 1](#fix-1-a-repository-of-its-own) |
+| 1 | A repository of its own (Part D) | [#3](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/3) | In review | See [Fix 1](#fix-1-a-repository-of-its-own) |
 | 2 | Its own packaging: Helm chart, images on a tag, CI, metric prefix `sb_analysis_` (A1, A3) | – | Not started; the metric prefix is done in fix 1 | – |
 | 3 | No unlimited budget by accident (C7) | – | Not started | – |
 | 4 | Media memory: stream files to disk (B2) | – | Not started | – |
