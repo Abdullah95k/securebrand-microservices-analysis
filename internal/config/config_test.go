@@ -109,3 +109,28 @@ func TestDiscoveryConfig(t *testing.T) {
 		}
 	}
 }
+
+// The owner keeps all data: erasures are only recorded by default, tagged
+// people are hidden from providers, and an unknown erasure mode is refused.
+func TestAnalysisPrivacyDefaults(t *testing.T) {
+	c, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Analysis.Erasure.Mode != ErasureRecord || !c.Analysis.Privacy.MaskTaggedUsers || !c.Analysis.Privacy.MaskPII {
+		t.Fatalf("defaults: erasure %q, mask tagged %v, mask pii %v", c.Analysis.Erasure.Mode, c.Analysis.Privacy.MaskTaggedUsers,
+			c.Analysis.Privacy.MaskPII)
+	}
+	for _, mode := range []string{ErasureApply, ErasureOff} {
+		c.Analysis.Erasure.Mode = mode
+		if err := c.Validate(); err != nil {
+			t.Errorf("%s refused: %v", mode, err)
+		}
+	}
+	for _, mode := range []string{"", "delete"} {
+		c.Analysis.Erasure.Mode = mode
+		if c.Validate() == nil {
+			t.Errorf("erasure mode %q accepted", mode)
+		}
+	}
+}

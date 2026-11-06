@@ -105,7 +105,9 @@ func TestApplyGatesIncompatibleChanges(t *testing.T) {
 			t.Fatalf("%s: version %d", r.Subject, r.Version)
 		}
 	}
-	if len(ids) != len(topics.ValueSchemas)+1 { // every topic, and common.proto
+	// Every topic, plus the imported files: fb/v1/common.proto and
+	// content/v1/content.proto (imported by analysis.proto).
+	if len(ids) != len(topics.ValueSchemas)+2 {
 		t.Fatalf("subjects %v", ids)
 	}
 	if lvl, err := c.Compatibility(ctx, prefix+topics.Comment+"-value"); err != nil || lvl != BackwardTransitive {

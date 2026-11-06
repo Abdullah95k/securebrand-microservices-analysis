@@ -31,6 +31,20 @@ config:
       routing: {default: [direct]}
   media:
     required_consumers: ["analysis"]
+  # The analysis service with its deterministic fake provider: no API keys.
+  analysis:
+    routes:
+      comment: {provider: fake}
+      post: {provider: fake}
+      image: {provider: fake}
+      video: {provider: fake}
+      escalation: {provider: fake}
+      audit: {provider: fake}
+    topics:
+      curation: {provider: fake, model: fake}
+    batch: {submit_every: 10s, poll_every: 5s}
+    media:
+      video: {enabled: false}
 
 # No proxies file: the direct tier above reaches fakefb.
 secretFiles:
@@ -53,5 +67,7 @@ components:
   persister: {replicas: 1, pdb: null, resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {memory: 1Gi}}}
   media-downloader: {replicas: 1, pdb: null, resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {memory: 1Gi}}}
   media-janitor: {replicas: 1}
+  analysis: {replicas: 1, pdb: null, resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {memory: 512Mi}}}
+  analysis-media: {replicas: 1, resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {memory: 512Mi}}}
   # Without canary pages there is nothing for it to check.
   registry-sync: {enabled: false}

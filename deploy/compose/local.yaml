@@ -16,3 +16,17 @@ crawler:
 registry_sync:
   interval: 5m
   canary_pages: [brand0, brand1]   # fakefb pages
+# The analysis service with its fake provider: deterministic, offline.
+analysis:
+  routes:
+    comment: {provider: fake}
+    post: {provider: fake}
+    image: {provider: fake}
+    video: {provider: fake}
+    escalation: {provider: fake}
+    audit: {provider: fake}
+  topics:
+    curation: {provider: fake, model: fake}
+  batch: {submit_every: 30s, poll_every: 10s}
+  media:
+    video: {stt_provider: fake}

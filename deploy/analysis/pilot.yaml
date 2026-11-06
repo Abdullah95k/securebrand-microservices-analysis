@@ -1,0 +1,15 @@
+# Analysis settings on the pilot machine (deploy/analysis/compose.yml).
+# Claude Haiku 5.5 through the Batch API, a hard daily budget, no media
+# (the pilot downloads none). API keys: deploy/analysis/analysis.env.
+service: {env: pilot}
+log: {level: info, format: json}
+analysis:
+  budget: {daily_usd: 5}
+  media: {enabled: false}
+  # Backup provider: Google Gemini 3.1 Flash-Lite answers in real time when
+  # Anthropic is down or refuses. Used only once
+  # FBS_ANALYSIS__PROVIDERS__GEMINI__API_KEY is in deploy/analysis/analysis.env.
+  routes:
+    comment: {fallback_provider: gemini, fallback_model: gemini-3.1-flash-lite}
+    post: {fallback_provider: gemini, fallback_model: gemini-3.1-flash-lite}
+    escalation: {fallback_provider: gemini, fallback_model: gemini-3.5-flash}

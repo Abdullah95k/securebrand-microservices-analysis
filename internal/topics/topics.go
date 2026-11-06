@@ -19,6 +19,18 @@ const (
 	Job           = "fb.job.v1"
 	Erasure       = "fb.erasure.v1"
 
+	// Canonical, platform-neutral contract (securebrand.content.v1) that
+	// normalisation services publish, and the analysis results
+	// (securebrand.analysis.v1).
+	ContentItem           = "content.item.v1"
+	ContentMediaReady     = "content.media.ready.v1"
+	ContentMediaProcessed = "content.media.processed.v1"
+	ContentErasure        = "content.erasure.v1"
+	AnalysisResult        = "analysis.result.v1"
+	AnalysisMedia         = "analysis.media.v1"
+	AnalysisAuthor        = "analysis.author.v1"
+	AnalysisTopic         = "analysis.topic.v1"
+
 	TaskMedia = "fbs.task.media"
 	Retry30s  = "fbs.task.retry.30s"
 	Retry5m   = "fbs.task.retry.5m"

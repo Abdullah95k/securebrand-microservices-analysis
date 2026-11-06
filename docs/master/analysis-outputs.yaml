@@ -1,0 +1,164 @@
+# sb-analysis outputs, machine-readable (Part B). Same content as
+# analysis-outputs.md. Examples are synthetic.
+service: sb-analysis
+repository: Abdullah95k/securebrand-microservices-analysis
+branch: claude/jolly-bell-mb5sct
+commit: bf32dd9
+proto: api/proto/securebrand/analysis/v1/analysis.proto   # package securebrand.analysis.v1
+delivery: "at least once, transactional outbox; consumers dedupe by event_id"
+headers: [message type, content type (protobuf)]
+not_published: ["audit results (purpose=audit), kept in sb-analysis's Postgres only"]
+present_values: "always | sometimes | never (proto3 cannot tell an unset false/0 from a real one)"
+
+messages:
+  - name: ItemAnalysis
+    topic: analysis.result.v1
+    key: content_id
+    partitions: 96
+    retention: 168h
+    published_when: "each new current text analysis of a post, comment or reply"
+    version_field: provenance.analysis_version   # highest per content_id is current; tie-break analyzed_at
+    fields:
+      - {name: event_id, meaning: "<content_id>:<analysis_version>", type: text, example: "fb:comment:900000000000001:2", present: always}
+      - {name: content_id, meaning: "<platform>:<kind>:<native id>; replies use kind comment", type: text, example: "fb:comment:900000000000001", present: always}
+      - {name: platform, meaning: "platform", type: "enum securebrand.content.v1.Platform (FACEBOOK, INSTAGRAM, TIKTOK, X, TELEGRAM, YOUTUBE)", example: PLATFORM_FACEBOOK, present: always}
+      - {name: kind, meaning: "post, comment or reply", type: "enum securebrand.content.v1.ContentKind (POST, COMMENT, REPLY)", example: CONTENT_KIND_COMMENT, present: always}
+      - {name: source_id, meaning: "page, account or channel", type: text, example: "fb:page:100000000000001", present: always}
+      - {name: thread_id, meaning: "the post a comment belongs to", type: text, example: "fb:post:200000000000001", present: sometimes, notes: "empty for posts"}
+      - {name: author_key, meaning: "pseudonymous author key (HMAC from the collector)", type: bytes, example: "0x5f2c... (32 bytes)", present: sometimes, personal_data: true, notes: "empty for posts and authorless comments"}
+      - {name: created_at, meaning: "when the item was published (UTC)", type: timestamp, example: "2026-11-04T09:12:00Z", present: always}
+      - {name: lang, meaning: "language", type: "enum text: ar, ckb, kmr, en, tr, fa, other, none", example: ar, present: always}
+      - {name: dialect, meaning: "Arabic dialect", type: "enum text: iraqi, gulf, levantine, egyptian, msa, other, none", example: iraqi, present: always}
+      - {name: script, meaning: "alphabet, computed by code", type: "enum text: arabic, latin, mixed, none", example: arabic, present: always}
+      - {name: code_switch, meaning: "mixes languages", type: bool, example: false, present: always}
+      - {name: sentiment, meaning: "overall sentiment", type: Sentiment, example: {label: negative, score: -0.6, confidence: 0.8, calibrated_confidence: 0.8}, present: always}
+      - {name: entities, meaning: "entities mentioned, with sentiment toward each", type: "list of EntityMention", example: [{entity_id: examplebrand, name: Example Brand, type: brand, sentiment: {label: negative, score: -0.7}, aspect: network, origin: text}], present: sometimes}
+      - {name: topics, meaning: "topic ids (hierarchical, dot-separated) plus @<entity_id>", type: "list of text", example: ["services.electricity", "@examplebrand"], present: "almost always (can be empty)", notes: "up to 10 list topics"}
+      - {name: keywords, meaning: "content words (code for comments, model for posts)", type: "list of text", example: ["كهرباء", "قطع"], present: sometimes}
+      - {name: intent, meaning: "what the author is doing", type: "enum text: complaint, praise, question, request, suggestion, purchase_intent, churn_threat, recommendation, information, giveaway_entry, greeting_religious, tagging, spam_ad, other", example: complaint, present: always}
+      - {name: emotion, meaning: "dominant emotion", type: "enum text: anger, joy, sadness, fear, surprise, disgust, trust, anticipation, none", example: anger, present: always}
+      - {name: toxicity, meaning: "toxicity level and kinds", type: Toxicity, example: {level: none, hate: false, threat: false, harassment: false}, present: always}
+      - {name: spam, meaning: "spam", type: bool, example: false, present: always}
+      - {name: sarcasm, meaning: "sarcastic", type: bool, example: false, present: always}
+      - {name: urgent, meaning: "needs attention fast", type: bool, example: false, present: always}
+      - {name: private_person_mentions, meaning: "private persons mentioned (never stored as entities)", type: int32, example: 0, present: always}
+      - {name: refused, meaning: "every provider refused; other fields are neutral defaults", type: bool, example: false, present: always}
+      - {name: provenance, meaning: "how the result was made", type: Provenance, present: always}
+      - {name: ad_type, meaning: "advertising type", type: "enum text: affiliate, own, paid, hidden, sale, '' (not an ad)", example: paid, present: sometimes}
+      - {name: legal, meaning: "possible breaches for human review (allegations, not findings)", type: "list of text: hate_speech, threat, incitement, terrorism, child_safety, sexual_content, graphic_violence, self_harm, drugs, weapons, gambling, regulated_goods, fraud_scam, unlicensed_finance, counterfeit, privacy, defamation, misinformation, extortion, religious_offense, other_illegal", example: ["fraud_scam"], present: sometimes}
+      - {name: author_bot, meaning: "author's bot level at analysis time; later changes on analysis.author.v1", type: "enum text: '', suspected, likely, confirmed", example: suspected, present: sometimes}
+
+  - name: MediaAnalysis
+    topic: analysis.media.v1
+    key: media_id
+    partitions: 24
+    retention: 168h
+    published_when: "each image or video analysis"
+    version_field: provenance.analyzed_at   # analysis_version is always 1 for media (gap)
+    analysed_kinds: [photo, video, reel, comment_photo, comment_video, cover, image]
+    acknowledged_without_analysis: [sticker, comment_gif, profile_pic, thumbnail]
+    fields:
+      - {name: event_id, meaning: "<media_id>:<analyzed_at RFC 3339>", type: text, example: "00000000-0000-0000-0000-000000000001:2026-11-04T09:15:02Z", present: always}
+      - {name: media_id, meaning: "collector's media id (a UUID from fbs)", type: text, example: "00000000-0000-0000-0000-000000000001", present: always}
+      - {name: owner_content_id, meaning: "post or comment the media belongs to", type: text, example: "fb:post:200000000000001", present: always}
+      - {name: platform, type: "enum Platform", example: PLATFORM_FACEBOOK, present: always}
+      - {name: source_id, type: text, example: "fb:page:100000000000001", present: always}
+      - {name: kind, type: "enum securebrand.content.v1.MediaKind (IMAGE, VIDEO, AUDIO, GIF, STICKER)", example: MEDIA_KIND_IMAGE, present: always}
+      - {name: logos, meaning: "brand logos seen", type: "list of Logo", example: [{entity_id: examplebrand, name: Example Brand, confidence: 0.9}], present: sometimes}
+      - {name: text_in_image, meaning: "visible text (OCR by the model)", type: text, example: "عرض خاص", present: sometimes}
+      - {name: description, meaning: "short description of what is shown", type: text, example: "A shop front with a sale banner", present: always}
+      - {name: labels, meaning: "objects and scene labels", type: "list of text", example: ["shop", "banner"], present: sometimes}
+      - {name: people_count, meaning: "people visible (never identified)", type: int32, example: 2, present: always}
+      - {name: sentiment, meaning: "sentiment of the image's message (no calibrated confidence)", type: Sentiment, example: {label: positive, score: 0.5, confidence: 0.7}, present: always}
+      - {name: entities, meaning: "entities shown, written or spoken", type: "list of EntityMention (origin image or video)", present: sometimes}
+      - {name: topics, type: "list of text", example: ["economy.prices"], present: "almost always"}
+      - {name: transcript, meaning: "speech-to-text of a video", type: text, example: "example transcript", present: sometimes, notes: "only when speech-to-text is configured (off by default)"}
+      - {name: transcript_lang, type: text, present: never, notes: "not filled today (gap)"}
+      - {name: provenance, type: Provenance, present: always, notes: "analysis_version always 1; input_hash empty"}
+      - {name: ad_type, type: text, example: own, present: sometimes}
+      - {name: legal, type: "list of text", example: [], present: sometimes}
+
+  - name: AuthorFlag
+    topic: analysis.author.v1
+    key: "author key, hex"
+    partitions: 12
+    retention: 720h
+    published_when: "an author's bot level changes (daily scoring or a person's correction)"
+    version_field: scored_at
+    fields:
+      - {name: event_id, meaning: "<author key hex>:<unix ms>", type: text, example: "5f2c...e1:1762246800000", present: always}
+      - {name: platform, type: "enum Platform", example: PLATFORM_FACEBOOK, present: always}
+      - {name: author_key, type: bytes, example: "0x5f2c...", present: always, personal_data: true}
+      - {name: bot, meaning: "new level", type: "enum text: '' (not flagged), suspected (>=45), likely (>=70), confirmed (a person)", example: likely, present: always}
+      - {name: score, meaning: "behaviour score 0-100", type: int32, example: 72, present: always}
+      - {name: reasons, type: "list of text: burst, volume, repetition, coordinated, network, fast_replies, spam, breadth, no_sleep", example: ["coordinated", "repetition"], present: sometimes}
+      - {name: scored_at, type: timestamp, example: "2026-11-04T21:00:00Z", present: always}
+    not_published: ["the correction log (who, when, why): Postgres analysis.author_overrides"]
+
+  - name: TopicUpdate
+    topic: analysis.topic.v1
+    key: topic_id
+    partitions: 3
+    retention: 720h
+    published_when: "the topic list changes"
+    version_field: taxonomy_version   # also updated_at
+    fields:
+      - {name: event_id, meaning: "<topic_id>:<taxonomy_version>", type: text, example: "services.electricity.outages:tax-v1.3", present: always}
+      - {name: topic_id, type: text, example: "services.electricity.outages", present: always}
+      - {name: parent_id, type: text, example: "services.electricity", present: sometimes, notes: "empty for top-level topics"}
+      - {name: name_en, type: text, example: "Electricity cuts", present: always}
+      - {name: name_ar, type: text, example: "انقطاع الكهرباء", present: sometimes}
+      - {name: status, type: "enum text: active, merged, rejected", example: merged, present: always}
+      - {name: merged_into, type: text, example: "services.electricity", present: sometimes}
+      - {name: taxonomy_version, meaning: "tax-v1, then tax-v1.N per change", type: text, example: "tax-v1.3", present: always}
+      - {name: updated_at, type: timestamp, example: "2026-11-04T12:00:00Z", present: always}
+
+nested:
+  Sentiment:
+    - {name: label, type: "text: positive, negative, neutral, mixed", present: always}
+    - {name: score, type: "float -1..1", present: always}
+    - {name: confidence, type: "float 0..1", present: "always on items; not set inside EntityMention"}
+    - {name: calibrated_confidence, type: "float 0..1", present: "items only; equals confidence until a calibration exists"}
+  EntityMention:
+    - {name: entity_id, type: text, present: sometimes, notes: "empty when not in the registry"}
+    - {name: name, type: text, present: always}
+    - {name: type, type: "text: brand, product, organization, person_public, position, place, event, media_outlet, other", present: always}
+    - {name: sentiment, type: "Sentiment (label and score only)", present: always}
+    - {name: aspect, type: "text: price, quality, network, internet, customer_service, delivery, billing, app, staff, availability, offers, reliability, safety, management, general, other", present: always}
+    - {name: origin, type: "text: text, image, video", present: always}
+  Toxicity:
+    - {name: level, type: "text: none, mild, severe", present: always}
+    - {name: hate, type: bool, present: always}
+    - {name: threat, type: bool, present: always}
+    - {name: harassment, type: bool, present: always}
+  Logo:
+    - {name: entity_id, type: text, present: sometimes}
+    - {name: name, type: text, present: always}
+    - {name: confidence, type: "float 0..1", present: always}
+  Provenance:
+    - {name: provider, type: text, example: anthropic, present: always}
+    - {name: model, type: text, example: claude-haiku-5-5, present: always}
+    - {name: prompt_version, type: text, example: p5, present: always}
+    - {name: taxonomy_version, type: text, example: tax-v1, present: always}
+    - {name: schema_version, type: text, example: s5, present: always}
+    - {name: route, type: "text: comment, post, image, video, escalation", present: always}
+    - {name: lane, type: "text: batch, realtime", present: always}
+    - {name: analyzed_at, type: timestamp, present: always}
+    - {name: input_hash, type: "bytes (SHA-256)", present: "items always; media never"}
+    - {name: analysis_version, type: uint32, present: "items always (>=1); media always 1"}
+    - {name: purpose, type: "text: current", present: always}
+    - {name: fallback, type: bool, present: always}
+
+versioning:
+  new_record_on: [first analysis, edit (input hash changes), escalation to a stronger model, re-analysis with another model, prompt or topic list]
+  no_new_record_on: [same input with the same route, model, prompt and topic list, late cheaper result after an escalation]
+  current_rule: "highest analysis_version per content_id (tie-break analyzed_at); media: latest analyzed_at"
+
+clickhouse_proposal:
+  - {table: analysis_item_results, engine: "ReplacingMergeTree(analyzed_at)", order_by: "(platform, content_id, analysis_version)", partition_by: "toYYYYMM(created_at)", row: "one per (item, analysis version)"}
+  - {table: analysis_item_latest, engine: "ReplacingMergeTree(analysis_version)", order_by: "(platform, content_id)", row: "current result per item"}
+  - {table: analysis_entity_mentions, engine: "ReplacingMergeTree(analysis_version)", order_by: "(entity_id, created_at, content_id, ord)", row: "one per (item, entity) of the current version, with item dimensions"}
+  - {table: analysis_media_results, engine: "ReplacingMergeTree(analyzed_at)", order_by: "(platform, media_id, analyzed_at)"}
+  - {table: analysis_media_latest, engine: "ReplacingMergeTree(analyzed_at)", order_by: "(platform, media_id)"}
+  - {table: analysis_author_flags, engine: MergeTree, order_by: "(platform, author_key, scored_at)", notes: "current level by a ReplacingMergeTree(scored_at) view; join at query time"}
+  - {table: analysis_topics, engine: "ReplacingMergeTree(updated_at)", order_by: topic_id, notes: "dictionary maps merged topic ids at query time; history never rewritten"}

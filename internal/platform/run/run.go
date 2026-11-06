@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // Func is a component. It must return when ctx is cancelled.
@@ -42,4 +43,21 @@ func Group(parent context.Context, fns ...Func) error {
 	}
 	wg.Wait()
 	return firstErr
+}
+
+// Every runs fn now and then every interval until ctx ends. Failures are
+// logged with the loop's name, not fatal.
+func Every(ctx context.Context, name string, interval time.Duration, fn func(context.Context) error) error {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		if err := fn(ctx); err != nil && ctx.Err() == nil {
+			slog.Warn("loop failed", "loop", name, "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
+		}
+	}
 }

@@ -37,6 +37,13 @@ jobs:
           else
             echo "no buf module on the base branch yet"
           fi
+      - name: No gold set or labelled data in the repository
+        run: |
+          # Real comments and their labels stay on the owner's server
+          # (docs/analysis/evaluation.md); only synthetic examples are allowed.
+          if git ls-files | grep -E '\.labels\.jsonl$|\.gold\.jsonl$|(^|/)gold/|results\.jsonl$'; then
+            echo "labelled or evaluated data must not be committed"; exit 1
+          fi
       - name: Fixtures contain no real signed URLs
         run: |
           if grep -rlE 'oh=00_|_nc_cat=' testdata/; then
@@ -65,6 +72,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Install ffmpeg (video key-frame tests)
+        run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
       - name: Start Redpanda
         run: |
           docker run -d --name redpanda -p 19092:19092 -p 18081:8081 redpandadata/redpanda:v24.2.7 \

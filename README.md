@@ -1,5 +1,10 @@
 # securebrand-microservices
 
+| Service | What it does | Docs |
+|---|---|---|
+| `fbs` | Facebook public page scraper (below) | this README |
+| `sb-analysis` | Platform-neutral content analysis: language, sentiment, per-entity sentiment, topics, entities, intent, toxicity, images and videos, for every post and comment | [design](docs/design/analysis-service.md), [operations](docs/runbooks/analysis.md), [evaluation](docs/analysis/evaluation.md), [owner's decisions](docs/owner/analysis-decisions.md) |
+
 ## fbs: Facebook public page scraper
 
 `fbs` scrapes public Facebook pages and collects:
@@ -37,6 +42,8 @@ fbs-crawler --stages page ─PostTask─▶ post ─ThreadTask─▶ thread     
                                                                                    └─▶ analysis service
    └─▶ fbs.task.media ─▶ fbs-media-downloader ─▶ S3 ─▶ fb.media.ready.v1 ─▶ analysis service
                          fb.media.processed.v1 ─▶ fbs-media-janitor ─▶ delete ─▶ fb.media.deleted.v1
+sb-analysis: fb.* (or content.*) ─▶ Postgres queue ─▶ Claude (batch / real time) ─▶ analyses, mentions, rollups
+             ─▶ analysis.result.v1, analysis.media.v1, analysis.author.v1, analysis.topic.v1; media acks on fb.media.processed.v1
 ```
 
 | Binary | Role |
@@ -50,8 +57,10 @@ fbs-crawler --stages page ─PostTask─▶ post ─ThreadTask─▶ thread     
 | `fbctl` | Migrations, topics, Schema Registry, API keys, query registry, DLQ replay, raw-response replay against the current parsers, fixture scrub, dev media acks |
 | `fbs-spike` | Phase 0 harness against real Facebook: `phase0` runs everything; also `preflight`, `docids`, `har`, `capture`, `check-fixtures`, `run`, `report` (no infrastructure needed) |
 | `fakefb`, `devs3` | Synthetic Facebook and in-memory S3, for development and tests |
+| `sb-analysis` | Content analysis ([design](docs/design/analysis-service.md)): roles `ingest`, `pipeline`, `media`, `relay`, `rollup`; commands `migrate`, `entities`, `sources`, `reanalyze`, `replay-failed`, `agent-role`, `rollups` |
+| `sb-eval` | Evaluation harness: `sample`, `label` (web tool), `agreement`, `run`, `report`, `calibrate`, `cost` ([guide](docs/analysis/evaluation.md)) |
 
-Design decisions: [ADR 0001](docs/adr/0001-logged-out-graphql-scraping.md) (scraping approach), [0002](docs/adr/0002-kafka-postgres-valkey.md) (Kafka, Postgres, Valkey), [0003](docs/adr/0003-temporary-media.md) (temporary media).
+Design decisions: [ADR 0001](docs/adr/0001-logged-out-graphql-scraping.md) (scraping approach), [0002](docs/adr/0002-kafka-postgres-valkey.md) (Kafka, Postgres, Valkey), [0003](docs/adr/0003-temporary-media.md) (temporary media), [0004](docs/adr/0004-analysis-service.md) (one analysis service, canonical contract), [0005](docs/adr/0005-llm-provider-strategy.md) (models and providers), [0006](docs/adr/0006-analysis-storage.md) (analysis storage and the analytics agent), [0007](docs/adr/0007-topics-flags-bots.md) (dynamic topics, ad and breach flags, bot detection).
 
 ### Quick start (Docker Compose, against fakefb)
 
@@ -157,6 +166,10 @@ Settings that matter most:
 | `kafka.topic_prefix` | empty | Namespaces topics **and** consumer groups |
 | `kafka.schema_registry.url` | empty | Registry for the fb.v1 schemas (`fbctl schemas apply`, Helm `hooks.schemas`); see the [record schemas contract](docs/contracts/kafka-schemas.md) |
 | `kafka.tls`, `kafka.sasl`, `redis.tls` | off | TLS (CA, client certificate, server name) to the brokers and Valkey; SASL `plain`, `scram-sha-256` or `scram-sha-512`. Put the password in `FBS_KAFKA__SASL__PASSWORD`. |
+| `privacy.retention.comments_days` | 0 (keep) | Comments are kept indefinitely (owner's decision); see the legal note in the [analysis design](docs/design/analysis-service.md#13-erasure-and-privacy) |
+| `analysis.routes` | Haiku 5.5, batch | Model, lane (batch/realtime), thinking, effort and fallback per content type (comment, post, image, video, escalation, audit) |
+| `analysis.budget.daily_usd` | 0 (none) | Daily LLM spend cap (Iraq day); set one in production |
+| `analysis.providers.<name>.api_key` | empty | Put keys in `FBS_ANALYSIS__PROVIDERS__ANTHROPIC__API_KEY` (and `__OPENAI__`, `__GEMINI__`), never in a file in git |
 
 ### Phase 0, before scraping real Facebook at volume
 
@@ -240,6 +253,8 @@ Commenter data is personal data.
 | `make generate` | Regenerate protobuf Go code (`buf generate`) |
 | `go run ./cmd/fakefb --pages 5 --posts 30 --rate-limit-every 10 --login-wall-after 200` | Synthetic Facebook with injected faults (`--docids rotated` to exercise doc_id discovery) |
 | `make phase0-dryrun` | The Phase 0 kit end to end against fakefb |
+| `make analysis-stats` | Data shape for the analysis (counts only) |
+| `make eval-sample`, `eval-label`, `eval-run`, `eval-report` | Analysis evaluation on the pilot server ([guide](docs/analysis/evaluation.md)) |
 
 ### Repository layout
 
@@ -249,6 +264,8 @@ cmd/*                  binaries               configs          defaults, registr
 internal/fb            transport, proxies, identities, GraphQL, classifier, registry, parsers
 internal/crawl         task envelope, stages, worker, checkpoints, job accounting, emitter, raw sink
 internal/{api,dispatch,persist,scheduler,media,gdpr,spike,fakefb,store,platform}
+internal/analysis      sb-analysis: adapter, ingest, pipeline, providers, prompt, store, media, eval
+migrations/analysis    the analysis schema (own goose table)    configs/analysis  taxonomy, entity seed
 migrations             goose SQL              testdata/fb      parser fixtures (+ expected.json)
 deploy/{docker,compose,helm/fbs}             docs/{adr,contracts,runbooks}
 phase0                 Phase 0 kit: proxy and page templates, dry run

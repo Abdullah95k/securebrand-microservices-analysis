@@ -1,5 +1,7 @@
 # Media handoff contract (fbs → analysis service)
 
+The consumer is `sb-analysis` ([design](../design/analysis-service.md), [operations](../runbooks/analysis.md)): its media workers read the file, analyse it (images resized; videos as key frames plus a speech-to-text transcript), store only the analysis and acknowledge through a transactional outbox, so an ack is never lost to a crash.
+
 fbs downloads every media item it discovers (post photos, video renditions,
 thumbnails, comment photos/GIFs/stickers) into **temporary** object storage,
 tells the analysis service about it, and deletes it once the analysis service

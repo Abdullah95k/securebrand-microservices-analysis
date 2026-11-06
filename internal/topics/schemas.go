@@ -16,4 +16,13 @@ var ValueSchemas = map[string]string{
 	MediaDeleted:  "securebrand/fb/v1/media.proto",
 	Job:           "securebrand/fb/v1/job.proto",
 	Erasure:       "securebrand/fb/v1/erasure.proto",
+
+	ContentItem:           "securebrand/content/v1/content.proto",
+	ContentMediaReady:     "securebrand/content/v1/content.proto",
+	ContentMediaProcessed: "securebrand/content/v1/content.proto",
+	ContentErasure:        "securebrand/content/v1/content.proto",
+	AnalysisResult:        "securebrand/analysis/v1/analysis.proto",
+	AnalysisMedia:         "securebrand/analysis/v1/analysis.proto",
+	AnalysisAuthor:        "securebrand/analysis/v1/analysis.proto",
+	AnalysisTopic:         "securebrand/analysis/v1/analysis.proto",
 }

@@ -3,6 +3,7 @@
 {{- if .Values.hooks.migrate }}{{ $jobs = append $jobs (dict "name" "migrate" "args" (list "migrate" "up")) }}{{ end -}}
 {{- if .Values.hooks.topics }}{{ $jobs = append $jobs (dict "name" "topics" "args" (list "kafka" "apply" "--replicas" (toString .Values.hooks.topicReplicas))) }}{{ end -}}
 {{- if .Values.hooks.schemas }}{{ $jobs = append $jobs (dict "name" "schemas" "args" (list "schemas" "apply")) }}{{ end -}}
+{{- if .Values.hooks.analysisMigrate }}{{ $jobs = append $jobs (dict "name" "analysis-migrate" "command" "/usr/local/bin/sb-analysis" "args" (list "migrate")) }}{{ end -}}
 {{- range $jobs }}
 ---
 apiVersion: batch/v1
@@ -23,7 +24,7 @@ spec:
       containers:
         - name: {{ .name }}
           image: "{{ $root.Values.image.repository }}:{{ $root.Values.image.tag | default $root.Chart.AppVersion }}"
-          command: ["/usr/local/bin/fbctl"]
+          command: [{{ .command | default "/usr/local/bin/fbctl" | quote }}]
           args: {{- toYaml .args | nindent 12 }}
           env: {{- include "fbs.env" $root | nindent 12 }}
           {{- include "fbs.envFrom" $root | nindent 10 }}

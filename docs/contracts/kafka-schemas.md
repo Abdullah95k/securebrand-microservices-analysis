@@ -15,8 +15,17 @@ Schema Registry subjects, get `kafka.topic_prefix` prepended.
 | `fb.media.deleted.v1` | media id | `securebrand.fb.v1.MediaDeleted` | `media.proto` |
 | `fb.job.v1` | job id | `securebrand.fb.v1.JobEvent` | `job.proto` |
 | `fb.erasure.v1` | erasure request id | `securebrand.fb.v1.ErasureEvent` | `erasure.proto` |
+| `content.item.v1` | thread id | `securebrand.content.v1.ContentItem` | `content/v1/content.proto` |
+| `content.media.ready.v1` / `content.media.processed.v1` | media id | `securebrand.content.v1.MediaReady` / `MediaProcessed` | `content/v1/content.proto` |
+| `content.erasure.v1` | request id | `securebrand.content.v1.Erasure` | `content/v1/content.proto` |
+| `analysis.result.v1` | content id | `securebrand.analysis.v1.ItemAnalysis` (sb-analysis produces it) | `analysis/v1/analysis.proto` |
+| `analysis.media.v1` | media id | `securebrand.analysis.v1.MediaAnalysis` (sb-analysis produces it) | `analysis/v1/analysis.proto` |
+| `analysis.author.v1` | hex author key | `securebrand.analysis.v1.AuthorFlag` (an author's bot level changed) | `analysis/v1/analysis.proto` |
+| `analysis.topic.v1` | topic id | `securebrand.analysis.v1.TopicUpdate` (the topic list changed) | `analysis/v1/analysis.proto` |
 
-The files are in `api/proto/securebrand/fb/v1/`. Generated Go is in `gen/go/securebrand/fb/v1`.
+The `content.*` and `analysis.*` topics are the platform-neutral contract: see [content-v1.md](content-v1.md).
+
+The files are in `api/proto/securebrand/fb/v1/` (and `content/v1`, `analysis/v1`). Generated Go is in `gen/go/securebrand/`.
 
 ## Comment versions and deletions
 
