@@ -205,14 +205,23 @@ type AnalysisMedia struct {
 	// Consumer is the name acks carry; it must match media.required_consumers.
 	Consumer string `koanf:"consumer"`
 	// Kinds analysed; other kinds are acknowledged without analysis.
-	Kinds        []string      `koanf:"kinds"`
-	Workers      int           `koanf:"workers"`
-	MaxBytes     int64         `koanf:"max_bytes"`
-	ImageMaxSide int           `koanf:"image_max_side"`
-	Poll         time.Duration `koanf:"poll"`
-	Lease        time.Duration `koanf:"lease"`
-	MaxTries     int           `koanf:"max_tries"`
-	Video        VideoConfig   `koanf:"video"`
+	Kinds   []string `koanf:"kinds"`
+	Workers int      `koanf:"workers"`
+	// MaxBytes caps a video (streamed to a temporary file, never held in
+	// memory); ImageMaxBytes and ImageMaxPixels cap an image (read into
+	// memory and decoded). Larger files fail permanently and are acked.
+	MaxBytes       int64 `koanf:"max_bytes"`
+	ImageMaxBytes  int64 `koanf:"image_max_bytes"`
+	ImageMaxPixels int   `koanf:"image_max_pixels"`
+	// WorkerMemoryMiB is one worker's worst case (a decoded image at
+	// image_max_pixels, or an ffmpeg run); workers are lowered at start to
+	// fit the container's memory limit.
+	WorkerMemoryMiB int           `koanf:"worker_memory_mib"`
+	ImageMaxSide    int           `koanf:"image_max_side"`
+	Poll            time.Duration `koanf:"poll"`
+	Lease           time.Duration `koanf:"lease"`
+	MaxTries        int           `koanf:"max_tries"`
+	Video           VideoConfig   `koanf:"video"`
 }
 
 // VideoConfig: key frames with ffmpeg, speech-to-text through a provider.
@@ -341,6 +350,9 @@ func (a *Analysis) Validate() error {
 	}
 	if a.Media.Enabled && a.Media.Consumer == "" {
 		errs = append(errs, errors.New("analysis.media.consumer is required when media is enabled"))
+	}
+	if a.Media.Enabled && (a.Media.MaxBytes <= 0 || a.Media.ImageMaxBytes <= 0 || a.Media.ImageMaxPixels <= 0 || a.Media.WorkerMemoryMiB <= 0) {
+		errs = append(errs, errors.New("analysis.media.max_bytes, image_max_bytes, image_max_pixels and worker_memory_mib must be > 0"))
 	}
 	if a.Media.Video.Enabled && a.Media.Video.STTProvider != "" {
 		if _, ok := a.Providers[a.Media.Video.STTProvider]; !ok {

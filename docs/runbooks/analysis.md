@@ -38,6 +38,7 @@ The Helm chart (`deploy/helm/sb-analysis`) runs `analysis` (all roles but media)
 - Scale `analysis-media`, or raise `analysis.media.workers`.
 - `failed_permanent` acks for videos with "ffmpeg not found" mean the media workers run the default image: use the media image `sb-analysis-media:dev` (`make docker-analysis-media`; Compose: `SB_ANALYSIS_IMAGE=sb-analysis-media:dev`).
 - `analysis.media.kinds` lists the kinds analysed. Others are acknowledged without analysis (`skipped`).
+- **Memory and disk:** a video streams to a temporary file (`/tmp`, up to `analysis.media.max_bytes`, 500 MiB) and never passes through memory. An image is read into memory up to `image_max_bytes` (32 MiB) and `image_max_pixels` (40 megapixels, judged from its header before decoding); larger files fail permanently and are acknowledged. At start, `workers` is lowered to fit the container's memory limit (`worker_memory_mib` each, after 256 MiB), with a warning in the log. The chart gives `analysis-media` 2 GiB of memory and a 3 GiB `/tmp`.
 
 ## Dead letters
 

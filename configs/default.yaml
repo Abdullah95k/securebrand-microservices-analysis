@@ -158,8 +158,13 @@ analysis:
     consumer: analysis     # must match media.required_consumers
     # Facebook kinds, and the canonical image/video of content.media.ready.v1.
     kinds: [photo, video, reel, comment_photo, comment_video, cover, image]
+    # Per process; lowered at start to fit the container's memory limit
+    # (worker_memory_mib each, after 256 MiB for the rest): 4 fit in 2 GiB.
     workers: 4
-    max_bytes: 524288000
+    worker_memory_mib: 384
+    max_bytes: 524288000       # a video, streamed to disk (500 MiB)
+    image_max_bytes: 33554432  # an image, read into memory (32 MiB)
+    image_max_pixels: 40000000 # 40 megapixels: about 160 MiB decoded
     image_max_side: 1024
     poll: 2s
     lease: 10m

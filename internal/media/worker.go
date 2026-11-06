@@ -1,6 +1,7 @@
 package media
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -25,36 +26,49 @@ import (
 
 // Objects reads media files.
 type Objects interface {
-	Get(ctx context.Context, bucket, key string, maxBytes int64) ([]byte, error)
+	// Fetch streams an object into dst, at most maxBytes (ErrTooLarge
+	// beyond; ErrGone when it no longer exists). Nothing is held in memory:
+	// videos go to a temporary file, images to a buffer bounded by
+	// analysis.media.image_max_bytes.
+	Fetch(ctx context.Context, bucket, key string, maxBytes int64, dst io.Writer) (int64, error)
 }
 
 // ErrGone means the file no longer exists (deleted after its TTL).
 var ErrGone = errors.New("media: object not found")
 
-// ErrTooLarge means the file exceeds analysis.media.max_bytes.
+// ErrTooLarge means the file exceeds analysis.media.max_bytes (videos) or
+// image_max_bytes and image_max_pixels (images).
 var ErrTooLarge = errors.New("media: object too large")
 
 // MinioObjects reads from S3-compatible storage.
 type MinioObjects struct{ Client *minio.Client }
 
-// Get reads an object, up to maxBytes.
-func (m MinioObjects) Get(ctx context.Context, bucket, key string, maxBytes int64) ([]byte, error) {
+// Fetch streams an object into dst, up to maxBytes.
+func (m MinioObjects) Fetch(ctx context.Context, bucket, key string, maxBytes int64, dst io.Writer) (int64, error) {
 	obj, err := m.Client.GetObject(ctx, bucket, key, minio.GetObjectOptions{})
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	defer func() { _ = obj.Close() }()
-	b, err := io.ReadAll(io.LimitReader(obj, maxBytes+1))
+	n, err := CopyLimited(dst, obj, maxBytes)
+	if err != nil && minio.ToErrorResponse(err).Code == "NoSuchKey" {
+		return n, ErrGone
+	}
+	return n, err
+}
+
+// CopyLimited copies src into dst through a small fixed buffer, at most
+// maxBytes; a source longer than that is ErrTooLarge (after maxBytes+1
+// bytes, never more).
+func CopyLimited(dst io.Writer, src io.Reader, maxBytes int64) (int64, error) {
+	n, err := io.Copy(dst, io.LimitReader(src, maxBytes+1))
 	if err != nil {
-		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
-			return nil, ErrGone
-		}
-		return nil, err
+		return n, err
 	}
-	if int64(len(b)) > maxBytes {
-		return nil, ErrTooLarge
+	if n > maxBytes {
+		return n, ErrTooLarge
 	}
-	return b, nil
+	return n, nil
 }
 
 // Worker analyses media jobs.
@@ -85,7 +99,12 @@ func (w *Worker) analysed(kind string) bool {
 // Run processes jobs with analysis.media.workers goroutines until ctx ends.
 func (w *Worker) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
-	for i := 0; i < max(w.Cfg.Workers, 1); i++ {
+	n := FitWorkers(w.Cfg.Workers, ContainerMemoryLimit(cgroupRoot), int64(w.Cfg.WorkerMemoryMiB)<<20)
+	if n < w.Cfg.Workers {
+		slog.Warn("analysis: fewer media workers than configured, to fit the container's memory limit",
+			"configured", w.Cfg.Workers, "running", n, "worker_memory_mib", w.Cfg.WorkerMemoryMiB)
+	}
+	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -171,9 +190,23 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	if !ok || !rc.On() {
 		return &store.MediaResult{Job: j, Consumer: w.Cfg.Consumer, SkipReason: "route " + route + " disabled"}, nil
 	}
-	data, err := w.Objects.Get(ctx, j.Bucket, j.Key, w.Cfg.MaxBytes)
-	if err != nil {
-		return nil, err
+	// The file: a video streams to a temporary file for ffmpeg, an image
+	// to a buffer bounded by image_max_bytes.
+	var videoPath string
+	var imageData []byte
+	if j.IsVideo() {
+		path, err := w.fetchVideo(ctx, j)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = os.Remove(path) }()
+		videoPath = path
+	} else {
+		var buf bytes.Buffer
+		if _, err := w.Objects.Fetch(ctx, j.Bucket, j.Key, w.Cfg.ImageMaxBytes, &buf); err != nil {
+			return nil, err
+		}
+		imageData = buf.Bytes()
 	}
 	ownerAt, postText, postTags, err := w.P.Store.OwnerContext(ctx, j.OwnerContentID)
 	if err != nil {
@@ -185,7 +218,7 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	var images []provider.Image
 	var audio []byte
 	if j.IsVideo() {
-		f, err := w.video(ctx, j, data)
+		f, err := w.video(ctx, j, videoPath)
 		if err != nil {
 			return nil, err
 		}
@@ -195,7 +228,7 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 		}
 		audio = f.Audio
 	} else {
-		img, err := Resize(data, w.Cfg.ImageMaxSide)
+		img, err := Resize(imageData, w.Cfg.ImageMaxSide, w.Cfg.ImageMaxPixels)
 		if err != nil {
 			return nil, err
 		}
@@ -316,24 +349,30 @@ func (w *Worker) transcriber(audio []byte) (provider.Transcriber, string) {
 // ExtractFrames), which speech-to-text APIs bill.
 func AudioMinutes(mp3 []byte) float64 { return float64(len(mp3)) * 8 / 32000 / 60 }
 
-func (w *Worker) video(ctx context.Context, j core.MediaJob, data []byte) (*Frames, error) {
+// fetchVideo streams a video into a temporary file (analysis.media.video.
+// temp_dir) and returns its path; the caller removes it.
+func (w *Worker) fetchVideo(ctx context.Context, j core.MediaJob) (string, error) {
 	tmp, err := os.CreateTemp(w.Cfg.Video.TempDir, "sb-media-*")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	name := tmp.Name()
-	defer func() { _ = os.Remove(name) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return nil, err
+	_, err = w.Objects.Fetch(ctx, j.Bucket, j.Key, w.Cfg.MaxBytes, tmp)
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
 	}
-	if err := tmp.Close(); err != nil {
-		return nil, err
+	if err != nil {
+		_ = os.Remove(name)
+		return "", err
 	}
+	return name, nil
+}
+
+func (w *Worker) video(ctx context.Context, j core.MediaJob, path string) (*Frames, error) {
 	vctx, cancel := context.WithTimeout(ctx, w.Cfg.Video.Timeout)
 	defer cancel()
 	v := w.Cfg.Video
-	return ExtractFrames(vctx, v.FFmpeg, name, v.TempDir, j.DurationMS, v.MaxFrames, v.FrameSide, v.MaxSeconds)
+	return ExtractFrames(vctx, v.FFmpeg, path, v.TempDir, j.DurationMS, v.MaxFrames, v.FrameSide, v.MaxSeconds)
 }
 
 // call sends the request to the route's provider, or its fallback when the

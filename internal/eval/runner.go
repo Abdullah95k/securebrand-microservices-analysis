@@ -280,7 +280,7 @@ func (r *Runner) runImages(ctx context.Context, items []Item, cfg RunConfig) err
 		if err != nil {
 			return err
 		}
-		img, err := media.Resize(data, 1024)
+		img, err := media.Resize(data, 1024, media.DefaultMaxPixels)
 		if err != nil {
 			return fmt.Errorf("%s: %w", it.ID, err)
 		}

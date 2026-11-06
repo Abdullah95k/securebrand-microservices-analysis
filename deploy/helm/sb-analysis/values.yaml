@@ -81,13 +81,18 @@ components:
     resources: {requests: {cpu: 250m, memory: 256Mi}, limits: {memory: 1Gi}}
     pdb: {maxUnavailable: 1}
   # Media workers: images, and videos with ffmpeg (mediaImage). Need read
-  # access to the media bucket.
+  # access to the media bucket. Memory: analysis.media.workers (4) at
+  # worker_memory_mib (384) each, after 256 MiB for the rest, fit 2Gi;
+  # workers are lowered at start to fit whatever the limit is. Videos are
+  # streamed to /tmp (up to analysis.media.max_bytes each, 500 MiB): its
+  # size limit holds the 4 workers' files and frames.
   analysis-media:
     enabled: true
     media: true
     roles: [media]
     replicas: 1
     resources: {requests: {cpu: 500m, memory: 512Mi}, limits: {memory: 2Gi}}
+    tmpSizeLimit: 3Gi
     pdb: {}
 
 podSecurityContext:

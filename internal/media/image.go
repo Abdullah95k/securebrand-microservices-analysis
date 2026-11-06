@@ -18,13 +18,26 @@ import (
 	_ "golang.org/x/image/webp"
 )
 
+// DefaultMaxPixels is the pixel limit for tools without a config
+// (analysis.media.image_max_pixels has the same default).
+const DefaultMaxPixels = 40_000_000
+
 // ErrUndecodable means the bytes are not an image we can read: a permanent
 // failure.
 var ErrUndecodable = errors.New("media: undecodable image")
 
 // Resize decodes an image and re-encodes it as JPEG with its longer side at
-// most maxSide pixels (smaller images keep their size).
-func Resize(data []byte, maxSide int) ([]byte, error) {
+// most maxSide pixels (smaller images keep their size). An image of more
+// than maxPixels (0 = no limit) is ErrTooLarge, judged from its header
+// before anything is decoded: a small file can claim a huge picture.
+func Resize(data []byte, maxSide, maxPixels int) ([]byte, error) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrUndecodable, err)
+	}
+	if maxPixels > 0 && int64(cfg.Width)*int64(cfg.Height) > int64(maxPixels) {
+		return nil, fmt.Errorf("%w: %dx%d pixels", ErrTooLarge, cfg.Width, cfg.Height)
+	}
 	src, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUndecodable, err)

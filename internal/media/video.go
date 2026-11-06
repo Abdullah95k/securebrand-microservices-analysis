@@ -54,7 +54,9 @@ func ExtractFrames(ctx context.Context, ffmpeg, video, tempDir string, durationM
 		interval = 1
 	}
 	scale := fmt.Sprintf("scale='if(gt(iw,ih),%d,-2)':'if(gt(iw,ih),-2,%d)'", side, side)
-	frameArgs := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-t", strconv.Itoa(int(dur) + 1), "-i", video,
+	// Two decoding threads: ffmpeg's memory grows with its threads, and it
+	// counts against the container's limit (analysis.media.worker_memory_mib).
+	frameArgs := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "2", "-t", strconv.Itoa(int(dur) + 1), "-i", video,
 		"-vf", fmt.Sprintf("fps=1/%.3f,%s", interval, scale), "-frames:v", strconv.Itoa(maxFrames), "-q:v", "4",
 		filepath.Join(dir, "f%03d.jpg")}
 	// #nosec G204 -- ffmpeg path from config, arguments built here
@@ -73,7 +75,7 @@ func ExtractFrames(ctx context.Context, ffmpeg, video, tempDir string, durationM
 		f.Images = append(f.Images, b)
 	}
 	audio := filepath.Join(dir, "audio.mp3")
-	audioArgs := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-i", video, "-vn", "-ac", "1", "-ar", "16000",
+	audioArgs := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "2", "-i", video, "-vn", "-ac", "1", "-ar", "16000",
 		"-c:a", "libmp3lame", "-b:a", "32k", "-t", strconv.Itoa(max(maxSeconds, 1)), audio}
 	// #nosec G204 -- as above
 	if _, err := exec.CommandContext(ctx, ffmpeg, audioArgs...).CombinedOutput(); err == nil {
