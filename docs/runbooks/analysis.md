@@ -63,6 +63,7 @@ The Helm chart (`deploy/helm/sb-analysis`) runs `analysis` (all roles but media)
   - skips and failures carry a short `reason` (`policy:sticker/attachment`, `too_large`, `undecodable`, `gone`, `no_ffmpeg`, `route_disabled:image`, `refused:<model>`, `erased_subject`), with the details in `error`.
 - **Identical files:** a contract file whose SHA-256 was analysed before, under another media ID, reuses that analysis. No download and no provider call; `media_analyses.reused_from` names the source.
 - **Files deleted first** (`content.media.deleted.v1`): a job still waiting is closed (`media_jobs.state = 'gone'`) and not acknowledged.
+- **Transcripts:** a video of a contract post with captions uses the captions (the uploader's first, then the platform's speech-to-text; never a machine translation) and buys no speech-to-text. `transcript_source` says which: `platform_captions` or the speech-to-text model.
 - **Memory and disk:** a video streams to a temporary file (`/tmp`, up to `analysis.media.max_bytes`, 500 MiB) and never passes through memory. An image is read into memory up to `image_max_bytes` (32 MiB) and `image_max_pixels` (40 megapixels, judged from its header before decoding); larger files fail permanently and are acknowledged. At start, `workers` is lowered to fit the container's memory limit (`worker_memory_mib` each, after 256 MiB), with a warning in the log. The chart gives `analysis-media` 2 GiB of memory and a 3 GiB `/tmp`.
 
 ## Dead letters
@@ -167,9 +168,15 @@ The model proposes topics missing from the list. They are deduplicated at once (
 ## Bots: flagged authors
 
 Once a day every author with 5+ items in 30 days is scored from behaviour (bursts, volume, the same text in many threads, the same text as many other authors on the same day, replies within a minute, round-the-clock activity, spam share). Smaller accounts (2+ items) are scored when they took part in coordination, so networks of accounts that each post a little are caught. Score ≥45 is `suspected`, ≥70 `likely`.
-- **Look:** `sb-analysis authors list` (flagged, highest score first, with reasons). The key is the pseudonymous author key, never a Facebook id.
-- **Decide:** `sb-analysis authors mark --key <hex> --as human --by "<your name>" --note "<why>"` ("not a bot"); `--as bot` (shows as `confirmed`); `--as none` (back to the score). Every item of the author follows, earlier ones too.
-- **The log of decisions:** `sb-analysis authors log [--key <hex>]`: who, when, why, the level before and after.
+- **Look:** `sb-analysis authors list` (flagged, highest score first, with reasons). The author column shows:
+  - for items read from the contract, the author's account ID (`tt:account:123`);
+  - for items read from fbs's `fb.*` topics, fbs's pseudonymous author key, in hex.
+  - Authors the platform hides are never scored.
+- **Decide:** `sb-analysis authors mark --key <author> --as human --by "<your name>" --note "<why>"` ("not a bot"); `--as bot` (shows as `confirmed`); `--as none` (back to the score).
+  - `<author>` is what the list shows: an account ID or a hex key. With an account ID, the platform comes from the ID.
+  - Every item of the author follows, earlier ones too.
+  - Only authors with an account ID are published on `analysis.author.v1`, keyed by that ID.
+- **The log of decisions:** `sb-analysis authors log [--key <author>]`: who, when, why, the level before and after.
 - On the pilot, run these through `make analysis-cmd ARGS='...'` (example: `make analysis-cmd ARGS="authors list"`).
 - **Score now:** `sb-analysis authors score`.
 - **Tune:** `analysis.bots` (thresholds, window, minimum items). Before showing bot flags to clients, review a sample of flagged authors: false positives (super-fans, giveaway hunters) are expected.

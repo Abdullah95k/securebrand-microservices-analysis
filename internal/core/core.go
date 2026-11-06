@@ -74,6 +74,12 @@ type Item struct {
 	Version  int64
 	Depth    int
 	AuthorID string
+	// Captions: a post's caption track, used as its video's transcript
+	// (the uploader's captions first, then the platform's speech-to-text;
+	// never a machine translation), with its language and source.
+	Captions       string
+	CaptionsLang   string
+	CaptionsSource string
 }
 
 // PlatformCode is the contract's platform code of a contract ID
@@ -231,8 +237,13 @@ type MediaResult struct {
 	Entities    []Entity `json:"entities"`
 	Topics      []string `json:"topics"`
 	Transcript  string   `json:"transcript,omitempty"`
-	AdType      string   `json:"ad_type,omitempty"`
-	Legal       []string `json:"legal,omitempty"`
+	// TranscriptLang and TranscriptSource: the transcript's language, and
+	// where it came from ("platform_captions", or the speech-to-text
+	// model).
+	TranscriptLang   string   `json:"transcript_lang,omitempty"`
+	TranscriptSource string   `json:"transcript_source,omitempty"`
+	AdType           string   `json:"ad_type,omitempty"`
+	Legal            []string `json:"legal,omitempty"`
 }
 
 // Logo is a brand logo seen in an image.

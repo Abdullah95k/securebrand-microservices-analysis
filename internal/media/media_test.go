@@ -19,6 +19,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	analysisv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/analysis/v1"
 	mediav1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/media/v1"
 
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/config"
@@ -336,6 +337,11 @@ func TestWorkerVideoSpeechCost(t *testing.T) {
 	if cost < 1 {
 		t.Fatalf("speech cost %v, want the audio's seconds in dollars", cost)
 	}
+	var source string
+	if err := st.DB.QueryRow(ctx, `SELECT result->>'transcript_source' FROM analysis.media_analyses WHERE media_id = 'vid'`).Scan(&source); err != nil ||
+		source != "stt-test" {
+		t.Fatalf("transcript source %q %v, want the speech-to-text model", source, err)
+	}
 
 	// A budget smaller than the speech cost: nothing is transcribed or sent.
 	st2, w2, fp2, objs2 := setupWith(t, func(c *config.Analysis) {
@@ -520,5 +526,63 @@ func TestContractMediaHandOff(t *testing.T) {
 	// Nothing went to fbs's acknowledgement topic.
 	if a := acks(t, st); len(a) != 0 {
 		t.Fatalf("contract media acknowledged on fbs's topic: %v", a)
+	}
+}
+
+// A post's caption track is its video's transcript: no speech-to-text is
+// bought, and the captions leave masked like any transcript.
+func TestWorkerVideoUsesCaptions(t *testing.T) {
+	video := testVideo(t)
+	b, err := os.ReadFile(video)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, w, fp, objs := setupWith(t, func(c *config.Analysis) {
+		pv := c.Providers["fake"]
+		pv.TranscribeModel = "stt-test"
+		c.Providers["fake"] = pv
+		c.Pricing["stt-test"] = config.ModelPrice{PerMinute: 60}
+	})
+	ctx := context.Background()
+	post := &core.Item{ContentID: "tt:post:1", Platform: "tiktok", Kind: core.KindPost, SourceID: "tt:account:1", Version: 1,
+		CreatedAt: time.Now().UTC().Add(-time.Hour), ObservedAt: time.Now().UTC(), Text: "فيديو جديد", Status: core.StatusVisible,
+		Captions: "اتصلوا على 07701234567 للعرض", CaptionsLang: "ar", CaptionsSource: "platform_asr"}
+	if _, err := st.Ingest(ctx, []*core.Item{post}, w.P.Plan); err != nil {
+		t.Fatal(err)
+	}
+	objs["b/tt:media:v"] = b
+	v := contractJob("tt:media:v", "content", "", time.Hour)
+	v.Kind = "video"
+	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{v}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	var users []string
+	fp.Fail = func(req provider.Request) error { users = append(users, req.User); return nil }
+	if _, err := w.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := st.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.provider_requests WHERE model = 'stt-test'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("speech-to-text bought despite captions: %d %v", n, err)
+	}
+	var transcript, source, lang string
+	if err := st.DB.QueryRow(ctx, `SELECT transcript, result->>'transcript_source', result->>'transcript_lang'
+		FROM analysis.media_analyses WHERE media_id = 'tt:media:v'`).Scan(&transcript, &source, &lang); err != nil {
+		t.Fatal(err)
+	}
+	if transcript != post.Captions || source != "platform_captions" || lang != "ar" {
+		t.Fatalf("transcript %q from %q in %q", transcript, source, lang)
+	}
+	if len(users) != 1 || !strings.Contains(users[0], "للعرض") || strings.Contains(users[0], "07701234567") {
+		t.Fatalf("vision request %q", users)
+	}
+	var payload []byte
+	if err := st.DB.QueryRow(ctx, `SELECT payload FROM analysis.outbox WHERE topic = 'analysis.media.v1' AND key = 'tt:media:v'`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	var ev analysisv1.MediaAnalysis
+	if err := proto.Unmarshal(payload, &ev); err != nil || ev.TranscriptSource != "platform_captions" || ev.TranscriptLang != "ar" ||
+		ev.Transcript != post.Captions {
+		t.Fatalf("published %v %v", &ev, err)
 	}
 }

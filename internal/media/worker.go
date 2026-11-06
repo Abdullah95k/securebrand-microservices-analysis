@@ -223,7 +223,8 @@ func (w *Worker) reuse(ctx context.Context, j core.MediaJob) (*store.MediaResult
 	if !ok {
 		return nil, false
 	}
-	ownerAt, _, _, err := w.P.Store.OwnerContext(ctx, j.OwnerContentID)
+	owner, err := w.P.Store.OwnerContext(ctx, j.OwnerContentID)
+	ownerAt := owner.CreatedAt
 	if err != nil || ownerAt.IsZero() {
 		ownerAt = time.Now().UTC()
 	}
@@ -272,10 +273,11 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 		}
 		imageData = buf.Bytes()
 	}
-	ownerAt, postText, postTags, err := w.P.Store.OwnerContext(ctx, j.OwnerContentID)
+	owner, err := w.P.Store.OwnerContext(ctx, j.OwnerContentID)
 	if err != nil {
 		return nil, err
 	}
+	ownerAt, postText, postTags := owner.CreatedAt, owner.Text, owner.Tags
 	if ownerAt.IsZero() {
 		ownerAt = time.Now().UTC()
 	}
@@ -298,23 +300,34 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 		}
 		images = append(images, provider.Image{MediaType: "image/jpeg", Data: img})
 	}
-	// Speech-to-text is paid per minute: it counts toward the budget, so
-	// the check comes before transcribing.
-	stt, sttModel := w.transcriber(audio)
+	// The video's transcript: the post's caption track when the platform
+	// gave one (free), else speech-to-text, which is paid per minute and
+	// counts toward the budget, so the check comes before transcribing.
+	var transcript, transcriptLang, transcriptSource string
+	var stt provider.Transcriber
+	var sttModel string
 	minutes := AudioMinutes(audio)
+	if j.IsVideo() && owner.Captions != "" {
+		transcript, transcriptLang, transcriptSource = textnorm.Truncate(owner.Captions, 20000), owner.CaptionsLang, "platform_captions"
+	} else {
+		stt, sttModel = w.transcriber(audio)
+	}
 	speechCost := 0.0
 	if stt != nil {
 		speechCost = minutes * w.P.Pricing.Price(sttModel).PerMinute
 	}
 	system, schema := w.prompts()
-	est := w.P.Pricing.Estimate(rc.Model, len(system), len(postText)+int(minutes*900), len(images), 250, false) + speechCost
+	spoken := int(minutes * 900) // characters a transcript of this audio will add
+	if transcript != "" {
+		spoken = len(transcript)
+	}
+	est := w.P.Pricing.Estimate(rc.Model, len(system), len(postText)+spoken, len(images), 250, false) + speechCost
 	if ok, err := w.P.Budget.Allow(ctx, route, est, false); err != nil || !ok {
 		if err == nil {
 			err = errBudget
 		}
 		return nil, err
 	}
-	var transcript string
 	if stt != nil {
 		start := time.Now()
 		text, err := stt.Transcribe(ctx, audio, "audio.mp3", w.Cfg.Video.STTLanguage)
@@ -322,6 +335,7 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 			return nil, fmt.Errorf("transcribe: %w", err)
 		}
 		transcript = textnorm.Truncate(text, 20000)
+		transcriptLang, transcriptSource = w.Cfg.Video.STTLanguage, sttModel
 		// Logged as a request of its own, so the day's spend (read back
 		// from the request log) includes it.
 		w.P.Budget.Add(route, speechCost)
@@ -370,7 +384,7 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	if err != nil {
 		return nil, err
 	}
-	mr.Transcript = transcript
+	mr.Transcript, mr.TranscriptLang, mr.TranscriptSource = transcript, transcriptLang, transcriptSource
 	mr.Topics = pipelineTopics(mr.Topics, mr.Entities)
 	return &store.MediaResult{Job: j, Result: mr, OwnerTime: ownerAt, Consumer: w.Cfg.Consumer, CostUSD: cost + speechCost,
 		Prov: core.Provenance{Provider: prov, Model: model, PromptVersion: prompt.PromptVersion, TaxonomyVersion: tax.Version,
