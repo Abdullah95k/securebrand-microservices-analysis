@@ -148,7 +148,10 @@ analysis:
     deepdml/faster-whisper-large-v3-turbo-ct2: {per_minute: 0} # own server: a fixed cost
     fake:                  {input: 0, output: 0}
   budget:
-    daily_usd: 0           # 0 = unlimited; set one in production
+    # USD per day (analysis.timezone). 0 = no cap, accepted only with
+    # service.env dev or allow_unlimited: true (production gets $5).
+    daily_usd: 0
+    allow_unlimited: false
     urgent_exempt: true
   media:
     enabled: true
