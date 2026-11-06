@@ -15,7 +15,7 @@
 
 ## Work in progress (from 6 Nov)
 
-- **REQ-011, the fixes:** one row per fix in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md). Fixes 1 (a repository of its own), 2 (its own chart, `values-production.yaml`, images on a tag) and 3 (no unlimited budget by accident) are merged; fix 4 (media memory) is in review.
+- **REQ-011, the fixes:** one row per fix in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md). Fixes 1 to 4 are merged (a repository of its own; its own chart and images; no unlimited budget by accident; media memory); fix 5 (the provider's rate limit, fleet-wide) is in review.
 - **REQ-022, adopting contract v1.0.0:** after the fixes REQ-011 lists before the canary; its record will be `docs/master/analysis-contract-adoption.md`.
 - **Questions for the master:** [`docs/master/questions-for-master-2026-11-06.md`](master/questions-for-master-2026-11-06.md).
 
@@ -91,3 +91,5 @@
 - **6 Nov, REQ-011 fix 3 (in review):** outside `dev`, a daily cap of 0 (no cap) is refused unless `analysis.budget.allow_unlimited: true` is set. This is a new setting; nothing was removed.
 - **6 Nov:** REQ-011 fix 3 merged (pull request #5, `3f18a15`).
 - **6 Nov, REQ-011 fix 4 (in review):** media files stream to disk; images get their own limits (bytes, and pixels checked before decoding); the number of media workers fits the container's memory. All new settings; nothing removed.
+- **6 Nov:** REQ-011 fix 4 merged (pull request #6, `34545d9`).
+- **6 Nov, REQ-011 fix 5 (in review):** each AI provider's rate limit is shared by every pod through Valkey, with a per-pod fallback while Valkey is unreachable. All new settings; nothing removed.

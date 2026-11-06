@@ -16,6 +16,7 @@ var (
 	Fallbacks     = metrics.AnalysisFallbacks
 	Repairs       = metrics.AnalysisRepairs
 	Refusals      = metrics.AnalysisRefusals
+	RateFallback  = metrics.AnalysisRateFallback
 	FollowUps     = metrics.AnalysisFollowUps
 	Deduplicated  = metrics.AnalysisDeduplicated
 	DeadLetters   = metrics.AnalysisDeadLetters

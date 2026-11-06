@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/minio/minio-go/v7"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/adapter"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/ametrics"
@@ -24,6 +25,7 @@ import (
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/media"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/pipeline"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/kafka"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/ratelimit"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/run"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/provider"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/provider/registry"
@@ -63,7 +65,15 @@ func New(ctx context.Context, cfg *config.Config, db *pgxpool.Pool, kc kafka.Cli
 	if err != nil {
 		return nil, err
 	}
-	providers, err := registry.New(a.Providers)
+	var opts []registry.Option
+	if addr := cfg.Valkey.Address(); addr != "" {
+		lf, err := sharedLimiters(cfg)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, registry.WithLimiters(lf))
+	}
+	providers, err := registry.New(a.Providers, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -258,4 +268,24 @@ func Every(ctx context.Context, name string, interval time.Duration, fn func(con
 		interval = time.Minute
 	}
 	return run.Every(ctx, name, interval, fn)
+}
+
+// sharedLimiters shares each provider's rps across every process using the
+// same Valkey. The client connects lazily: an unreachable Valkey never stops
+// the service, each process then limits itself to its share
+// (analysis.rate_limit.fallback_divisor), and counts it
+// (sb_analysis_rate_limit_fallback_total).
+func sharedLimiters(cfg *config.Config) (registry.LimiterFunc, error) {
+	tc, err := cfg.Valkey.TLS.Config()
+	if err != nil {
+		return nil, fmt.Errorf("valkey: %w", err)
+	}
+	client := redis.NewClient(&redis.Options{Addr: cfg.Valkey.Address(), Password: cfg.Valkey.Password, DB: cfg.Valkey.DB,
+		TLSConfig: tc, DialTimeout: 2 * time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second})
+	rl := cfg.Analysis.RateLimit
+	return func(name string, rps float64) registry.Limiter {
+		l := ratelimit.NewShared(client, rl.KeyPrefix+name, rps, max(1, int(rps)), rl.FallbackDivisor)
+		l.OnFallback = func(error) { ametrics.RateFallback.WithLabelValues(name).Inc() }
+		return l
+	}, nil
 }

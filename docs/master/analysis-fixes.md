@@ -7,8 +7,8 @@
 | 1 | A repository of its own (Part D) | [#3](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/3) | **Done** (merged 6 Nov, `b080a72`) | See [Fix 1](#fix-1-a-repository-of-its-own) |
 | 2 | Its own packaging: Helm chart, images on a tag, CI, metric prefix `sb_analysis_` (A1, A3) | [#4](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/4) | **Done** (merged 6 Nov, `22f8938`) | See [Fix 2](#fix-2-its-own-packaging) |
 | 3 | No unlimited budget by accident (C7) | [#5](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/5) | **Done** (merged 6 Nov, `3f18a15`) | See [Fix 3](#fix-3-no-unlimited-budget-by-accident) |
-| 4 | Media memory: stream files to disk (B2) | [#6](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/6) | In review | See [Fix 4](#fix-4-media-memory) |
-| 5 | The provider's rate limit, fleet-wide (B6) | – | Not started | – |
+| 4 | Media memory: stream files to disk (B2) | [#6](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/6) | **Done** (merged 6 Nov, `34545d9`) | See [Fix 4](#fix-4-media-memory) |
+| 5 | The provider's rate limit, fleet-wide (B6) | this repository's pull request for fix 5 | In review | See [Fix 5](#fix-5-the-providers-rate-limit-fleet-wide) |
 | 6 | Backpressure: cap the queue, pause ingest (C6) | – | Not started | – |
 | 7 | The quality evaluation | – | Waiting: runs on the production cluster once fbs collects there (owner, 6 Nov) | – |
 | 8 | The real-time lane: tracked brands and entities, hot-tier accounts | – | Not started; asked the master where account tiers come from | – |
@@ -34,6 +34,20 @@
   - **Account tiers (fix 8):** from `registry.account_request.v1`. Until the registry publishes, a config list of hot accounts by id, empty by default.
   - **Backfill (fix 9):** from ClickHouse, through the secret `clickhouse-ro` (read-only). Until the platform's writer has filled it, a backfill reads nothing and logs that; never a collector's database.
   - **Budget:** $5 a day, as a hard stop.
+
+## Fix 5: the provider's rate limit, fleet-wide
+
+- **One limit for every pod.** Each AI provider's `rps` is now kept in Valkey with a generic cell rate algorithm: a small script run atomically on the Valkey server, using the server's clock, decides when the next request may go. Four pods together send at most `rps`; before, each pod had its own limiter, so four pods sent four times the rate.
+- **Valkey from the platform's secret:** `VALKEY_HOST`, `VALKEY_PORT`, `VALKEY_PASSWORD`, `VALKEY_TLS`, and `VALKEY_CA_CERT` mounted as a file. The new config section `valkey` takes an address or host and port. Without it (local development, sb-eval), each process limits itself as before.
+- **If Valkey is unreachable, the service keeps running.** Each pod limits itself to `rps / analysis.rate_limit.fallback_divisor` (4), counts it (`sb_analysis_rate_limit_fallback_total`), and logs a warning at most once a minute. A new alert, `AnalysisRateLimitNotShared`, has a runbook section.
+- **New settings, nothing removed:** `valkey.*`, `analysis.rate_limit.key_prefix` and `fallback_divisor`.
+- **Evidence:**
+  - **`TestSharedAcrossProcesses`, against a real Valkey:** four limiters (as four pods) sharing 40 a second sent **81 requests in 2 seconds**, the shared rate plus its burst. Four limiters of their own, the control, sent about four times as many.
+  - **`TestFallbackWhenValkeyIsDown`:** with Valkey unreachable, a process sends at its share (10 a second) and reports the fallback.
+  - **`TestCallsWaitOnTheSharedLimiter`:** the providers use the shared limiter.
+  - **The config test:** the platform's `VALKEY_*` variables, with TLS.
+  - Unit and integration tests and lint pass, and the chart validates.
+  - **Not catchable here:** Valkey 8 writes the script's large numbers exactly, so the script's own number formatting only guards against older servers; no test can catch its absence on this server.
 
 ## Fix 4: media memory
 

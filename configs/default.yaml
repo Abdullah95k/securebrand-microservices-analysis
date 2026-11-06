@@ -39,6 +39,14 @@ kafka:
     username: ""
     password: ""
 
+# Valkey shares the AI providers' rate limits (analysis.providers.*.rps)
+# across every process. "" = none: each process limits itself.
+valkey:
+  addr: ""
+  password: ""             # SB_ANALYSIS_VALKEY__PASSWORD, never here
+  db: 0
+  tls: {enabled: false, ca_file: ""}
+
 # Object storage holding the media files named in media events (read only).
 s3:
   endpoint: "localhost:9000"
@@ -147,6 +155,10 @@ analysis:
     gpt-4o-mini-transcribe: {per_minute: 0.003}
     deepdml/faster-whisper-large-v3-turbo-ct2: {per_minute: 0} # own server: a fixed cost
     fake:                  {input: 0, output: 0}
+  rate_limit:
+    key_prefix: "sb-analysis:rl:"
+    # While Valkey is unreachable, each process sends at rps / this.
+    fallback_divisor: 4
   budget:
     # USD per day (analysis.timezone). 0 = no cap, accepted only with
     # service.env dev or allow_unlimited: true (production gets $5).

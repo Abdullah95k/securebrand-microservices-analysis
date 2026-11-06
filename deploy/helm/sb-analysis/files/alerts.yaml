@@ -74,3 +74,11 @@ groups:
           summary: Analysis results and media acks are not reaching Kafka
           description: The relay role is down or cannot produce; media acks wait too, so files may hit their TTL.
           runbook_url: https://github.com/abdullah95k/securebrand-microservices-analysis/blob/main/docs/runbooks/analysis.md#outbox
+      - alert: AnalysisRateLimitNotShared
+        expr: sum by (provider) (rate(sb_analysis_rate_limit_fallback_total[10m])) > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.provider }} requests are limited per pod: Valkey is unreachable"
+          description: Each pod sends at its share of the rate (analysis.rate_limit.fallback_divisor); with more pods than that, the provider sees more than its limit.
+          runbook_url: https://github.com/abdullah95k/securebrand-microservices-analysis/blob/main/docs/runbooks/analysis.md#rate-limits
