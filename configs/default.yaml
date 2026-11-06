@@ -185,9 +185,13 @@ analysis:
     urgent_exempt: true
   media:
     enabled: true
-    consumer: analysis     # must match media.required_consumers
-    # Facebook kinds, and the canonical image/video of content.media.ready.v1.
+    consumer: analysis     # fbs's acks (fb.media.processed.v1); the contract's carry "sb-analysis"
+    # fbs's media kinds (fb.media.ready.v1) analysed.
     kinds: [photo, video, reel, comment_photo, comment_video, cover, image]
+    # The contract's media (content.media.ready.v1) analysed, as type/role.
+    # Others (stickers, GIFs, thumbnails of videos, profile pictures,
+    # banners, audio, documents) are acknowledged as SKIPPED.
+    contract_kinds: [image/content, image/attachment, image/cover, video/content, video/attachment]
     # Per process; lowered at start to fit the container's memory limit
     # (worker_memory_mib each, after 256 MiB for the rest): 4 fit in 2 GiB.
     workers: 4

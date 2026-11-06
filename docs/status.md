@@ -10,13 +10,13 @@
 | Running | **Nowhere.** Never analysed real content; never called an AI provider with real data. From 6 Nov, testing happens on the production cluster, at full scale (owner's D-026): no new runs on the shared server. |
 | Pilot server | **No new runs there** (owner's D-026, 6 Nov). The Compose deployment next to the fbs pilot (`deploy/analysis/compose.yml`) stays in the repository; it was never started. |
 | Quality | **Not measured.** The evaluation (`docs/analysis/evaluation.md`, about $3–5) is approved; it runs on the production cluster once fbs collects there (owner, 6 Nov). |
-| Contract | **Adopting v1.0.0 (REQ-022), step 1 in review:** reads the contract's `content.post.v1` and `content.comment.v1` (`analysis.inputs: [content]`) and publishes the contract's `securebrand.analysis.v1`, checked by the contract's conformance test in CI. The draft `securebrand.content.v1` and our copy of `securebrand.analysis.v1` are deleted. Still reads `fb.*` too (`[fb]`, the default), but those results stay in Postgres. Media (part C) and captions (part E) come next. Record: [`analysis-contract-adoption.md`](master/analysis-contract-adoption.md). |
+| Contract | **Adopting v1.0.0 (REQ-022), in steps.** Step 1 merged (`cbf46fd`): reads the contract's `content.post.v1` and `content.comment.v1` (`analysis.inputs: [content]`) and publishes the contract's `securebrand.analysis.v1`, checked by the contract's conformance test in CI; the draft protos are deleted. Step 2 (in review): the media hand-off (`content.media.ready.v1`, `.processed.v1` as `sb-analysis`, `.deleted.v1`). Still reads `fb.*` too (`[fb]`, the default); those results stay in Postgres. Record: [`analysis-contract-adoption.md`](master/analysis-contract-adoption.md). |
 | Schema Registry | sb-analysis registers nothing (standing instruction: no `securebrand.content.*` until the master publishes v1). **But the pilot's shared registry already holds 9 subjects from this repository's copy** (confirmed 6 Nov, 00:58 Iraq time): the 4 `content.*` subjects, `securebrand/content/v1/content.proto`, and the 4 `analysis.*` subjects, almost certainly from a `make pilot-up` run from this copy around 1 November. The master (6 Nov): they don't block the platform, since staging and production get their own registry. **Leave them in place; delete nothing.** |
 
 ## Work in progress (from 6 Nov)
 
 - **REQ-011, the fixes:** one row per fix in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md). Fixes 1 to 6 (all those before the canary) and 8 (the real-time lane) are merged, and so is fix 9's plan ([`analysis-backfill-plan.md`](master/analysis-backfill-plan.md)). Fix 7 (the quality evaluation) waits for fbs to collect in production.
-- **REQ-022, adopting contract v1.0.0:** in progress, in steps. Step 1 (contract in and out, posts and comments) is in review. Next: the media hand-off, the `authors` commands by account ID, captions as transcript, and the full end-to-end test. Record: [`docs/master/analysis-contract-adoption.md`](master/analysis-contract-adoption.md).
+- **REQ-022, adopting contract v1.0.0:** in progress, in steps. Step 1 (contract in and out, posts and comments) is merged; step 2 (the media hand-off) is in review. Next: the `authors` commands by account ID, captions as transcript, and the full end-to-end test. Record: [`docs/master/analysis-contract-adoption.md`](master/analysis-contract-adoption.md).
 - **Questions for the master:** [`docs/master/questions-for-master-2026-11-06.md`](master/questions-for-master-2026-11-06.md).
 
 ## Reports for the master (5 Nov)
@@ -108,3 +108,10 @@
   - **Deleted, as REQ-022 asked:** the draft `securebrand.content.v1`, our copy of `securebrand.analysis.v1`, and the draft topics `content.item.v1` and `content.erasure.v1` from the local test topic list. Nobody produced or consumed them.
   - **Changed:** results of fbs's own `fb.*` items stay in Postgres (they have no contract IDs).
   - **Added:** migration `00004`, three columns on `analysis.content_items`. Nothing removed.
+- **6 Nov:** REQ-022 step 1 merged (pull request #11, `cbf46fd`). The master has the commit; production stays at 0 replicas.
+- **6 Nov, REQ-022 step 2 (in review):** the contract's media hand-off.
+  - **Reads** `content.media.ready.v1` and `content.media.deleted.v1`.
+  - **Acknowledges** on `content.media.processed.v1` as `sb-analysis`, with a unique `event_id`, `SKIPPED` for policy skips, and a short `reason` on skips and failures.
+  - **Policy:** a new setting, `analysis.media.contract_kinds`, says which (type, role) pairs are analysed.
+  - **Reuse:** a file identical to one already analysed (same SHA-256) reuses that analysis.
+  - **Added:** migration `00005`, five columns and an index. fbs's acknowledgements are unchanged.

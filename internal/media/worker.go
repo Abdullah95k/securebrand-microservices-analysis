@@ -80,6 +80,39 @@ type Worker struct {
 	once    sync.Once
 }
 
+// policySkip is the reason a job is acknowledged without analysis, or ""
+// when it is analysed: fbs's media by kind (analysis.media.kinds), the
+// contract's by type and role (analysis.media.contract_kinds).
+func (w *Worker) policySkip(j core.MediaJob) string {
+	if j.AckFormat == core.AckContract {
+		pair := j.Kind + "/" + j.Role
+		if !w.analysed("contract:" + pair) {
+			return "policy:" + pair
+		}
+	} else if !w.analysed(j.Kind) {
+		return "policy"
+	}
+	if j.IsVideo() && !w.Cfg.Video.Enabled {
+		return "policy:video_disabled"
+	}
+	return ""
+}
+
+// errCode is a failure's short reason, for the contract's acknowledgement.
+func errCode(err error) string {
+	switch {
+	case errors.Is(err, ErrTooLarge):
+		return "too_large"
+	case errors.Is(err, ErrUndecodable):
+		return "undecodable"
+	case errors.Is(err, ErrGone):
+		return "gone"
+	case errors.Is(err, ErrNoFFmpeg):
+		return "no_ffmpeg"
+	}
+	return "error"
+}
+
 // prompts returns the media prompt and schema of the topic list in use.
 func (w *Worker) prompts() (string, map[string]any) {
 	sys, schema, _ := w.P.MediaPrompt()
@@ -91,6 +124,9 @@ func (w *Worker) analysed(kind string) bool {
 		w.kinds = map[string]bool{}
 		for _, k := range w.Cfg.Kinds {
 			w.kinds[k] = true
+		}
+		for _, k := range w.Cfg.ContractKinds {
+			w.kinds["contract:"+k] = true
 		}
 	})
 	return w.kinds[kind]
@@ -142,8 +178,14 @@ func (w *Worker) Once(ctx context.Context) (int, error) {
 
 func (w *Worker) process(ctx context.Context, j core.MediaJob) {
 	consumer := w.Cfg.Consumer
-	if !w.analysed(j.Kind) || (j.IsVideo() && !w.Cfg.Video.Enabled) {
-		w.finish(ctx, store.MediaResult{Job: j, Consumer: consumer, SkipReason: "policy"}, "skipped")
+	if skip := w.policySkip(j); skip != "" {
+		w.finish(ctx, store.MediaResult{Job: j, Consumer: consumer, SkipReason: skip}, "skipped")
+		return
+	}
+	// The same file (SHA-256) analysed before, under another media ID: its
+	// result is reused, without fetching the file or calling a provider.
+	if res, ok := w.reuse(ctx, j); ok {
+		w.finish(ctx, *res, "reused")
 		return
 	}
 	res, err := w.analyse(ctx, j)
@@ -163,12 +205,34 @@ func (w *Worker) process(ctx context.Context, j core.MediaJob) {
 		}
 		ametrics.Media.WithLabelValues(j.Kind, outcome).Inc()
 		slog.Warn("analysis: media job failed", "media", j.MediaID, "kind", j.Kind, "permanent", permanent, "err", err)
-		if ferr := w.P.Store.FailMedia(context.WithoutCancel(ctx), j, consumer, err.Error(), permanent, w.Cfg.MaxTries); ferr != nil {
+		if ferr := w.P.Store.FailMedia(context.WithoutCancel(ctx), j, consumer, errCode(err), err.Error(), permanent, w.Cfg.MaxTries); ferr != nil {
 			slog.Error("analysis: media failure not recorded", "media", j.MediaID, "err", ferr)
 		}
 		return
 	}
 	w.finish(ctx, *res, "analyzed")
+}
+
+// reuse returns the stored analysis of an identical file, for this job.
+func (w *Worker) reuse(ctx context.Context, j core.MediaJob) (*store.MediaResult, bool) {
+	from, res, prov, ok, err := w.P.Store.MediaBySHA(ctx, j.Sha256, j.MediaID)
+	if err != nil {
+		slog.Warn("analysis: identical media not looked up; analysing", "media", j.MediaID, "err", err)
+		return nil, false
+	}
+	if !ok {
+		return nil, false
+	}
+	ownerAt, _, _, err := w.P.Store.OwnerContext(ctx, j.OwnerContentID)
+	if err != nil || ownerAt.IsZero() {
+		ownerAt = time.Now().UTC()
+	}
+	prov.Route, prov.Lane = core.RouteImage, core.LaneRealtime
+	if j.IsVideo() {
+		prov.Route = core.RouteVideo
+	}
+	prov.SchemaVersion = prompt.SchemaVersion
+	return &store.MediaResult{Job: j, Result: res, Prov: prov, OwnerTime: ownerAt, Consumer: w.Cfg.Consumer, ReusedFrom: from}, true
 }
 
 func (w *Worker) finish(ctx context.Context, r store.MediaResult, outcome string) {
@@ -188,7 +252,7 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	}
 	rc, ok := w.P.Cfg.Routes[route]
 	if !ok || !rc.On() {
-		return &store.MediaResult{Job: j, Consumer: w.Cfg.Consumer, SkipReason: "route " + route + " disabled"}, nil
+		return &store.MediaResult{Job: j, Consumer: w.Cfg.Consumer, SkipReason: "route_disabled:" + route}, nil
 	}
 	// The file: a video streams to a temporary file for ffmpeg, an image
 	// to a buffer bounded by image_max_bytes.
@@ -299,7 +363,7 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	w.P.Budget.Add(route, cost)
 	w.record(ctx, req.ID, route, prov, model, fallback, j.MediaID, resp, cost)
 	if resp.Refused {
-		return &store.MediaResult{Job: j, Consumer: w.Cfg.Consumer, SkipReason: "refused by " + model}, nil
+		return &store.MediaResult{Job: j, Consumer: w.Cfg.Consumer, SkipReason: "refused:" + model}, nil
 	}
 	tax := w.P.Taxonomy()
 	mr, _, err := prompt.ParseMedia(resp.Text, tax, reg)
