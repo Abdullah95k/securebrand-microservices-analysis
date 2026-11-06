@@ -41,6 +41,8 @@
 
 ## Open decisions (owner or master)
 
+0. **For the owner: pin contract v1.2.0 instead of v1.0.0?** The master asks for it (6 Nov): v1.2.0 adds the conformance checks v1.0.0 lacks (`MediaAnalysis`, `AuthorFlag`, `TopicUpdate`, `MediaProcessed`, `MediaDeleted`). The messages sb-analysis reads and writes are identical in both. Recommended: yes.
+
 1. **For the owner: run in production before REQ-022?** The master suggests reading fbs's `fb.*` topics in production until the contract is adopted. That needs a switch, not in REQ-011, that keeps results in Postgres and off the platform's `analysis.*` topics, whose contract format the draft results don't match. The canary also waits for fixes 3 to 6.
 2. **For the owner: is the $5 a day a hard stop for urgent items too?** Today `analysis.budget.urgent_exempt: true` lets urgent real-time items continue over the cap. The master asks for a hard stop.
 3. **sb-analysis's own text copy:** keep it, or slim it to working state once the platform's entity layer and the client app exist (the owner's decision 7, "keep both for now"; REQ-011, later).

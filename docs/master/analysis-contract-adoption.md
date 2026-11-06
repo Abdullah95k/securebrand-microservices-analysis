@@ -2,7 +2,7 @@
 
 *The record of REQ-022, kept current for the master session and the owner. Times are Iraq time. Started 6 November 2026.*
 
-- **The contract:** the Go module `github.com/abdullah95k/securebrand-contracts`, tag **v1.0.0**, pinned in `go.mod`. v1.1.0 is out; REQ-022 names v1.0.0, so moving up is a separate step.
+- **The contract:** the Go module `github.com/abdullah95k/securebrand-contracts`, tag **v1.0.0**, pinned in `go.mod`, as REQ-022 says. The master asks for v1.2.0 (question 1 below); that waits for the owner.
 - **Production stays off** (`values-production.yaml`, replicas 0) until every part below is merged.
 
 ## Progress
@@ -87,4 +87,7 @@ This is also what the proposed "early-running switch" needed. **Whether producti
 
 ### Questions for the master
 
-1. **Conformance for the other kinds:** v1.0.0's `conformance` package checks `ItemAnalysis` but not `MediaAnalysis`, `AuthorFlag`, `TopicUpdate` or `MediaProcessed`. Until it does, sb-analysis's tests check those against the contract's comments by hand. Asked on 6 November; waiting for the answer.
+1. **Conformance for the other kinds:** v1.0.0's `conformance` package checks `ItemAnalysis` but not `MediaAnalysis`, `AuthorFlag`, `TopicUpdate` or `MediaProcessed`.
+   - **The master's answer (6 Nov):** contract **v1.2.0** (commit `30153b4`) adds those checks, plus `MediaDeleted`, with a sample each. The master asks to pin v1.2.0 instead of v1.0.0.
+   - **Checked here:** the analysis, content and media protos are identical in v1.0.0 and v1.2.0. The only proto change is two additions to discovery's `Candidate`, which sb-analysis doesn't use.
+   - **Waiting for the owner:** REQ-022 names v1.0.0, so the switch is the owner's decision. Recommended: yes. If agreed, it's a small pull request of its own: the new pin, plus the five checks in CI.
