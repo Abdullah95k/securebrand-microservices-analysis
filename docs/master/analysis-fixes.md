@@ -11,7 +11,7 @@
 | 5 | The provider's rate limit, fleet-wide (B6) | [#7](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/7) | **Done** (merged 6 Nov, `cfc8125`) | See [Fix 5](#fix-5-the-providers-rate-limit-fleet-wide) |
 | 6 | Backpressure: cap the queue, pause ingest (C6) | [#8](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/8) | **Done** (merged 6 Nov, `1006f37`) | See [Fix 6](#fix-6-backpressure) |
 | 7 | The quality evaluation | – | Waiting: runs on the production cluster once fbs collects there (owner, 6 Nov) | – |
-| 8 | The real-time lane: tracked brands and entities, hot-tier accounts | this repository's pull request for fix 8 | In review | See [Fix 8](#fix-8-the-real-time-lane) |
+| 8 | The real-time lane: tracked brands and entities, hot-tier accounts | [#9](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/9) | In review | See [Fix 8](#fix-8-the-real-time-lane) |
 | 9 | A backfill path (plan only) | – | Not started; asked the master which permanent store to read | – |
 
 ## The owner's answers (6 November)
