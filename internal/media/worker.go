@@ -384,7 +384,12 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	if err != nil {
 		return nil, err
 	}
-	mr.Transcript, mr.TranscriptLang, mr.TranscriptSource = transcript, transcriptLang, transcriptSource
+	mr.Transcript = transcript
+	if transcript != "" {
+		// The contract wants both with every transcript: "und"
+		// (undetermined) when the language isn't known.
+		mr.TranscriptLang, mr.TranscriptSource = orDefault(transcriptLang, "und"), orDefault(transcriptSource, w.Cfg.Video.STTProvider)
+	}
 	mr.Topics = pipelineTopics(mr.Topics, mr.Entities)
 	return &store.MediaResult{Job: j, Result: mr, OwnerTime: ownerAt, Consumer: w.Cfg.Consumer, CostUSD: cost + speechCost,
 		Prov: core.Provenance{Provider: prov, Model: model, PromptVersion: prompt.PromptVersion, TaxonomyVersion: tax.Version,
@@ -493,4 +498,11 @@ func (w *Worker) record(ctx context.Context, id, route, prov, model string, fall
 	ametrics.CostUSD.WithLabelValues(model, route).Add(cost)
 	ametrics.Tokens.WithLabelValues(model, route, "input").Add(float64(resp.Usage.InputTokens))
 	ametrics.Tokens.WithLabelValues(model, route, "output").Add(float64(resp.Usage.OutputTokens))
+}
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }

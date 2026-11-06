@@ -274,6 +274,8 @@ func mediaType(kind string) contentv1.MediaType {
 		return contentv1.MediaType_MEDIA_TYPE_STICKER
 	case "audio":
 		return contentv1.MediaType_MEDIA_TYPE_AUDIO
+	case "document":
+		return contentv1.MediaType_MEDIA_TYPE_DOCUMENT
 	}
 	return contentv1.MediaType_MEDIA_TYPE_IMAGE
 }
