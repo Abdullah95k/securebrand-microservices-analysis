@@ -7,6 +7,7 @@ import "github.com/abdullah95k/securebrand-microservices-analysis/internal/platf
 var (
 	Ingested      = metrics.AnalysisIngested
 	Undecodable   = metrics.AnalysisUndecodable
+	IngestPaused  = metrics.AnalysisIngestPaused
 	Analyzed      = metrics.AnalysisAnalyzed
 	ItemsFailed   = metrics.AnalysisItemsFailed
 	Requests      = metrics.AnalysisRequests

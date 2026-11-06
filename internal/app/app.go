@@ -171,8 +171,10 @@ func (a *App) Components(roles []string) ([]func(context.Context) error, error) 
 	for _, r := range roles {
 		switch r {
 		case "ingest":
+			bp := cfg.Backpressure
+			gate := &ingest.Gate{Max: bp.MaxQueue, Resume: bp.ResumeQueue, Every: bp.CheckEvery, Depth: a.Store.QueueDepth}
 			c, err := ingest.New(ingest.Config{Kafka: a.Kafka, Group: cfg.ConsumerGroup, Decoder: adapter.NewDecoder(cfg.Inputs),
-				Store: a.Store, Plan: a.Pipeline.Plan, Media: cfg.Media.Enabled, Consumer: cfg.Media.Consumer})
+				Store: a.Store, Plan: a.Pipeline.Plan, Media: cfg.Media.Enabled, Consumer: cfg.Media.Consumer, Gate: gate})
 			if err != nil {
 				return nil, err
 			}

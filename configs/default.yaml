@@ -155,6 +155,14 @@ analysis:
     gpt-4o-mini-transcribe: {per_minute: 0.003}
     deepdml/faster-whisper-large-v3-turbo-ct2: {per_minute: 0} # own server: a fixed cost
     fake:                  {input: 0, output: 0}
+  # The analysis queue's cap: at max_queue items, ingest stops taking new
+  # posts and comments (they wait in Kafka, which keeps 7 days) until the
+  # queue is down to resume_queue. Media announcements and erasures keep
+  # flowing. The queue can pass max_queue by at most one ingest batch.
+  backpressure:
+    max_queue: 200000
+    resume_queue: 150000
+    check_every: 5s
   rate_limit:
     key_prefix: "sb-analysis:rl:"
     # While Valkey is unreachable, each process sends at rps / this.

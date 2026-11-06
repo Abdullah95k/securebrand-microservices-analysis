@@ -8,8 +8,8 @@
 | 2 | Its own packaging: Helm chart, images on a tag, CI, metric prefix `sb_analysis_` (A1, A3) | [#4](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/4) | **Done** (merged 6 Nov, `22f8938`) | See [Fix 2](#fix-2-its-own-packaging) |
 | 3 | No unlimited budget by accident (C7) | [#5](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/5) | **Done** (merged 6 Nov, `3f18a15`) | See [Fix 3](#fix-3-no-unlimited-budget-by-accident) |
 | 4 | Media memory: stream files to disk (B2) | [#6](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/6) | **Done** (merged 6 Nov, `34545d9`) | See [Fix 4](#fix-4-media-memory) |
-| 5 | The provider's rate limit, fleet-wide (B6) | [#7](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/7) | In review | See [Fix 5](#fix-5-the-providers-rate-limit-fleet-wide) |
-| 6 | Backpressure: cap the queue, pause ingest (C6) | – | Not started | – |
+| 5 | The provider's rate limit, fleet-wide (B6) | [#7](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/7) | **Done** (merged 6 Nov, `cfc8125`) | See [Fix 5](#fix-5-the-providers-rate-limit-fleet-wide) |
+| 6 | Backpressure: cap the queue, pause ingest (C6) | this repository's pull request for fix 6 | In review | See [Fix 6](#fix-6-backpressure) |
 | 7 | The quality evaluation | – | Waiting: runs on the production cluster once fbs collects there (owner, 6 Nov) | – |
 | 8 | The real-time lane: tracked brands and entities, hot-tier accounts | – | Not started; asked the master where account tiers come from | – |
 | 9 | A backfill path (plan only) | – | Not started; asked the master which permanent store to read | – |
@@ -34,6 +34,24 @@
   - **Account tiers (fix 8):** from `registry.account_request.v1`. Until the registry publishes, a config list of hot accounts by id, empty by default.
   - **Backfill (fix 9):** from ClickHouse, through the secret `clickhouse-ro` (read-only). Until the platform's writer has filled it, a backfill reads nothing and logs that; never a collector's database.
   - **Budget:** $5 a day, as a hard stop.
+
+## Fix 6: backpressure
+
+- **The queue has a cap.** At `analysis.backpressure.max_queue` items (200,000), ingest stops taking new posts and comments: it pauses fetching those Kafka topics, and the records wait in Kafka. It resumes once the queue is down to `resume_queue` (150,000). The gap keeps it from switching on and off at the edge.
+- **What keeps flowing:** media announcements, so files are not lost to their deletion deadline, and erasure events.
+- **Checking:**
+  - the queue is counted at most every `check_every` (5 s); a failed count keeps the last state;
+  - the queue can pass the cap by at most one ingest batch.
+- **Kafka keeps 7 days:** `sb_analysis_ingest_paused` and the alert `AnalysisIngestPaused` (after an hour) show a pause long before that. The runbook's queue section explains it.
+- **New settings, nothing removed:** `analysis.backpressure.max_queue`, `resume_queue`, `check_every`.
+- **Evidence:**
+  - **`TestBackpressurePausesIngest`, against a real Kafka and Postgres,** with a cap of 4 and batches of 2:
+    - ingest paused with **4 of 12** comments in, and took none for 2 seconds;
+    - an erasure event got through while paused;
+    - after the queue drained, all 12 arrived.
+    - With the pause removed on purpose, the queue ran to 12 and the test failed.
+  - **`TestGateHysteresisAndPace`:** the cap, the resume mark, the counting pace, and a failed count.
+  - Unit and integration tests and lint pass.
 
 ## Fix 5: the provider's rate limit, fleet-wide
 

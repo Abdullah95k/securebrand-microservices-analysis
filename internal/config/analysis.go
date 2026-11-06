@@ -37,14 +37,18 @@ type Analysis struct {
 	Pricing   map[string]ModelPrice `koanf:"pricing"`
 	Budget    AnalysisBudget        `koanf:"budget"`
 	RateLimit AnalysisRateLimit     `koanf:"rate_limit"`
-	Media     AnalysisMedia         `koanf:"media"`
-	Privacy   AnalysisPrivacy       `koanf:"privacy"`
-	Erasure   AnalysisErasure       `koanf:"erasure"`
-	Rollups   Rollups               `koanf:"rollups"`
-	Limits    AnalysisLimits        `koanf:"limits"`
-	Topics    AnalysisTopics        `koanf:"topics"`
-	Entities  AnalysisEntities      `koanf:"entities"`
-	Bots      AnalysisBots          `koanf:"bots"`
+	// Backpressure caps the analysis queue: at MaxQueue items ingest stops
+	// taking new content (it waits in Kafka) until the queue is down to
+	// ResumeQueue.
+	Backpressure AnalysisBackpressure `koanf:"backpressure"`
+	Media        AnalysisMedia        `koanf:"media"`
+	Privacy      AnalysisPrivacy      `koanf:"privacy"`
+	Erasure      AnalysisErasure      `koanf:"erasure"`
+	Rollups      Rollups              `koanf:"rollups"`
+	Limits       AnalysisLimits       `koanf:"limits"`
+	Topics       AnalysisTopics       `koanf:"topics"`
+	Entities     AnalysisEntities     `koanf:"entities"`
+	Bots         AnalysisBots         `koanf:"bots"`
 }
 
 // AnalysisTopics configures the dynamic topic list: the model proposes
@@ -189,6 +193,13 @@ type ModelPrice struct {
 	BatchDiscount float64 `koanf:"batch_discount"`
 	// PerMinute is the price of one audio minute (speech-to-text models).
 	PerMinute float64 `koanf:"per_minute"`
+}
+
+// AnalysisBackpressure caps the analysis queue's depth.
+type AnalysisBackpressure struct {
+	MaxQueue    int64         `koanf:"max_queue"`
+	ResumeQueue int64         `koanf:"resume_queue"`
+	CheckEvery  time.Duration `koanf:"check_every"`
 }
 
 // AnalysisRateLimit shares the providers' rps limits through valkey.
@@ -355,6 +366,9 @@ func (a *Analysis) Validate() error {
 	}
 	if a.Grouping.MaxItems <= 0 || a.Grouping.MaxChars <= 0 {
 		errs = append(errs, errors.New("analysis.grouping.max_items and max_chars must be > 0"))
+	}
+	if b := a.Backpressure; b.MaxQueue <= 0 || b.ResumeQueue < 0 || b.ResumeQueue >= b.MaxQueue || b.CheckEvery <= 0 {
+		errs = append(errs, errors.New("analysis.backpressure: max_queue must be > 0, resume_queue between 0 and below it, check_every > 0"))
 	}
 	if a.Budget.DailyUSD < 0 {
 		errs = append(errs, errors.New("analysis.budget.daily_usd must be >= 0"))
