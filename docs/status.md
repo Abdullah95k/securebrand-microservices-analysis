@@ -15,7 +15,7 @@
 
 ## Work in progress (from 6 Nov)
 
-- **REQ-011, the fixes:** one row per fix in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md). Fixes 1 to 6, all of those before the canary, are merged. Fix 8 (the real-time lane: hot-tier accounts) is in review. Fix 7 (the quality evaluation) waits for fbs to collect in production; fix 9 (the backfill plan) is next.
+- **REQ-011, the fixes:** one row per fix in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md). Fixes 1 to 6 (all those before the canary) and 8 (the real-time lane) are merged. Fix 9's plan, [`analysis-backfill-plan.md`](master/analysis-backfill-plan.md), is in review. Fix 7 (the quality evaluation) waits for fbs to collect in production. REQ-022 (the contract) is next.
 - **REQ-022, adopting contract v1.0.0:** after the fixes REQ-011 lists before the canary; its record will be `docs/master/analysis-contract-adoption.md`.
 - **Questions for the master:** [`docs/master/questions-for-master-2026-11-06.md`](master/questions-for-master-2026-11-06.md).
 
@@ -97,3 +97,5 @@
 - **6 Nov, REQ-011 fix 6 (in review):** at 200,000 queued items ingest pauses new content, which waits in Kafka, and resumes at 150,000. Media announcements and erasures keep flowing. All new settings; nothing removed.
 - **6 Nov:** REQ-011 fix 6 merged (pull request #8, `1006f37`); the master has the commit to pin.
 - **6 Nov, REQ-011 fix 8 (in review):** items from hot-tier accounts go to the real-time lane, along with mentions of tracked entities; everything else goes batch. The hot tier is a config list plus the clients' watchlists until the platform's registry publishes tiers. All new settings; nothing removed.
+- **6 Nov:** REQ-011 fix 8 merged (pull request #9, `8cc528d`). The master re-pinned production to fix 6's commit; the platform's ClickHouse keeps one table per message type plus `_latest` views, in database `securebrand`.
+- **6 Nov, REQ-011 fix 9 (plan, in review):** a backfill reads older items from ClickHouse through `clickhouse-ro`. It goes through the same adapter as Kafka, stays in the batch lane within the daily budget, can resume after a stop, and shows a dry-run estimate first. Built after REQ-022, with the owner's approval.
