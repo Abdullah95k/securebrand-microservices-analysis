@@ -113,7 +113,7 @@ func sample(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	db, err := pg.Open(ctx, cfg.Postgres.DSN, 4)
+	db, err := pg.Open(ctx, cfg.Postgres.ConnString(), 4)
 	if err != nil {
 		return err
 	}

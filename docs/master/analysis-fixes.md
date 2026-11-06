@@ -4,8 +4,8 @@
 
 | # | Fix | PR | Status | Evidence |
 |---|---|---|---|---|
-| 1 | A repository of its own (Part D) | [#3](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/3) | In review | See [Fix 1](#fix-1-a-repository-of-its-own) |
-| 2 | Its own packaging: Helm chart, images on a tag, CI, metric prefix `sb_analysis_` (A1, A3) | – | Not started; the metric prefix is done in fix 1 | – |
+| 1 | A repository of its own (Part D) | [#3](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/3) | **Done** (merged 6 Nov, `b080a72`) | See [Fix 1](#fix-1-a-repository-of-its-own) |
+| 2 | Its own packaging: Helm chart, images on a tag, CI, metric prefix `sb_analysis_` (A1, A3) | [#4](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/4) | In review | See [Fix 2](#fix-2-its-own-packaging) |
 | 3 | No unlimited budget by accident (C7) | – | Not started | – |
 | 4 | Media memory: stream files to disk (B2) | – | Not started | – |
 | 5 | The provider's rate limit, fleet-wide (B6) | – | Not started | – |
@@ -19,6 +19,44 @@
 - **Fix 7:** the evaluation runs on the production cluster, once fbs collects there (option b), not on the shared server.
 - **Fix 3:** the canary on production gets a $5 daily cap on AI spending. The pilot keeps $5 a day (1 November).
 - **Questions for the master:** [`questions-for-master-2026-11-06.md`](questions-for-master-2026-11-06.md) covers where the images and the chart go, the production namespace, account tiers, and the backfill store.
+- **The master's answer on question 1 (6 Nov):**
+  - the platform builds sb-analysis's images from a commit of this repository and keeps them in its own registry;
+  - the chart needs a `values-production.yaml` following the platform's conventions;
+  - the namespace is `analysis`, and credentials come from the secret `platform-credentials`, the AI key from `ai-provider` (`API_KEY`);
+  - the Kafka user is `analysis-kafka`, allowed `content.*` and `analysis.*`, and the platform creates every topic;
+  - the database is PostgreSQL 18, `analysis`;
+  - the cap is $5 a day until the owner sets another figure.
+
+- **The master's answers on the rest (6 Nov):**
+  - **The platform's conventions:** they are in `infra/README.md` of the platform's private repository. The master sent the exact secret keys. Every name in `platform-credentials` matches the chart's mapping, so nothing is renamed; the CA certificates (`KAFKA_CA_CERT`, `POSTGRES_CA_CERT`) are mounted as files.
+  - **Order:** in production, sb-analysis may read fbs's `fb.*` topics until REQ-022. Its Kafka user can also consume `fb.*` and `registry.*` and produce `fb.media.processed.v1`.
+  - **Images:** the platform builds them to `registry.digitalocean.com/securebrand/analysis:<commit>`.
+  - **Account tiers (fix 8):** from `registry.account_request.v1`. Until the registry publishes, a config list of hot accounts by id, empty by default.
+  - **Backfill (fix 9):** from ClickHouse, through the secret `clickhouse-ro` (read-only). Until the platform's writer has filled it, a backfill reads nothing and logs that; never a collector's database.
+  - **Budget:** $5 a day, as a hard stop.
+
+## Fix 2: its own packaging
+
+- **The Helm chart** [`deploy/helm/sb-analysis`](../../deploy/helm/sb-analysis):
+  - two Deployments, `analysis` (ingest, both lanes, relay, rollups) and `analysis-media` (on the ffmpeg image);
+  - `sb-analysis migrate` as a hook before each install and upgrade;
+  - a metrics Service, a ServiceAccount without a token, and a PodDisruptionBudget;
+  - optionally a ServiceMonitor and the alert rules.
+- **Credentials, never in values:**
+  - each variable is read from the secret `platform-credentials`, key by key: `POSTGRES_*`, `KAFKA_*`, `S3_*`;
+  - the AI key is read from `ai-provider` (`API_KEY`) for the Anthropic provider;
+  - sb-analysis now accepts the database as parts (host, port, database, user, password, sslmode), so no URL has to be built around a password; SASL mechanisms in any case (`SCRAM-SHA-512`); and the S3 endpoint as a URL (`https://…` sets TLS);
+  - tested with passwords holding quotes, spaces, backslashes, `@`, `:` and `/`.
+- **[`values-production.yaml`](../../deploy/helm/sb-analysis/values-production.yaml):**
+  - the namespace `analysis`, the platform's two secrets, and $5 a day;
+  - **both workloads at 0 replicas until REQ-022.** Until then sb-analysis reads and writes its draft schemas, while the platform's `content.*` and `analysis.*` topics carry the contract's, and the draft media topic has the contract's name, `content.media.ready.v1`. Running now would misread the platform's media events and put draft records on the platform's topics.
+  - The migrate hook still runs. CI fails if production renders a workload with replicas.
+  - **Why the master's "read fbs's topics first" can't simply be switched on:** sb-analysis's results are in its draft format, which is not wire-compatible with the contract's `securebrand.analysis.v1` on the platform's `analysis.*` topics. The same field numbers carry different types: field 3 is text in the contract and a number code in the draft, and field 5 is a number in one and text in the other. Running early needs a switch that keeps results in Postgres and off those topics, while media acknowledgements still go to fbs (`fb.media.processed.v1`). That switch is not in REQ-011, so it is proposed to the owner first; the canary also waits for fixes 3 to 6.
+- **The CA certificates** (`KAFKA_CA_CERT`, `POSTGRES_CA_CERT`) are mounted as files from the same secret. The config gains `postgres.sslrootcert`, so the database's certificate is verified too.
+- **Images on a tag:** pushing `vX.Y.Z` publishes `ghcr.io/abdullah95k/sb-analysis:X.Y.Z`, `ghcr.io/abdullah95k/sb-analysis-media:X.Y.Z` and the chart (`oci://ghcr.io/abdullah95k/charts/sb-analysis`), after the vet and unit tests pass. Production uses the platform's own builds instead (the master, 6 Nov).
+- **CI** checks the chart: lint with both values files, render, Kubernetes schemas (kubeconform), and the monitoring resources.
+- **Alerts:** the analysis's 8 alert rules moved from fbs's chart into `files/alerts.yaml`, renamed to `sb_analysis_*`, with links to this repository's runbook. New tests fail when an alert names a metric sb-analysis does not expose, or links to a runbook heading that does not exist; both were checked by breaking each on purpose.
+- **The metric prefix `sb_analysis_`** was done in fix 1.
 
 ## Fix 1: a repository of its own
 

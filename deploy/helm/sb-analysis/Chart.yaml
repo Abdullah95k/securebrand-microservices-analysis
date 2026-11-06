@@ -1,0 +1,7 @@
+apiVersion: v2
+name: sb-analysis
+description: SecureBrand's content analysis service (sb-analysis), with its media workers.
+type: application
+version: 0.1.0
+# The image tag when image.tag is empty; the release workflow sets both.
+appVersion: "0.1.0"

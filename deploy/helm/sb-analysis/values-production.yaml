@@ -1,0 +1,69 @@
+# Production values for the platform's cluster (namespace "analysis",
+# deployed by Argo CD from gitops/services/analysis.yaml in the platform
+# repository). The platform builds the images from a commit of this
+# repository and sets image.repository/tag and mediaImage.repository/tag.
+#
+# Every topic and Schema Registry subject is the platform's: this chart
+# creates none and registers none.
+
+# Off for now. sb-analysis's results are still in its draft format, which
+# is not wire-compatible with the contract's securebrand.analysis.v1 on the
+# platform's analysis.* topics; and the owner wants REQ-011's fixes 3 to 6
+# in before the canary. Turned on either after REQ-022 (the contract), or,
+# with the owner's approval, earlier on fbs's fb.* topics with results kept
+# off the platform's topics. The migrate hook still runs, so the database
+# side can be checked.
+components:
+  analysis:
+    replicas: 0
+  analysis-media:
+    replicas: 0
+
+# Credentials from the secret "platform-credentials" in the namespace:
+# POSTGRES_* (database "analysis", PostgreSQL 18), KAFKA_* (user
+# analysis-kafka: content.* and analysis.*; until REQ-022 also consumes fb.*
+# and registry.* and produces fb.media.processed.v1), S3_* (media read from
+# S3_BUCKET_MEDIA, under each collector's prefix). Valkey (VALKEY_*) and
+# ClickHouse (secret clickhouse-ro) come with REQ-011 fixes 5 and 9.
+platformCredentials:
+  enabled: true
+  secret: platform-credentials
+  # The CAs: Kafka's brokers have no public CA, so the client needs it.
+  files:
+    KAFKA_CA_CERT: kafka-ca.pem
+    POSTGRES_CA_CERT: postgres-ca.pem
+
+# The AI provider's key: secret "ai-provider", key API_KEY.
+aiProvider:
+  enabled: true
+  secret: ai-provider
+  key: API_KEY
+  provider: anthropic
+
+serviceMonitor:
+  enabled: false
+alerts:
+  enabled: false
+
+config:
+  service: {name: sb-analysis, env: prod}
+  log: {level: info, format: json}
+  kafka:
+    client_id: sb-analysis
+    topic_prefix: ""
+    # Enabled by the secret's KAFKA_TLS; the CA from KAFKA_CA_CERT.
+    tls: {ca_file: /etc/sb-analysis-certs/kafka-ca.pem}
+  postgres:
+    # The secret's parts (platformCredentials) are used; no DSN. With the
+    # CA, sslmode=require also verifies the server's certificate.
+    dsn: ""
+    sslrootcert: /etc/sb-analysis-certs/postgres-ca.pem
+    max_conns: 20
+  analysis:
+    consumer_group: sb-analysis
+    postgres:
+      dsn: ""            # "" = the parts above
+      max_conns: 10
+    # The daily AI budget: $5, the pilot's figure, until the owner sets
+    # another (owner and master, 6 November 2026).
+    budget: {daily_usd: 5}

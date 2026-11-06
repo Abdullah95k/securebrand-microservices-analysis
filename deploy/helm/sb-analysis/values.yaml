@@ -1,0 +1,115 @@
+# sb-analysis's chart. Production overrides: values-production.yaml.
+
+# sb-analysis and sb-eval (deploy/docker/Dockerfile, --target sb-analysis).
+image:
+  repository: ghcr.io/abdullah95k/sb-analysis
+  tag: ""                  # "" = the chart's appVersion
+  pullPolicy: IfNotPresent
+# The same binaries with ffmpeg (--target analysis-media), for the media
+# workers: without ffmpeg, videos cannot be analysed (their jobs fail
+# permanently and are acknowledged).
+mediaImage:
+  repository: ghcr.io/abdullah95k/sb-analysis-media
+  tag: ""                  # "" = the chart's appVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Rendered into a ConfigMap and mounted as /etc/sb-analysis/config.yaml.
+# Every key of configs/default.yaml can be set here. Credentials never go
+# here: they come from secrets (platformCredentials, aiProvider, secretEnv).
+config:
+  service: {env: prod}
+  log: {level: info, format: json}
+  analysis:
+    # The daily AI budget in USD. 0 means no cap and is refused in
+    # production unless analysis.budget.allow_unlimited is set (REQ-011 fix 3).
+    budget: {daily_usd: 5}
+
+# Credentials from a platform secret, key by key: the variable sb-analysis
+# reads, and the secret's key. Postgres comes as parts (no URL to build
+# around a password); SASL mechanisms in any case; an S3 endpoint as a URL.
+platformCredentials:
+  enabled: false
+  secret: platform-credentials
+  env:
+    SB_ANALYSIS_POSTGRES__HOST: POSTGRES_HOST
+    SB_ANALYSIS_POSTGRES__PORT: POSTGRES_PORT
+    SB_ANALYSIS_POSTGRES__DATABASE: POSTGRES_DATABASE
+    SB_ANALYSIS_POSTGRES__USER: POSTGRES_USER
+    SB_ANALYSIS_POSTGRES__PASSWORD: POSTGRES_PASSWORD
+    SB_ANALYSIS_POSTGRES__SSLMODE: POSTGRES_SSLMODE
+    SB_ANALYSIS_KAFKA__BROKERS: KAFKA_BROKERS
+    SB_ANALYSIS_KAFKA__SASL__USERNAME: KAFKA_USER
+    SB_ANALYSIS_KAFKA__SASL__PASSWORD: KAFKA_PASSWORD
+    SB_ANALYSIS_KAFKA__SASL__MECHANISM: KAFKA_SASL_MECHANISM
+    SB_ANALYSIS_KAFKA__TLS__ENABLED: KAFKA_TLS
+    SB_ANALYSIS_S3__ENDPOINT: S3_ENDPOINT
+    SB_ANALYSIS_S3__REGION: S3_REGION
+    SB_ANALYSIS_S3__ACCESS_KEY: S3_ACCESS_KEY
+    SB_ANALYSIS_S3__SECRET_KEY: S3_SECRET_KEY
+  # PEM certificates of the same secret, mounted as files under
+  # /etc/sb-analysis-certs (the secret's key: the file name), for clients
+  # that want a path (kafka.tls.ca_file, postgres.sslrootcert).
+  files: {}
+
+# The AI provider's API key, from a secret, for the provider of
+# config.analysis.providers named here.
+aiProvider:
+  enabled: false
+  secret: ai-provider
+  key: API_KEY
+  provider: anthropic
+
+# Any other variables, from an existing secret (envFrom), e.g. a fallback
+# provider's key as SB_ANALYSIS_ANALYSIS__PROVIDERS__GEMINI__API_KEY.
+secretEnv:
+  existingSecret: ""
+
+# `sb-analysis migrate` before each install and upgrade; the Deployments
+# start with --migrate=false.
+migrate:
+  enabled: true
+
+components:
+  # Ingest, the real-time and batch lanes, the outbox relay and the rollups.
+  # Needs egress to the AI provider (api.anthropic.com).
+  analysis:
+    enabled: true
+    media: false
+    roles: [ingest, pipeline, relay, rollup]
+    replicas: 1
+    resources: {requests: {cpu: 250m, memory: 256Mi}, limits: {memory: 1Gi}}
+    pdb: {maxUnavailable: 1}
+  # Media workers: images, and videos with ffmpeg (mediaImage). Need read
+  # access to the media bucket.
+  analysis-media:
+    enabled: true
+    media: true
+    roles: [media]
+    replicas: 1
+    resources: {requests: {cpu: 500m, memory: 512Mi}, limits: {memory: 2Gi}}
+    pdb: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: {drop: ["ALL"]}
+
+serviceAccount:
+  create: true
+  name: ""                 # "" = the release name
+
+# A ServiceMonitor for the Prometheus Operator (the ops port, /metrics).
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  labels: {}
+
+# The analysis's alert rules (files/alerts.yaml) as a PrometheusRule.
+alerts:
+  enabled: false
+  labels: {}

@@ -116,7 +116,7 @@ func withApp(name string, args []string, fs *flag.FlagSet, fn func(context.Conte
 	ctx := context.Background()
 	dsn := cfg.Analysis.Postgres.DSN
 	if dsn == "" {
-		dsn = cfg.Postgres.DSN
+		dsn = cfg.Postgres.ConnString()
 	}
 	db, err := pg.Open(ctx, dsn, cfg.Analysis.Postgres.MaxConns)
 	if err != nil {

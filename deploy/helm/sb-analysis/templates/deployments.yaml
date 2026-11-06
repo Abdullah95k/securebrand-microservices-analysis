@@ -1,0 +1,67 @@
+{{- $root := . -}}
+{{- range $name, $c := .Values.components }}
+{{- if $c.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sba.fullname" $root }}-{{ $name }}
+  labels:
+    {{- include "sba.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  replicas: {{ $c.replicas }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: {{- include "sba.selector" (dict "root" $root "name" $name) | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "sba.selector" (dict "root" $root "name" $name) | nindent 8 }}
+      annotations:
+        checksum/config: {{ toYaml $root.Values.config | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      serviceAccountName: {{ include "sba.serviceAccountName" $root }}
+      automountServiceAccountToken: false
+      {{- with $root.Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml $root.Values.podSecurityContext | nindent 8 }}
+      # A stop lets in-flight requests finish and commits them.
+      terminationGracePeriodSeconds: {{ $c.terminationGracePeriodSeconds | default 60 }}
+      containers:
+        - name: {{ $name }}
+          image: {{ include "sba.image" (dict "root" $root "media" $c.media) | quote }}
+          imagePullPolicy: {{ include "sba.pullPolicy" (dict "root" $root "media" $c.media) }}
+          args: ["run", "--roles", {{ join "," $c.roles | quote }}, "--migrate={{ not $root.Values.migrate.enabled }}"]
+          env: {{- include "sba.env" $root | nindent 12 }}
+          {{- include "sba.envFrom" $root | nindent 10 }}
+          ports:
+            - {name: metrics, containerPort: 9090}
+          readinessProbe:
+            httpGet: {path: /readyz, port: metrics}
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: {path: /healthz, port: metrics}
+            periodSeconds: 20
+            failureThreshold: 3
+          resources: {{- toYaml $c.resources | nindent 12 }}
+          securityContext: {{- toYaml $root.Values.securityContext | nindent 12 }}
+          volumeMounts: {{- include "sba.volumeMounts" $root | nindent 12 }}
+      volumes: {{- include "sba.volumes" $root | nindent 8 }}
+{{- if $c.pdb }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "sba.fullname" $root }}-{{ $name }}
+  labels: {{- include "sba.labels" $root | nindent 4 }}
+spec:
+  {{- toYaml $c.pdb | nindent 2 }}
+  selector:
+    matchLabels: {{- include "sba.selector" (dict "root" $root "name" $name) | nindent 6 }}
+{{- end }}
+{{- end }}
+{{- end }}

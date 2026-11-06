@@ -1,0 +1,15 @@
+# The ops port (/metrics, /healthz, /readyz) of every component.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "sba.fullname" . }}-metrics
+  labels:
+    {{- include "sba.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: sb-analysis
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - {name: metrics, port: 9090, targetPort: metrics}

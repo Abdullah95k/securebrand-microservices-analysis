@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/abdullah95k/securebrand-microservices-analysis/configs"
@@ -48,10 +49,50 @@ type HTTP struct {
 	OpsAddr string `koanf:"ops_addr"`
 }
 
-// Postgres is the default database; analysis.postgres overrides it.
+// Postgres is the default database; analysis.postgres.dsn overrides it.
+// Either a DSN, or its parts (host, port, database, user, password,
+// sslmode, sslrootcert), as a platform secret provides them; when host is
+// set the parts win, so a deployment never needs to build a URL around a
+// password. sslrootcert is a CA file: with it, sslmode=require also
+// verifies the server's certificate chain.
 type Postgres struct {
 	DSN      string `koanf:"dsn"`
-	MaxConns int32  `koanf:"max_conns"`
+	Host     string `koanf:"host"`
+	Port     string `koanf:"port"`
+	Database string `koanf:"database"`
+	User     string `koanf:"user"`
+	Password string `koanf:"password"`
+	SSLMode  string `koanf:"sslmode"`
+	// SSLRootCert is the path of the server's CA certificate (PEM).
+	SSLRootCert string `koanf:"sslrootcert"`
+	MaxConns    int32  `koanf:"max_conns"`
+}
+
+// ConnString returns the connection string: the parts as libpq
+// keyword/value pairs (each value quoted, so any password works) when host
+// is set, else the DSN.
+func (p Postgres) ConnString() string {
+	if p.Host == "" {
+		return p.DSN
+	}
+	var b strings.Builder
+	add := func(k, v string) {
+		if v == "" {
+			return
+		}
+		if b.Len() > 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteString(k + "='" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(v) + "'")
+	}
+	add("host", p.Host)
+	add("port", p.Port)
+	add("dbname", p.Database)
+	add("user", p.User)
+	add("password", p.Password)
+	add("sslmode", p.SSLMode)
+	add("sslrootcert", p.SSLRootCert)
+	return b.String()
 }
 
 type Kafka struct {
@@ -86,6 +127,7 @@ func Load(path string) (*Config, error) {
 	if _, err := pconfig.Load(configs.Default(), path, EnvPrefix, &c); err != nil {
 		return nil, err
 	}
+	c.normalize()
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -106,6 +148,21 @@ func MustLoadFromFlags(fs *flag.FlagSet, args []string) *Config {
 		os.Exit(2)
 	}
 	return c
+}
+
+// normalize accepts the spellings platform secrets use: SASL mechanisms in
+// any case (SCRAM-SHA-512), and an S3 endpoint given as a URL
+// (https://host:port sets use_ssl).
+func (c *Config) normalize() {
+	c.Kafka.SASL.Mechanism = strings.ToLower(strings.TrimSpace(c.Kafka.SASL.Mechanism))
+	e := strings.TrimSpace(c.S3.Endpoint)
+	switch {
+	case strings.HasPrefix(e, "https://"):
+		e, c.S3.UseSSL = strings.TrimPrefix(e, "https://"), true
+	case strings.HasPrefix(e, "http://"):
+		e, c.S3.UseSSL = strings.TrimPrefix(e, "http://"), false
+	}
+	c.S3.Endpoint = strings.TrimSuffix(e, "/")
 }
 
 // Validate rejects configs that would misbehave at runtime.

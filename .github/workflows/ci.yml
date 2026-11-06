@@ -99,12 +99,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - name: Docker build (sb-analysis and the media image)
         run: |
           docker build -f deploy/docker/Dockerfile --target sb-analysis -t sb-analysis:ci .
           docker build -f deploy/docker/Dockerfile --target analysis-media -t sb-analysis-media:ci .
           docker run --rm sb-analysis:ci help >/dev/null
           docker run --rm --entrypoint ffmpeg sb-analysis-media:ci -version >/dev/null
+      - uses: azure/setup-helm@v4
+      - name: Helm chart (lint, render, Kubernetes schemas)
+        run: |
+          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
+          c=deploy/helm/sb-analysis
+          helm lint $c
+          helm lint $c -f $c/values-production.yaml
+          helm template sba $c | ~/go/bin/kubeconform -strict -summary -ignore-missing-schemas
+          helm template sba $c -f $c/values-production.yaml | ~/go/bin/kubeconform -strict -summary -ignore-missing-schemas
+          helm template sba $c --set alerts.enabled=true,serviceMonitor.enabled=true > /tmp/monitoring.yaml
+          grep -q "kind: PrometheusRule" /tmp/monitoring.yaml && grep -q "kind: ServiceMonitor" /tmp/monitoring.yaml
+          # Production renders no workload replicas until REQ-022 (values-production.yaml).
+          helm template sba $c -f $c/values-production.yaml | grep -E '^  replicas:' | grep -vq ' 0$' && exit 1 || true
       - name: Compose files are valid (test stack and the pilot deployment)
         run: |
           docker compose -f deploy/dev/compose.yml config -q

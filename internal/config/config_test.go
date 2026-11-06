@@ -3,7 +3,10 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestLoadLayers(t *testing.T) {
@@ -79,5 +82,63 @@ func TestAnalysisPrivacyDefaults(t *testing.T) {
 		if c.Validate() == nil {
 			t.Errorf("erasure mode %q accepted", mode)
 		}
+	}
+}
+
+// The platform's secret gives the database as parts; any password must
+// survive, and the parts win over a default DSN.
+func TestPostgresConnString(t *testing.T) {
+	for _, pw := range []string{"plain", `it's a "pass" with spaces`, `back\slash'`} {
+		p := Postgres{DSN: "postgres://default@localhost/x", Host: "db.internal", Port: "5433",
+			Database: "analysis", User: "analysis", Password: pw, SSLMode: "require"}
+		pc, err := pgxpool.ParseConfig(p.ConnString())
+		if err != nil {
+			t.Fatalf("%q: %v", pw, err)
+		}
+		cc := pc.ConnConfig
+		if cc.Host != "db.internal" || cc.Port != 5433 || cc.Database != "analysis" || cc.User != "analysis" || cc.Password != pw {
+			t.Fatalf("%q: parsed %s:%d/%s user %s password %q", pw, cc.Host, cc.Port, cc.Database, cc.User, cc.Password)
+		}
+	}
+	withCA := Postgres{Host: "db", SSLMode: "require", SSLRootCert: "/etc/sb-analysis-certs/postgres-ca.pem"}.ConnString()
+	if !strings.Contains(withCA, "sslrootcert='/etc/sb-analysis-certs/postgres-ca.pem'") {
+		t.Fatalf("CA file missing: %q", withCA)
+	}
+	if got := (Postgres{DSN: "postgres://a@b/c"}).ConnString(); got != "postgres://a@b/c" {
+		t.Fatalf("without host: %q", got)
+	}
+}
+
+// The variables a chart maps from platform-credentials, in the platform's
+// spellings.
+func TestPlatformCredentialsEnv(t *testing.T) {
+	for k, v := range map[string]string{
+		"SB_ANALYSIS_POSTGRES__HOST":         "pg.platform",
+		"SB_ANALYSIS_POSTGRES__PORT":         "5432",
+		"SB_ANALYSIS_POSTGRES__DATABASE":     "analysis",
+		"SB_ANALYSIS_POSTGRES__USER":         "analysis",
+		"SB_ANALYSIS_POSTGRES__PASSWORD":     "p@ss:w/rd",
+		"SB_ANALYSIS_POSTGRES__SSLMODE":      "verify-full",
+		"SB_ANALYSIS_KAFKA__BROKERS":         "k1:9093,k2:9093",
+		"SB_ANALYSIS_KAFKA__SASL__MECHANISM": "SCRAM-SHA-512",
+		"SB_ANALYSIS_KAFKA__SASL__USERNAME":  "analysis-kafka",
+		"SB_ANALYSIS_KAFKA__TLS__ENABLED":    "true",
+		"SB_ANALYSIS_S3__ENDPOINT":           "https://s3.platform:443/",
+	} {
+		t.Setenv(k, v)
+	}
+	c, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc, err := pgxpool.ParseConfig(c.Postgres.ConnString())
+	if err != nil || pc.ConnConfig.Host != "pg.platform" || pc.ConnConfig.Password != "p@ss:w/rd" {
+		t.Fatalf("postgres: %v %+v", err, pc)
+	}
+	if len(c.Kafka.Brokers) != 2 || c.Kafka.SASL.Mechanism != "scram-sha-512" || c.Kafka.SASL.Username != "analysis-kafka" || !c.Kafka.TLS.Enabled {
+		t.Fatalf("kafka: %+v", c.Kafka)
+	}
+	if c.S3.Endpoint != "s3.platform:443" || !c.S3.UseSSL {
+		t.Fatalf("s3: %+v", c.S3)
 	}
 }
