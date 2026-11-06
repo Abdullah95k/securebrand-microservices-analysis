@@ -9,7 +9,7 @@
 | 3 | No unlimited budget by accident (C7) | [#5](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/5) | **Done** (merged 6 Nov, `3f18a15`) | See [Fix 3](#fix-3-no-unlimited-budget-by-accident) |
 | 4 | Media memory: stream files to disk (B2) | [#6](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/6) | **Done** (merged 6 Nov, `34545d9`) | See [Fix 4](#fix-4-media-memory) |
 | 5 | The provider's rate limit, fleet-wide (B6) | [#7](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/7) | **Done** (merged 6 Nov, `cfc8125`) | See [Fix 5](#fix-5-the-providers-rate-limit-fleet-wide) |
-| 6 | Backpressure: cap the queue, pause ingest (C6) | this repository's pull request for fix 6 | In review | See [Fix 6](#fix-6-backpressure) |
+| 6 | Backpressure: cap the queue, pause ingest (C6) | [#8](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/8) | In review | See [Fix 6](#fix-6-backpressure) |
 | 7 | The quality evaluation | – | Waiting: runs on the production cluster once fbs collects there (owner, 6 Nov) | – |
 | 8 | The real-time lane: tracked brands and entities, hot-tier accounts | – | Not started; asked the master where account tiers come from | – |
 | 9 | A backfill path (plan only) | – | Not started; asked the master which permanent store to read | – |
