@@ -1,11 +1,14 @@
 SHELL := /bin/bash
 GO ?= go
-IMAGE ?= fbs:dev
-PG_DSN ?= postgres://fbs:fbs@localhost:5432/fbs?sslmode=disable
-TEST_ENV = FBS_TEST_PG_DSN="$(PG_DSN)" FBS_TEST_REDIS_ADDR=localhost:6379 FBS_TEST_KAFKA_BROKERS=localhost:19092 FBS_TEST_SCHEMA_REGISTRY=http://localhost:18081
-COMPOSE = docker compose -f deploy/compose/docker-compose.yml
+PG_DSN ?= postgres://analysis:analysis@localhost:5432/analysis?sslmode=disable
+TEST_ENV = SB_TEST_PG_DSN="$(PG_DSN)" SB_TEST_REDIS_ADDR=localhost:6379 SB_TEST_KAFKA_BROKERS=localhost:19092
+DEV_COMPOSE = docker compose -f deploy/dev/compose.yml
+ANALYSIS_IMAGE ?= sb-analysis:dev
+MEDIA_IMAGE ?= sb-analysis-media:dev
 
-.PHONY: all build test lint vet generate golden fixtures infra-up infra-down test-integration e2e loadtest soak docker docker-prebuilt compose-up compose-down spike-report phase0 phase0-dryrun phase0-trim phase0-rate pilot-up pilot-register pilot-registry pilot-report pilot-down pilot-clean analysis-image analysis-stats analysis-up analysis-down analysis-status analysis-cmd docker-analysis-media eval-sample eval-silver eval-label eval-agreement eval-run eval-report eval-cost spike-bin chart-check chart-smoke clean
+.PHONY: all build test vet lint generate infra-up infra-down test-integration docker docker-media docker-prebuilt \
+	analysis-image docker-analysis-media analysis-stats analysis-up analysis-down analysis-cmd analysis-status \
+	eval-sample eval-silver eval-label eval-agreement eval-run eval-report eval-cost clean
 
 all: generate build test
 
@@ -28,202 +31,36 @@ lint: vet
 generate:
 	buf generate
 
-## Regenerate parser golden files after an intended parser change.
-golden:
-	$(GO) test ./internal/fb/parse -run TestGolden -update
-
-## Regenerate the synthetic fakefb fixtures.
-fixtures:
-	$(GO) test -tags fixturegen ./internal/fakefb -run TestWriteFixtures
-
-## Start Postgres, Redpanda and Valkey for integration tests.
+## Start Postgres, Redpanda and Valkey for the integration tests: a Compose
+## project of its own (sb-analysis-dev), never an fbs stack.
 infra-up:
-	$(NOT_PILOT)
-	$(COMPOSE) up -d postgres redpanda valkey
-	@until docker exec fbs-postgres-1 pg_isready -U fbs >/dev/null 2>&1; do sleep 1; done
+	$(DEV_COMPOSE) up -d --wait postgres redpanda valkey
 
-# The local stack and the pilot are the same Compose project: on the pilot
-# machine, `down -v` would delete the pilot's database, and `up` without
-# pilot.yml would recreate its containers with the local settings (no
-# restart policy, no Redpanda volume, the local config).
-NOT_PILOT = @test -z "$(FORCE)" -a -f phase0/out/pilot-run.yaml && { echo "refusing: this machine runs the pilot, and this would replace or delete its stack (use the pilot-* targets; FORCE=1 overrides)"; exit 2; } || true
-
+## Stop them and delete their data (only sb-analysis-dev's).
 infra-down:
-	$(NOT_PILOT)
-	$(COMPOSE) down -v
+	$(DEV_COMPOSE) down -v
 
 ## Integration tests against real Postgres/Redpanda/Valkey (make infra-up first).
 test-integration:
 	$(TEST_ENV) $(GO) test -count=1 -timeout 25m ./...
 
-## Load tests against fakefb (opt-in; prints a report). Size with
-## FBS_LOADTEST_PAGES, _POSTS, _COMMENTS, _ROWS, _LATENCY; FBS_LOADTEST_OUT=file.
-loadtest:
-	$(TEST_ENV) FBS_LOADTEST=1 $(GO) test -count=1 -v -timeout 45m -run 'TestLoad' ./internal/e2e/
+## The images: sb-analysis (sb-analysis and sb-eval) and the media image (with ffmpeg).
+docker analysis-image:
+	docker build -f deploy/docker/Dockerfile --target sb-analysis -t $(ANALYSIS_IMAGE) .
+docker-media docker-analysis-media:
+	docker build -f deploy/docker/Dockerfile --target analysis-media -t $(MEDIA_IMAGE) .
 
-## Soak test (opt-in): scheduled crawls of a changing fakefb world with
-## component restarts. FBS_SOAK_DURATION (20m), FBS_SOAK_PAGES (6),
-## FBS_SOAK_RESTART_EVERY (90s, 0 = none), FBS_SOAK_OUT=file for the report.
-soak:
-	$(TEST_ENV) FBS_SOAK=1 $(GO) test -count=1 -v -timeout 6h -run 'TestSoak' ./internal/e2e/
-
-## Full pipeline end-to-end test only.
-e2e:
-	$(TEST_ENV) $(GO) test -count=1 -v ./internal/e2e/...
-
-docker:
-	docker build -f deploy/docker/Dockerfile -t $(IMAGE) .
-
-## Build binaries on the host and package them (no Go builder image needed).
+## The image from binaries built here (when the Go builder image cannot be pulled).
 docker-prebuilt:
-	CGO_ENABLED=0 GOOS=linux $(GO) build -trimpath -ldflags="-s -w" -o bin/ ./cmd/...
-	docker build -f deploy/docker/Dockerfile.prebuilt -t $(IMAGE) .
-
-HELM ?= helm
-KUBECONFORM ?= kubeconform
-KUBECONFORM_ARGS = -strict -summary -kubernetes-version 1.30.0 -schema-location default \
-	-schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
-
-## Lint the Helm chart and validate its renders (defaults, every optional
-## object, the staging example) against the Kubernetes and CRD schemas.
-chart-check:
-	$(HELM) lint deploy/helm/fbs
-	$(HELM) lint deploy/helm/fbs -f deploy/helm/fbs/examples/fakefb.yaml
-	set -o pipefail; $(HELM) template fbs deploy/helm/fbs | $(KUBECONFORM) $(KUBECONFORM_ARGS)
-	set -o pipefail; $(HELM) template fbs deploy/helm/fbs --set keda.authSecret=fbs-keda-kafka,tlsFiles.existingSecret=fbs-tls,alerts.enabled=true,dashboards.enabled=true,serviceMonitor.enabled=true,api.ingress.enabled=true,networkPolicy.enabled=true,hooks.schemas=true \
-	  | $(KUBECONFORM) $(KUBECONFORM_ARGS)
-	set -o pipefail; $(HELM) template fbs deploy/helm/fbs -f deploy/helm/fbs/examples/fakefb.yaml | $(KUBECONFORM) $(KUBECONFORM_ARGS)
-
-## Run the chart's hooks and Deployments in Docker exactly as rendered, then
-## real backfills against fakefb (make infra-up and make docker first).
-chart-smoke:
-	python3 scripts/chart-smoke.py --image $(IMAGE) --helm $(HELM)
-
-compose-up:
-	$(NOT_PILOT)
-	$(COMPOSE) up -d
-
-compose-down:
-	$(NOT_PILOT)
-	$(COMPOSE) down -v
-
-spike-report:
-	$(GO) run ./cmd/fbs-spike report --in spike-results.jsonl
-
-PHASE0_CONFIG ?= phase0/proxies.yaml
-PHASE0_PAGES ?= phase0/pages.csv
-PHASE0_TIERS ?= isp,residential
-PHASE0_OUT ?= phase0/out
-PHASE0_ARGS ?=
-
-## Phase 0 against real Facebook (docs/runbooks/phase0-spike.md). Fill in
-## phase0/proxies.yaml and phase0/pages.csv first. Resume with PHASE0_ARGS="--from run".
-phase0:
-	@test -f $(PHASE0_CONFIG) || { echo "missing $(PHASE0_CONFIG): cp phase0/proxies.example.yaml $(PHASE0_CONFIG), fill it in, chmod 600"; exit 2; }
-	@test -f $(PHASE0_PAGES) || { echo "missing $(PHASE0_PAGES): cp phase0/pages.example.csv $(PHASE0_PAGES) and fill it in"; exit 2; }
-	$(GO) run ./cmd/fbs-spike phase0 --config $(PHASE0_CONFIG) --pages $(PHASE0_PAGES) --tiers $(PHASE0_TIERS) --out-dir $(PHASE0_OUT) $(PHASE0_ARGS)
-
-TRIM_TIER ?= isp
-TRIM_ARGS ?=
-## Payload experiment: what each change to the timeline and comments queries'
-## variables does to response size and parsing, on the first 3 pages
-## (docs/runbooks/phase0-spike.md, "Cost experiments"). TRIM_ARGS="--each" also
-## measures every provider flag alone.
-phase0-trim:
-	$(GO) run ./cmd/fbs-spike trim --config $(PHASE0_CONFIG) --pages $(PHASE0_PAGES) --registry $(PHASE0_OUT)/registry.yaml \
-	  --tier $(TRIM_TIER) --out $(PHASE0_OUT)/trim.jsonl $(TRIM_ARGS)
-
-RATE_TIER ?= isp
-RATES ?= 0.5 1.0
-RATE_PAGES ?= 30
-RATE_ARGS ?= --orderings comments --timeline-pages 10
-## Rate experiment: the same RATE_PAGES pages at each per-identity rate in
-## RATES (requests per second per IP), one result file and report each.
-phase0-rate:
-	@mkdir -p $(PHASE0_OUT)
-	@grep -v '^#' $(PHASE0_PAGES) | grep -v '^[[:space:]]*$$' \
-	  | awk -F, -v n=$(RATE_PAGES) 'NR == 1 && tolower($$1) == "page" { print; next } c < n { print; c++ }' > $(PHASE0_OUT)/rate-pages.csv
-	@for r in $(RATES); do \
-	  echo "== $(RATE_TIER) at $$r requests/s per IP"; \
-	  $(GO) run ./cmd/fbs-spike run --config $(PHASE0_CONFIG) --pages $(PHASE0_OUT)/rate-pages.csv \
-	    --registry $(PHASE0_OUT)/registry.yaml --tier $(RATE_TIER) --rps $$r --out $(PHASE0_OUT)/rate-$$r.jsonl $(RATE_ARGS) || exit 1; \
-	  $(GO) run ./cmd/fbs-spike report --in $(PHASE0_OUT)/rate-$$r.jsonl > $(PHASE0_OUT)/rate-$$r.txt; \
-	  grep -E 'block rate|bootstrap|VERDICT|requests' $(PHASE0_OUT)/rate-$$r.txt | head -n 8; \
-	done
-
-PILOT_COMPOSE = $(COMPOSE) -f deploy/compose/pilot.yml
-# deploy/compose/pilot.yml mounts these paths, whatever PHASE0_* say.
-PILOT_PROXIES = phase0/proxies.yaml
-PILOT_OUT = phase0/out
-PILOT_SINCE ?= 24h
-PILOT_PROJECT ?= 5000
-PILOT_COST_PER_GB ?= 4
-# Requests per second per IP (fb.identity_rps) for the pilot run; empty keeps
-# configs/default.yaml's. Phase 0's rate test passed 0.5 and 1.0 over a few
-# minutes. Read from the environment by pilot-up, never pasted into a command.
-PILOT_RPS ?=
-export PILOT_RPS
-PILOT_FBCTL = $(PILOT_COMPOSE) run --rm --no-deps -T --entrypoint /usr/local/bin/fbctl api
-# pilot.yml mounts the run file pilot-up writes; without it Docker would
-# create a directory in its place.
-PILOT_RUN = @test -f $(PILOT_OUT)/pilot-run.yaml || { echo "missing $(PILOT_OUT)/pilot-run.yaml: run make pilot-up first"; exit 2; }
-## Pilot: the real pipeline against real Facebook on this machine, to measure
-## the steady state (docs/runbooks/pilot.md). Needs Docker, phase0/proxies.yaml
-## and the Phase 0 registry. Start with the Phase 0 run finished.
-pilot-up:
-	@test -f $(PILOT_PROXIES) || { echo "missing $(PILOT_PROXIES)"; exit 2; }
-	@test -s $(PILOT_OUT)/registry.yaml || { echo "missing $(PILOT_OUT)/registry.yaml: finish Phase 0 first"; exit 2; }
-	@command -v docker >/dev/null || { echo "Docker is not installed: docs/runbooks/pilot.md, step 1"; exit 2; }
-	@rps=$$(awk 'BEGIN { r = ENVIRON["PILOT_RPS"]; if (r == "") exit 0; if (r !~ /^[0-9]*\.?[0-9]+$$/ || r + 0 <= 0 || r + 0 > 2) exit 1; printf "%g", r + 0 }') \
-	  || { echo "PILOT_RPS must be requests per second above 0 and at most 2, e.g. 0.5"; exit 2; }; \
-	{ test -z "$$rps" || printf 'fb:\n  identity_rps: %s\n' "$$rps"; \
-	  printf 'registry_sync:\n  canary_pages: [%s]\n' \
-	    "$$(grep -v '^#' $(PHASE0_PAGES) | grep -v '^[[:space:]]*$$' \
-	      | awk -F, 'NR == 1 && tolower($$1) == "page" { next } c < 3 { print $$1; c++ }' | sed 's/.*/"&"/' | paste -sd, -)"; \
-	} > $(PILOT_OUT)/pilot-run.yaml; \
-	echo "requests/s per IP: $${rps:-the default of configs/default.yaml}"
-	$(MAKE) docker
-	$(PILOT_COMPOSE) up -d --force-recreate
-	@# Old images and build cache would fill the disk over restarts.
-	@docker image prune -f >/dev/null; docker builder prune -f --filter until=72h >/dev/null || true
-	@echo "up; register the pages with: make pilot-register"
-
-## Registers every page of phase0/pages.csv; each is backfilled (a week), then crawled every 3 hours.
-pilot-register:
-	$(PILOT_RUN)
-	@key=$$($(PILOT_FBCTL) apikey create --name pilot --scopes pages:write,jobs:write,data:read \
-	  | sed -n 's/.*"api_key": *"\([^"]*\)".*/\1/p'); \
-	test -n "$$key" || { echo "could not create an API key"; exit 1; }; \
-	$(PILOT_COMPOSE) run --rm --no-deps -T -v $(CURDIR)/$(PHASE0_PAGES):/pages.csv:ro --entrypoint /usr/local/bin/fbctl api \
-	  pages import --api http://api:8080 --key "$$key" /pages.csv
-
-## Makes every query of phase0/out/registry.yaml active, over what registry-sync promoted.
-pilot-registry:
-	$(PILOT_RUN)
-	$(PILOT_COMPOSE) run --rm --no-deps -T -v $(CURDIR)/$(PILOT_OUT)/registry.yaml:/etc/fbs/registry.yaml:ro \
-	  --entrypoint /usr/local/bin/fbctl api registry import --file /etc/fbs/registry.yaml
-
-## Requests, bytes and blocks per page per day over the last PILOT_SINCE, projected to PILOT_PROJECT pages.
-pilot-report:
-	$(PILOT_RUN)
-	@$(PILOT_FBCTL) report load --since $(PILOT_SINCE) --pages $(PILOT_PROJECT) --cost-per-gb $(PILOT_COST_PER_GB)
-
-## Stops the pilot and keeps its database; pilot-clean also deletes it.
-pilot-down:
-	$(PILOT_RUN)
-	$(PILOT_COMPOSE) down
-pilot-clean:
-	$(PILOT_RUN)
-	$(PILOT_COMPOSE) down -v
-	@# No pilot left: the local targets may run again (NOT_PILOT).
-	rm -f $(PILOT_OUT)/pilot-run.yaml
+	rm -rf bin && mkdir -p bin
+	CGO_ENABLED=0 GOOS=linux $(GO) build -trimpath -ldflags="-s -w" -o bin/ ./cmd/sb-analysis ./cmd/sb-eval
+	docker build -f deploy/docker/Dockerfile.prebuilt -t $(ANALYSIS_IMAGE) .
 
 ## Content analysis next to the fbs pilot, as a Compose project of its own
 ## (deploy/analysis/compose.yml): its own image and containers on the
 ## pilot's network. fbs's pilot-up and restarts never touch it, and nothing
-## here touches fbs's containers, image, topics or settings. Run these from
-## a checkout of this repository of its own (docs/owner/analysis-decisions.md).
-ANALYSIS_IMAGE ?= sb-analysis:dev
+## here touches fbs's containers, image, topics or settings
+## (docs/owner/analysis-decisions.md).
 ANALYSIS_ENV = deploy/analysis/analysis.env
 FBS_NETWORK ?= fbs_default
 FBS_POSTGRES ?= fbs-postgres-1
@@ -232,10 +69,6 @@ ANALYSIS_PSQL = docker exec -i $(FBS_POSTGRES) psql -U fbs -d fbs
 NEED_FBS = @docker network inspect $(FBS_NETWORK) >/dev/null 2>&1 || { echo "no $(FBS_NETWORK) network: the fbs pilot must be running on this machine"; exit 2; }
 NEED_KEYS = @test -f $(ANALYSIS_ENV) || { echo "missing $(ANALYSIS_ENV) (the API keys): docs/owner/analysis-decisions.md, step 5"; exit 2; }; \
 	test "$$(stat -c %a $(ANALYSIS_ENV))" = 600 || { echo "$(ANALYSIS_ENV) must be mode 600: chmod 600 $(ANALYSIS_ENV)"; exit 2; }
-
-## The analysis image: sb-analysis and sb-eval only.
-analysis-image:
-	docker build -f deploy/docker/Dockerfile --target sb-analysis -t $(ANALYSIS_IMAGE) .
 
 ## Shape of the collected data (counts and lengths only, no content).
 analysis-stats:
@@ -277,7 +110,7 @@ EVAL = docker run --rm -v $(GOLD_DIR):/gold --entrypoint /usr/local/bin/sb-eval
 eval-sample:
 	@test -d $(GOLD_DIR) || { echo "create it first: mkdir -p $(GOLD_DIR) && chown 65532:65532 $(GOLD_DIR) && chmod 700 $(GOLD_DIR)"; exit 2; }
 	$(NEED_FBS)
-	$(EVAL) --network $(FBS_NETWORK) -e FBS_POSTGRES__DSN=postgres://fbs:fbs@postgres:5432/fbs?sslmode=disable $(ANALYSIS_IMAGE) \
+	$(EVAL) --network $(FBS_NETWORK) -e SB_ANALYSIS_POSTGRES__DSN=postgres://fbs:fbs@postgres:5432/fbs?sslmode=disable $(ANALYSIS_IMAGE) \
 	  sample --out /gold/gold.labels.jsonl $(EVAL_ARGS)
 ## Reference labels from the strongest model (no human labeller): Opus
 ## 5.5 labels the sample, the production model is measured against it.
@@ -297,24 +130,6 @@ eval-report:
 	$(EVAL) $(ANALYSIS_IMAGE) report --gold /gold/gold.labels.jsonl /gold/results.jsonl
 eval-cost:
 	$(EVAL) $(ANALYSIS_IMAGE) cost --measured /gold/results.jsonl --model $(MODEL)
-
-## Image with ffmpeg for the analysis media workers.
-docker-analysis-media:
-	docker build -f deploy/docker/Dockerfile --target analysis-media -t fbs:analysis-media .
-
-## Rehearse Phase 0 against a local fakefb (no proxies, no Facebook, about a minute).
-phase0-dryrun:
-	GO=$(GO) phase0/dryrun.sh
-
-## Static fbs-spike binaries in bin/, to run Phase 0 on a machine without Go or Docker.
-spike-bin:
-	@for t in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do \
-	  os=$${t%/*}; arch=$${t#*/}; \
-	  echo "bin/fbs-spike-$$os-$$arch"; \
-	  CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath \
-	    -ldflags="-s -w -X main.version=$$(git describe --always --dirty 2>/dev/null || echo dev)" \
-	    -o bin/fbs-spike-$$os-$$arch ./cmd/fbs-spike || exit 1; \
-	done
 
 clean:
 	rm -rf bin/

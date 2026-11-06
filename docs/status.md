@@ -1,17 +1,23 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 6 November 2026, 04:00 Iraq time.*
+*Kept current for the master session and the owner. Last updated 6 November 2026 (Iraq time).*
 
 ## Where it stands
 
 | Area | State |
 |---|---|
-| Code | Built and tested: unit and integration tests with race detection against real Postgres, Redpanda and Valkey. In `main` of the public repository `Abdullah95k/securebrand-microservices-analysis` since 6 Nov (pull request [#1](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/1), merge `0706a71`, after green CI). `main` started as the fbs baseline the work was built on (`be2ec2f`). |
-| Running | **Nowhere.** Never analysed real content; never called an AI provider with real data. |
-| Pilot server | A separate deployment is ready (`deploy/analysis/compose.yml`, image `sb-analysis:dev`, folder `~/securebrand-analysis`). Not confirmed as cloned or built there; **not started**. |
-| Quality | **Not measured.** The evaluation (`docs/analysis/evaluation.md`) is waiting for the owner's approval and API keys on the server. |
-| Contract | Reads `fb.*` through its Facebook adapter (`analysis.inputs: [fb]`). This repository's draft `securebrand.content.v1` is **not used and will be retired** for the master's v1. Publishes `analysis.result.v1`, `analysis.media.v1`, `analysis.author.v1`, `analysis.topic.v1`; nobody consumes them yet. |
+| Code | Built and tested: unit and integration tests with race detection against real Postgres, Redpanda and Valkey. In `main` of the public repository `Abdullah95k/securebrand-microservices-analysis`. **6 Nov: becoming a repository of its own** (REQ-011 fix 1, in review): fbs's code removed; fbs's module is a dependency for the fb protos only. |
+| Running | **Nowhere.** Never analysed real content; never called an AI provider with real data. From 6 Nov, testing happens on the production cluster, at full scale (owner's D-026): no new runs on the shared server. |
+| Pilot server | **No new runs there** (owner's D-026, 6 Nov). The Compose deployment next to the fbs pilot (`deploy/analysis/compose.yml`) stays in the repository; it was never started. |
+| Quality | **Not measured.** The evaluation (`docs/analysis/evaluation.md`, about $3–5) is approved; it runs on the production cluster once fbs collects there (owner, 6 Nov). |
+| Contract | Reads `fb.*` through its Facebook adapter (`analysis.inputs: [fb]`). The platform's contract **v1.0.0 is published** (6 Nov); adopting it (REQ-022) comes after the fixes REQ-011 lists before the canary. It retires this repository's draft `securebrand.content.v1` and its copy of `securebrand.analysis.v1`. Publishes `analysis.result.v1`, `analysis.media.v1`, `analysis.author.v1`, `analysis.topic.v1`; nobody consumes them yet. |
 | Schema Registry | sb-analysis registers nothing (standing instruction: no `securebrand.content.*` until the master publishes v1). **But the pilot's shared registry already holds 9 subjects from this repository's copy** (confirmed 6 Nov, 00:58 Iraq time): the 4 `content.*` subjects, `securebrand/content/v1/content.proto`, and the 4 `analysis.*` subjects, almost certainly from a `make pilot-up` run from this copy around 1 November. The master (6 Nov): they don't block the platform, since staging and production get their own registry. **Leave them in place; delete nothing.** |
+
+## Work in progress (from 6 Nov)
+
+- **REQ-011, the fixes:** one row per fix in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md). Fix 1 (a repository of its own) is in review.
+- **REQ-022, adopting contract v1.0.0:** after the fixes REQ-011 lists before the canary; its record will be `docs/master/analysis-contract-adoption.md`.
+- **Questions for the master:** [`docs/master/questions-for-master-2026-11-06.md`](master/questions-for-master-2026-11-06.md).
 
 ## Reports for the master (5 Nov)
 
@@ -22,19 +28,23 @@
 | C and D: operations, models, costs, media, embeddings; the repository and its fbs copy | [`docs/master/analysis-operations.md`](master/analysis-operations.md) |
 | E: gaps against the production standard; the owner's decisions | [`docs/master/analysis-gaps.md`](master/analysis-gaps.md) |
 
-## Standing instructions (from the owner, 5 Nov)
+## Standing instructions (from the owner, 5–6 Nov)
 
 - Don't rename or remove topics, event fields, schemas or endpoints others use. Additions are fine, and are reported to the owner.
-- Don't register `securebrand.content.*` in any shared Schema Registry until the master publishes v1.
-- Nothing heavy on the shared pilot server (201.79.36.209) without the owner's approval.
+- Don't register `securebrand.content.*` or `securebrand.common.*` in any shared Schema Registry. In production the platform registers every subject and creates every topic.
+- Don't create or change topics on a Kafka shared with another service.
+- Nothing on the shared server (201.79.36.209) without the owner's approval.
+- What goes to an AI provider doesn't change: phone numbers, e-mails and author names never leave (D-010).
+- Erasure stays as it is (it records, deletes nothing); don't remove it, and don't apply it without the owner's written order.
+- Every analysis result is kept, every version.
 - Keep this document current.
 
 ## Open decisions (owner or master)
 
-1. **Real-time scope.** Which items must be analysed within 1–5 minutes (R4). The rest stays in the half-price batch lane.
-2. **The daily AI budget** (after the quality test).
-3. **sb-analysis's own text copy:** keep it, or slim to working state once ClickHouse holds content (the owner's decision 7, "for now").
-4. **A repository of its own** for sb-analysis, without the fbs copy (about 2–3 days; Part D).
+1. **Where the images and the chart are published, and the production namespace** (asked the master, 6 Nov).
+2. **Where account tiers come from,** for the real-time lane's hot-tier accounts (asked the master, 6 Nov).
+3. **Which permanent store a backfill reads** (asked the master, 6 Nov).
+4. **sb-analysis's own text copy:** keep it, or slim it to working state once the platform's entity layer and the client app exist (the owner's decision 7, "keep both for now"; REQ-011, later).
 
 ## Changes since the last update
 
@@ -60,3 +70,11 @@
 - **6 Nov:** review of the contract draft v0.1 (REQ-015) in [`docs/master/analysis-contract-review.md`](master/analysis-contract-review.md). Review only; nothing built.
 - **6 Nov:** fixed the failing chart test ("deploy" check) in pull request #1. It was a test-only problem: the small test broker holds 256 partitions; the topic setup fills them, and with this branch's 8 extra topics no room was left for Kafka's own consumer-offsets topic, so nothing could read. The test script (`scripts/chart-smoke.py`) now has the broker create that topic first. No topic, field, schema or endpoint changed.
 - **6 Nov, 04:00:** pull request #1 merged into `main` after all three CI checks passed (test, integration, deploy), under the owner's rule that a pull request may be merged once CI is green. Nothing was deployed or started anywhere.
+- **6 Nov:** pull request #2 merged (this document's update).
+- **6 Nov, the owner's requests:** REQ-011 (the fixes; approved to build) and REQ-022 (adopt contract v1.0.0, published as tag `v1.0.0` in `Abdullah95k/securebrand-contracts`; after the pre-canary fixes). The owner's answers:
+  - the quality evaluation runs on the production cluster, once fbs collects there;
+  - the canary's AI budget is $5 a day.
+- **6 Nov, REQ-011 fix 1 (in review):** a repository of its own. fbs's code is removed, and sb-analysis has its own config, topics, test helpers, Makefile, Dockerfile, CI and local test stack.
+  - **Changed names:** environment variables `SB_ANALYSIS_*` (were `FBS_*`), metrics `sb_analysis_*` (were `fbs_analysis_*`). Nothing depended on the old names yet.
+  - **Bug fix:** the migrations' version table is now schema-qualified.
+  - **Unchanged:** no topic, field or schema was renamed or removed. Details in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md).

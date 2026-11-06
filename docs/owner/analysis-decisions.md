@@ -192,8 +192,8 @@ nano deploy/analysis/analysis.env
 An editor opens. Type these lines, replacing the parts after `=` with your keys (leave out the second line if you have no Gemini key):
 
 ```
-FBS_ANALYSIS__PROVIDERS__ANTHROPIC__API_KEY=sk-ant-your-key
-FBS_ANALYSIS__PROVIDERS__GEMINI__API_KEY=your-gemini-key
+SB_ANALYSIS_ANALYSIS__PROVIDERS__ANTHROPIC__API_KEY=sk-ant-your-key
+SB_ANALYSIS_ANALYSIS__PROVIDERS__GEMINI__API_KEY=your-gemini-key
 ```
 
 Save with **Ctrl+O**, then **Enter**, and close with **Ctrl+X**. Then make the file private:

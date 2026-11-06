@@ -26,14 +26,14 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/abdullah95k/securebrand-microservices/internal/analysis/entities"
-	"github.com/abdullah95k/securebrand-microservices/internal/analysis/eval"
-	"github.com/abdullah95k/securebrand-microservices/internal/analysis/pipeline"
-	"github.com/abdullah95k/securebrand-microservices/internal/analysis/provider"
-	"github.com/abdullah95k/securebrand-microservices/internal/analysis/provider/registry"
-	"github.com/abdullah95k/securebrand-microservices/internal/analysis/taxonomy"
-	"github.com/abdullah95k/securebrand-microservices/internal/config"
-	"github.com/abdullah95k/securebrand-microservices/internal/platform/pg"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/config"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/entities"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/eval"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/pipeline"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/pg"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/provider"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/provider/registry"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/taxonomy"
 )
 
 const usage = `usage: sb-eval <sample|silver|label|agreement|run|report|calibrate|cost> [flags]   (sb-eval <command> -h for flags)`
@@ -94,7 +94,7 @@ func registryFromSeed(path string) (*entities.Registry, *entities.Seed, error) {
 
 func sample(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sample", flag.ExitOnError)
-	cfgPath := fs.String("config", os.Getenv("FBS_CONFIG"), "config file(s) (postgres.dsn points at the pilot database)")
+	cfgPath := fs.String("config", os.Getenv(config.ConfigEnv), "config file(s) (postgres.dsn points at the pilot database)")
 	out := fs.String("out", "", "file to write (outside the repository, e.g. /srv/securebrand/gold/gold.labels.jsonl)")
 	comments := fs.Int("comments", eval.DefaultSample.Comments, "comments to sample")
 	posts := fs.Int("posts", eval.DefaultSample.Posts, "posts to sample")
@@ -184,7 +184,7 @@ func label(ctx context.Context, args []string) error {
 
 func run(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	cfgPath := fs.String("config", os.Getenv("FBS_CONFIG"), "config file(s) with analysis.providers (API keys via FBS_ANALYSIS__PROVIDERS__<NAME>__API_KEY)")
+	cfgPath := fs.String("config", os.Getenv(config.ConfigEnv), "config file(s) with analysis.providers (API keys via SB_ANALYSIS_ANALYSIS__PROVIDERS__<NAME>__API_KEY)")
 	gold := fs.String("gold", "", "labelled gold file")
 	out := fs.String("out", "", "results file to append to")
 	var rc eval.RunConfig
@@ -246,7 +246,7 @@ func run(ctx context.Context, args []string) error {
 // become the labels the production model is measured against.
 func silver(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("silver", flag.ExitOnError)
-	cfgPath := fs.String("config", os.Getenv("FBS_CONFIG"), "config file(s) with analysis.providers")
+	cfgPath := fs.String("config", os.Getenv(config.ConfigEnv), "config file(s) with analysis.providers")
 	gold := fs.String("gold", "", "gold file to label (sb-eval sample writes it)")
 	var rc eval.RunConfig
 	fs.StringVar(&rc.Provider, "provider", "anthropic", "provider name in analysis.providers")
@@ -377,7 +377,7 @@ func calibrate(args []string) error {
 
 func cost(args []string) error {
 	fs := flag.NewFlagSet("cost", flag.ExitOnError)
-	cfgPath := fs.String("config", os.Getenv("FBS_CONFIG"), "config file(s) with analysis.pricing")
+	cfgPath := fs.String("config", os.Getenv(config.ConfigEnv), "config file(s) with analysis.pricing")
 	volumes := fs.String("items", "100000000,300000000,1000000000", "text items per year, comma separated")
 	measured := fs.String("measured", "", "results file: use its measured tokens per comment")
 	model := fs.String("model", "", "with --measured: the model whose tokens to use")

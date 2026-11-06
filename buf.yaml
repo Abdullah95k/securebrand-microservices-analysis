@@ -9,3 +9,8 @@ lint:
 breaking:
   use:
     - FILE
+  except:
+    # Go import paths are not part of the wire contract, and nothing imports
+    # this repository's generated Go code; they changed once, when the
+    # repository got a module of its own.
+    - FILE_SAME_GO_PACKAGE

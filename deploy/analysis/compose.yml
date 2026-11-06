@@ -1,7 +1,7 @@
 # The analysis service next to a running fbs stack on the same machine (the
 # pilot), as a Compose project of its own:
 #   - its own image (sb-analysis:dev, `make analysis-image`) and containers:
-#     fbs's `make pilot-up` and restarts never touch them, and nothing here
+#     fbs's pilot restarts never touch them, and nothing here
 #     touches fbs's containers, image, topics or settings;
 #   - it joins fbs's network to read the collected content from Redpanda
 #     and keep its own tables (schema `analysis`) in fbs's Postgres;
@@ -19,11 +19,9 @@ x-analysis: &analysis
     driver: json-file
     options: {max-size: "50m", max-file: "3"}
   environment:
-    FBS_CONFIG: /etc/sb-analysis/pilot.yaml
-    FBS_POSTGRES__DSN: postgres://fbs:fbs@postgres:5432/fbs?sslmode=disable
-    FBS_REDIS__ADDR: valkey:6379
-    FBS_KAFKA__BROKERS: redpanda:9092
-    FBS_KAFKA__SCHEMA_REGISTRY__URL: http://redpanda:8081
+    SB_ANALYSIS_CONFIG: /etc/sb-analysis/pilot.yaml
+    SB_ANALYSIS_POSTGRES__DSN: postgres://fbs:fbs@postgres:5432/fbs?sslmode=disable
+    SB_ANALYSIS_KAFKA__BROKERS: redpanda:9092
   volumes:
     - ./pilot.yaml:/etc/sb-analysis/pilot.yaml:ro
   env_file:

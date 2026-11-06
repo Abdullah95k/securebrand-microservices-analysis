@@ -5,7 +5,7 @@ package securebrand.analysis.v1;
 import "google/protobuf/timestamp.proto";
 import "securebrand/content/v1/content.proto";
 
-option go_package = "github.com/abdullah95k/securebrand-microservices/gen/go/securebrand/analysis/v1;analysisv1";
+option go_package = "github.com/abdullah95k/securebrand-microservices-analysis/gen/go/securebrand/analysis/v1;analysisv1";
 
 // Provenance records how a result was produced, so results are traceable and
 // re-analysis can be selective.

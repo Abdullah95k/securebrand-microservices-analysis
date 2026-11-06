@@ -7,7 +7,7 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/abdullah95k/securebrand-microservices/internal/analysis/app"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/app"
 )
 
 // erasuresCmd lists the erasure requests received, or applies one that

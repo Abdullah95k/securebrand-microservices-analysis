@@ -31,26 +31,29 @@ jobs:
       - name: Proto breaking changes
         if: github.event_name == 'pull_request'
         run: |
-          # git ls-tree exits 0 for missing paths; cat-file -e does not.
+          # Only the protos this repository owns; fbs's (securebrand.fb.v1)
+          # come from fbs's module.
           if git cat-file -e "origin/${{ github.base_ref }}:buf.yaml" 2>/dev/null; then
-            buf breaking --against ".git#branch=origin/${{ github.base_ref }}"
+            buf breaking --against ".git#branch=origin/${{ github.base_ref }}" \
+              --path api/proto/securebrand/analysis --path api/proto/securebrand/content
           else
             echo "no buf module on the base branch yet"
           fi
       - name: No gold set or labelled data in the repository
         run: |
-          # Real comments and their labels stay on the owner's server
+          # Real comments and their labels stay off the repository
           # (docs/analysis/evaluation.md); only synthetic examples are allowed.
           if git ls-files | grep -E '\.labels\.jsonl$|\.gold\.jsonl$|(^|/)gold/|results\.jsonl$'; then
             echo "labelled or evaluated data must not be committed"; exit 1
           fi
-      - name: Fixtures contain no real signed URLs
+      - name: No fbs code in the repository
         run: |
-          if grep -rlE 'oh=00_|_nc_cat=' testdata/; then
-            echo "fixtures with real fbcdn signatures: run fbctl fixtures scrub"; exit 1
+          # fbs lives in its own repository; sb-analysis takes only its
+          # public protos and migrations, as a Go module dependency.
+          if git ls-files | grep -E '^cmd/fbs|^cmd/fbctl|^internal/(fb|crawl|scheduler|persist)/|^deploy/helm/fbs/'; then
+            echo "fbs code belongs in fbs's repository"; exit 1
           fi
-      - name: Unit tests (parsers, fake Facebook client layer, accounting)
-        env: {FBS_BROWSER_NO_SANDBOX: "1"} # runners may not allow the Chromium sandbox
+      - name: Unit tests
         run: go test -race -count=1 ./...
       - uses: golangci/golangci-lint-action@v8
         with:
@@ -61,9 +64,11 @@ jobs:
     services:
       postgres:
         image: postgres:18-alpine
-        env: {POSTGRES_USER: fbs, POSTGRES_PASSWORD: fbs, POSTGRES_DB: fbs}
+        # The user is "analysis", as in production: a schema of the user's
+        # name must not hide the migrations' version table.
+        env: {POSTGRES_USER: analysis, POSTGRES_PASSWORD: analysis, POSTGRES_DB: analysis}
         ports: ["5432:5432"]
-        options: --health-cmd "pg_isready -U fbs" --health-interval 2s --health-retries 30
+        options: --health-cmd "pg_isready -U analysis" --health-interval 2s --health-retries 30
       valkey:
         image: valkey/valkey:8-alpine
         ports: ["6379:6379"]
@@ -73,51 +78,34 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Install ffmpeg (video key-frame tests)
-        run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
       - name: Start Redpanda
         run: |
-          docker run -d --name redpanda -p 19092:19092 -p 18081:8081 redpandadata/redpanda:v24.2.7 \
+          docker run -d --name redpanda -p 19092:19092 redpandadata/redpanda:v24.2.7 \
             redpanda start --mode dev-container --smp 1 --memory 1G \
             --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092 \
             --advertise-kafka-addr internal://localhost:9092,external://localhost:19092
           for i in $(seq 1 60); do docker exec redpanda rpk cluster health --exit-when-healthy && break; sleep 2; done
       - name: Integration and end-to-end tests
         env:
-          FBS_TEST_PG_DSN: postgres://fbs:fbs@localhost:5432/fbs?sslmode=disable
-          FBS_TEST_REDIS_ADDR: localhost:6379
-          FBS_TEST_KAFKA_BROKERS: localhost:19092
-          FBS_TEST_SCHEMA_REGISTRY: http://localhost:18081
-          FBS_BROWSER_NO_SANDBOX: "1"
+          SB_TEST_PG_DSN: postgres://analysis:analysis@localhost:5432/analysis?sslmode=disable
+          SB_TEST_REDIS_ADDR: localhost:6379
+          SB_TEST_KAFKA_BROKERS: localhost:19092
         # Every package: a test needing Postgres, Redis or Kafka skips without
-        # them, so listing packages here let new integration tests go unrun.
+        # them, so listing packages here would let new integration tests go unrun.
         run: go test -count=1 -timeout 25m ./...
 
-  deploy:
+  images:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - uses: azure/setup-helm@v4
-      - name: Helm lint and render
+      - name: Docker build (sb-analysis and the media image)
         run: |
-          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
-          make chart-check
-          helm template fbs deploy/helm/fbs --set keda.enabled=false,api.ingress.enabled=true,networkPolicy.enabled=true > /dev/null
-          helm template fbs deploy/helm/fbs --set alerts.enabled=true,dashboards.enabled=true,serviceMonitor.enabled=true > /tmp/monitoring.yaml
-          grep -q "kind: PrometheusRule" /tmp/monitoring.yaml && grep -q "fbs-overview.json" /tmp/monitoring.yaml
-      - name: Docker build
+          docker build -f deploy/docker/Dockerfile --target sb-analysis -t sb-analysis:ci .
+          docker build -f deploy/docker/Dockerfile --target analysis-media -t sb-analysis-media:ci .
+          docker run --rm sb-analysis:ci help >/dev/null
+          docker run --rm --entrypoint ffmpeg sb-analysis-media:ci -version >/dev/null
+      - name: Compose files are valid (test stack and the pilot deployment)
         run: |
-          docker build -f deploy/docker/Dockerfile -t fbs:ci .
-          docker build -f deploy/docker/Dockerfile --target browser -t fbs:ci-browser .
-          docker run --rm --entrypoint chromium fbs:ci-browser --version
-      - name: Chart smoke run (the chart's workloads in Docker against fakefb)
-        run: |
-          python3 -c 'import yaml' 2>/dev/null || sudo apt-get install -y python3-yaml
-          make infra-up
-          make chart-smoke IMAGE=fbs:ci
-      - name: Compose config is valid (local stack and pilot)
-        run: |
-          docker compose -f deploy/compose/docker-compose.yml config -q
-          docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/pilot.yml config -q
+          docker compose -f deploy/dev/compose.yml config -q
+          docker compose -f deploy/analysis/compose.yml config -q

@@ -1,23 +1,22 @@
 package metrics
 
-// Metrics of sb-analysis, the content analysis service (fbs_analysis_*).
-// They live here so the chart's alert rules can be checked against them
-// (monitoring_test.go); internal/analysis/ametrics re-exports them.
+// The analysis's own metrics (sb_analysis_*); internal/ametrics re-exports
+// them.
 
 import "github.com/prometheus/client_golang/prometheus"
 
 func analysisCounter(name, help string, labels ...string) *prometheus.CounterVec {
-	return counterVec("analysis_"+name, help, labels...)
+	return counterVec(name, help, labels...)
 }
 
 func analysisGaugeVec(name, help string, labels ...string) *prometheus.GaugeVec {
-	return gaugeVec("analysis_"+name, help, labels...)
+	return gaugeVec(name, help, labels...)
 }
 
-func analysisGauge(name, help string) prometheus.Gauge { return gauge("analysis_"+name, help) }
+func analysisGauge(name, help string) prometheus.Gauge { return gauge(name, help) }
 
 func analysisHist(name, help string, buckets []float64, labels ...string) *prometheus.HistogramVec {
-	return histVec("analysis_"+name, help, buckets, labels...)
+	return histVec(name, help, buckets, labels...)
 }
 
 var (

@@ -25,17 +25,16 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/abdullah95k/securebrand-microservices/internal/analysis/app"
-	"github.com/abdullah95k/securebrand-microservices/internal/analysis/core"
-	"github.com/abdullah95k/securebrand-microservices/internal/analysis/entities"
-	"github.com/abdullah95k/securebrand-microservices/internal/analysis/store"
-	appcfg "github.com/abdullah95k/securebrand-microservices/internal/app"
-	"github.com/abdullah95k/securebrand-microservices/internal/config"
-	"github.com/abdullah95k/securebrand-microservices/internal/platform/httpserver"
-	plog "github.com/abdullah95k/securebrand-microservices/internal/platform/log"
-	"github.com/abdullah95k/securebrand-microservices/internal/platform/pg"
-	"github.com/abdullah95k/securebrand-microservices/internal/platform/run"
-	"github.com/abdullah95k/securebrand-microservices/internal/platform/s3x"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/app"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/config"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/entities"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/httpserver"
+	plog "github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/log"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/pg"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/run"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/s3x"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/store"
 )
 
 func main() {
@@ -124,7 +123,7 @@ func withApp(name string, args []string, fs *flag.FlagSet, fn func(context.Conte
 		return err
 	}
 	defer db.Close()
-	kc, err := appcfg.KafkaClient(cfg, "-analysis")
+	kc, err := app.KafkaClient(cfg, "-analysis")
 	if err != nil {
 		return err
 	}

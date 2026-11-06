@@ -1,8 +1,8 @@
 # Analysis service operations (sb-analysis)
 
 The design is in [docs/design/analysis-service.md](../design/analysis-service.md) and the evaluation in [docs/analysis/evaluation.md](../analysis/evaluation.md). Commands run in the analysis container or pod:
-- **Compose (pilot):** `docker compose -f deploy/compose/docker-compose.yml -f deploy/compose/pilot.yml --profile analysis exec analysis sb-analysis ...`
-- **Kubernetes:** `kubectl exec deploy/fbs-analysis -- sb-analysis ...`
+- **Compose (next to the fbs pilot):** `make analysis-cmd ARGS="..."` (`deploy/analysis/compose.yml`);
+- **Kubernetes:** `kubectl exec deploy/sb-analysis -- sb-analysis ...` (the chart of its own comes with REQ-011 fix 2).
 
 All times in reports and budgets are Iraq time (Asia/Baghdad, UTC+3).
 
@@ -15,33 +15,33 @@ All times in reports and budgets are Iraq time (Asia/Baghdad, UTC+3).
 - **relay:** the outbox to Kafka;
 - **rollup:** daily rollups, the daily topic curation and the daily bot scoring (each job takes a database lock, so replicas never overlap).
 
-The Helm chart runs `analysis` (all roles but media) and `analysis-media` (media, on the ffmpeg image). Scaling:
+In Kubernetes, run `analysis` (all roles but media) and `analysis-media` (media, on the ffmpeg image `sb-analysis-media`) as two Deployments. Scaling:
 - **Ingest:** scales on Kafka lag (KEDA).
 - **Pipeline:** I/O-bound; one replica handles ~10 items/s with batching. More replicas share the queue safely (`SKIP LOCKED`).
-- **Media:** scale on `fbs_analysis_media_ttl_at_risk` and the pending `media_jobs`.
+- **Media:** scale on `sb_analysis_media_ttl_at_risk` and the pending `media_jobs`.
 
 ## Queue backlog
 
 **Look:**
-- `fbs_analysis_queue_depth` and `fbs_analysis_queue_oldest_seconds` by lane and route;
+- `sb_analysis_queue_depth` and `sb_analysis_queue_oldest_seconds` by lane and route;
 - `make analysis-status` on the pilot.
 
 **Causes, in order:**
-1. **The budget paused work** (`fbs_analysis_budget_paused == 1`): see [Budget](#budget).
-2. **Provider errors** (`fbs_analysis_provider_requests_total{outcome="error"}`): see [Provider outage](#provider-outage).
-3. **Batches not collected** (`fbs_analysis_open_batches` grows): check that a pipeline replica runs and can reach the provider. Batches finish within 24h; results stay downloadable for 29 days, so a restart collects them.
+1. **The budget paused work** (`sb_analysis_budget_paused == 1`): see [Budget](#budget).
+2. **Provider errors** (`sb_analysis_provider_requests_total{outcome="error"}`): see [Provider outage](#provider-outage).
+3. **Batches not collected** (`sb_analysis_open_batches` grows): check that a pipeline replica runs and can reach the provider. Batches finish within 24h; results stay downloadable for 29 days, so a restart collects them.
 4. **Real-time lane slow** at a burst: raise `analysis.realtime.workers`, or set `analysis.urgent.tracked_entities: false` to send fewer items there.
 
 ## Media
 
-`fbs_analysis_media_ttl_at_risk > 0` means files are within 6h of deletion (`delete_after`). Files deleted before analysis are lost for it: fbs logs `ttl_expired`.
+`sb_analysis_media_ttl_at_risk > 0` means files are within 6h of deletion (`delete_after`). Files deleted before analysis are lost for it: fbs logs `ttl_expired`.
 - Scale `analysis-media`, or raise `analysis.media.workers`.
-- `failed_permanent` acks for videos with "ffmpeg not found" mean the media workers run the default image: set `image.mediaTag` (Helm) or `FBS_ANALYSIS_IMAGE=fbs:analysis-media` (Compose, after `make docker-analysis-media`).
+- `failed_permanent` acks for videos with "ffmpeg not found" mean the media workers run the default image: use the media image `sb-analysis-media:dev` (`make docker-analysis-media`; Compose: `SB_ANALYSIS_IMAGE=sb-analysis-media:dev`).
 - `analysis.media.kinds` lists the kinds analysed. Others are acknowledged without analysis (`skipped`).
 
 ## Dead letters
 
-Items that failed `analysis.limits.max_attempts` times are in `analysis.dead_letters` with the last error, and `fbs_analysis_dead_letters` counts them.
+Items that failed `analysis.limits.max_attempts` times are in `analysis.dead_letters` with the last error, and `sb_analysis_dead_letters` counts them.
 1. Read the errors: `SELECT route, left(error, 120), count(*) FROM analysis.dead_letters GROUP BY 1, 2 ORDER BY 3 DESC;`
 2. Fix the cause (a schema change, a model that keeps truncating: raise the route's `max_tokens`).
 3. Queue them again: `sb-analysis replay-failed [--route comment]`.
@@ -57,9 +57,9 @@ The model's safety classifiers can decline content (violence, hate).
 Every provider has a circuit breaker.
 - **Real-time lane:** while the breaker is open, requests go to the route's `fallback_provider` / `fallback_model`, recorded with `fallback = true`.
 - **Batch lane:** waits and retries every 5 minutes, without counting attempts.
-- `fbs_analysis_fallback_total` over 5% (`AnalysisFallbackShareHigh`) means results from two models are being mixed: trends are less comparable for that period.
+- `sb_analysis_fallback_total` over 5% (`AnalysisFallbackShareHigh`) means results from two models are being mixed: trends are less comparable for that period.
 
-API keys come from the environment: `FBS_ANALYSIS__PROVIDERS__ANTHROPIC__API_KEY` (and `__OPENAI__`, `__GEMINI__`).
+API keys come from the environment: `SB_ANALYSIS_ANALYSIS__PROVIDERS__ANTHROPIC__API_KEY` (and `__OPENAI__`, `__GEMINI__`).
 - **Compose:** in `deploy/analysis/analysis.env` (mode 600).
 - **Kubernetes:** in the `secretEnv` Secret.
 
@@ -69,7 +69,7 @@ A 401 in the logs means the key is missing or revoked.
 
 `analysis.budget.daily_usd` caps spend per Iraq day; `analysis.routes.<route>.daily_usd` caps one route. Spend is measured from real token usage at list prices (`analysis.pricing`), plus speech-to-text minutes at the transcription model's `per_minute` price (logged as `video` requests of that model; an own Whisper server is priced 0).
 - **At the cap:** batch and re-analysis work pause (items wait); urgent real-time items continue if `analysis.budget.urgent_exempt`.
-- **To look:** `fbs_analysis_spent_today_usd`, `fbs_analysis_cost_usd_total` by model and route, or `make analysis-status`.
+- **To look:** `sb_analysis_spent_today_usd`, `sb_analysis_cost_usd_total` by model and route, or `make analysis-status`.
 - **To change:** set the budget in the config and restart the analysis containers. A new day starts at 00:00 Iraq time.
 
 Keep the price table in `configs/default.yaml` current when providers change prices.
@@ -77,7 +77,7 @@ Keep the price table in `configs/default.yaml` current when providers change pri
 ## Outbox
 
 Results (`analysis.result.v1`, `analysis.media.v1`) and media acks (`fb.media.processed.v1`) leave through `analysis.outbox`, published by the relay role.
-- A growing `fbs_analysis_outbox_backlog` means the relay is down or cannot produce.
+- A growing `sb_analysis_outbox_backlog` means the relay is down or cannot produce.
 - Acks wait in the outbox too, so a long outage can push media past its TTL.
 - Records are delivered at least once: consumers deduplicate on `event_id`.
 
@@ -179,15 +179,15 @@ The password file is created by the operator. Never pass passwords on the comman
 
 | Metric | Meaning |
 |---|---|
-| `fbs_analysis_items_ingested_total{outcome}` | new, edited, unchanged, skipped, deleted, redacted, suppressed |
-| `fbs_analysis_items_analyzed_total{route,model,outcome}` | written, stale (edited meanwhile), duplicate |
-| `fbs_analysis_items_failed_total{route,reason}` | missing, invalid, truncated, refused, error |
-| `fbs_analysis_items_deduplicated_total{route}` | items that shared the answer of an identical item of the same thread and parent (not sent to the model) |
-| `fbs_analysis_cost_usd_total{route="curation"}` | the daily topic curation calls |
-| `fbs_analysis_tokens_total`, `fbs_analysis_cost_usd_total` | token usage and spend by model and route |
-| `fbs_analysis_queue_depth`, `fbs_analysis_queue_oldest_seconds` | queue by lane and route |
-| `fbs_analysis_spent_today_usd`, `fbs_analysis_budget_paused` | budget |
-| `fbs_analysis_media_total`, `fbs_analysis_media_ttl_at_risk` | media outcomes and deadlines |
-| `fbs_analysis_output_repairs_total` | values validation fixed (invalid topics, private persons dropped) |
-| `fbs_analysis_fallback_total`, `fbs_analysis_refusals_total` | fallback use and refusals |
-| `fbs_analysis_outbox_backlog`, `fbs_analysis_published_total` | outbox |
+| `sb_analysis_items_ingested_total{outcome}` | new, edited, unchanged, skipped, deleted, redacted, suppressed |
+| `sb_analysis_items_analyzed_total{route,model,outcome}` | written, stale (edited meanwhile), duplicate |
+| `sb_analysis_items_failed_total{route,reason}` | missing, invalid, truncated, refused, error |
+| `sb_analysis_items_deduplicated_total{route}` | items that shared the answer of an identical item of the same thread and parent (not sent to the model) |
+| `sb_analysis_cost_usd_total{route="curation"}` | the daily topic curation calls |
+| `sb_analysis_tokens_total`, `sb_analysis_cost_usd_total` | token usage and spend by model and route |
+| `sb_analysis_queue_depth`, `sb_analysis_queue_oldest_seconds` | queue by lane and route |
+| `sb_analysis_spent_today_usd`, `sb_analysis_budget_paused` | budget |
+| `sb_analysis_media_total`, `sb_analysis_media_ttl_at_risk` | media outcomes and deadlines |
+| `sb_analysis_output_repairs_total` | values validation fixed (invalid topics, private persons dropped) |
+| `sb_analysis_fallback_total`, `sb_analysis_refusals_total` | fallback use and refusals |
+| `sb_analysis_outbox_backlog`, `sb_analysis_published_total` | outbox |

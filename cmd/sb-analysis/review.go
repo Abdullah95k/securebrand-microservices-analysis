@@ -9,9 +9,9 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/abdullah95k/securebrand-microservices/internal/analysis/app"
-	"github.com/abdullah95k/securebrand-microservices/internal/analysis/store"
-	"github.com/abdullah95k/securebrand-microservices/internal/analysis/taxonomy"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/app"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/store"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/taxonomy"
 )
 
 // topicsCmd reviews and edits the dynamic topic list.

@@ -1,46 +1,16 @@
-# Topics applied by `fbctl kafka apply`. Names get kafka.topic_prefix prepended.
-# Partition counts are sized for the 300k pages/day target; local dev can use
-# `fbctl kafka apply --partitions-cap 3`.
+# sb-analysis's own topics, for local and test brokers only:
+# `sb-analysis kafka-topics [--partitions-cap n] [--replicas n]` creates them.
+# On a Kafka shared with another service the platform creates every topic;
+# never run kafka-topics there. Names get kafka.topic_prefix prepended.
 replicas: 3
 topics:
-  # Internal work queues (protobuf Task envelopes).
-  - {name: fbs.task.page.p0,   partitions: 24, retention: 72h}
-  - {name: fbs.task.page.p1,   partitions: 24, retention: 72h}
-  - {name: fbs.task.page.p2,   partitions: 24, retention: 72h}
-  - {name: fbs.task.post.p0,   partitions: 48, retention: 72h}
-  - {name: fbs.task.post.p1,   partitions: 48, retention: 72h}
-  - {name: fbs.task.post.p2,   partitions: 48, retention: 72h}
-  - {name: fbs.task.thread.p0, partitions: 48, retention: 72h}
-  - {name: fbs.task.thread.p1, partitions: 48, retention: 72h}
-  - {name: fbs.task.thread.p2, partitions: 48, retention: 72h}
-  - {name: fbs.task.media,     partitions: 24, retention: 72h}
-  # Discovery keyword searches (p1 only); a search older than a day is
-  # stale (the next interval queues a fresh one).
-  - {name: fbs.task.search.p1, partitions: 6,  retention: 24h}
-  # A retry waits its delay in the relay, which forwards it within minutes:
-  # a short retention bounds the disk a burst of retries takes.
-  - {name: fbs.task.retry.30s, partitions: 12, retention: 6h}
-  - {name: fbs.task.retry.5m,  partitions: 12, retention: 6h}
-  - {name: fbs.task.retry.1h,  partitions: 12, retention: 12h}
-  - {name: fbs.task.dlq,       partitions: 6,  retention: 336h}
-  # Public contract (securebrand.fb.v1 protobuf). PII topics use delete
-  # retention, never compaction, so erased data ages out.
-  - {name: fb.page.v1,            partitions: 12, retention: 168h}
-  - {name: fb.post.v1,            partitions: 48, retention: 168h}
-  - {name: fb.post_metrics.v1,    partitions: 24, retention: 168h}
-  - {name: fb.comment.v1,         partitions: 96, retention: 168h}
-  - {name: fb.media.v1,           partitions: 24, retention: 168h}
-  - {name: fb.media.ready.v1,     partitions: 24, retention: 168h}
-  - {name: fb.media.processed.v1, partitions: 24, retention: 168h}
-  - {name: fb.media.deleted.v1,   partitions: 12, retention: 168h}
-  - {name: fb.job.v1,             partitions: 12, retention: 168h}
-  - {name: fb.erasure.v1,         partitions: 6,  retention: 720h}
-  # Canonical content contract (securebrand.content.v1), published by the
-  # normalisation services, and analysis results (securebrand.analysis.v1).
+  # The draft content contract (securebrand.content.v1), retired when the
+  # platform's contract v1.0.0 is adopted.
   - {name: content.item.v1,            partitions: 96, retention: 168h}
   - {name: content.media.ready.v1,     partitions: 24, retention: 168h}
   - {name: content.media.processed.v1, partitions: 24, retention: 168h}
   - {name: content.erasure.v1,         partitions: 6,  retention: 720h}
+  # Analysis results (securebrand.analysis.v1).
   - {name: analysis.result.v1,         partitions: 96, retention: 168h}
   - {name: analysis.media.v1,          partitions: 24, retention: 168h}
   - {name: analysis.author.v1,         partitions: 12, retention: 720h}
