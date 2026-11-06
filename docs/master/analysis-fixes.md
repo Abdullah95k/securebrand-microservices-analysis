@@ -12,7 +12,7 @@
 | 6 | Backpressure: cap the queue, pause ingest (C6) | [#8](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/8) | **Done** (merged 6 Nov, `1006f37`) | See [Fix 6](#fix-6-backpressure) |
 | 7 | The quality evaluation | – | **Waiting:** runs on the production cluster once fbs collects there (owner, 6 Nov). The steps for the owner come then. | – |
 | 8 | The real-time lane: tracked brands and entities, hot-tier accounts | [#9](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/9) | **Done** (merged 6 Nov, `8cc528d`) | See [Fix 8](#fix-8-the-real-time-lane) |
-| 9 | A backfill path (plan only) | [#10](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/10) | **Plan in review**; building it comes after REQ-022, with the owner's approval | [`analysis-backfill-plan.md`](analysis-backfill-plan.md) |
+| 9 | A backfill path (plan only) | [#10](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/10) | **Plan in review** (the master's answers included); building it comes after REQ-022, with the owner's approval | [`analysis-backfill-plan.md`](analysis-backfill-plan.md) |
 
 ## The owner's answers (6 November)
 

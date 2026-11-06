@@ -13,7 +13,8 @@ sb-analysis analyses what reaches it through Kafka, and Kafka keeps 7 days. Anyt
 
 **The platform's permanent store, ClickHouse, read-only.** Credentials come from the secret `clickhouse-ro` in the namespace `analysis`: `CLICKHOUSE_HOST`, `CLICKHOUSE_PORT` (9440, TLS), `CLICKHOUSE_DATABASE` (`securebrand`), `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`. This follows the master's answer of 6 November.
 - **Never a collector's database,** even when the permanent store is empty.
-- **Until the platform's writer has filled ClickHouse,** a backfill reads nothing, says so in its log and its result, and exits cleanly.
+- **When rows appear:** the platform's writer starts with production's first deployment, but reads only the contract's topics. So each platform's rows appear once its collector publishes the contract; fbs's own `fb.*` topics never reach ClickHouse. Until then, a backfill for that platform reads nothing, says so in its log and its result, and exits cleanly.
+- **Read limits:** the read-only user `analysis_ro` has 2 threads, 4 GB, a 10-minute query limit and 18 million rows an hour (about 5,000 a second on average; bursts are fine within the hour). The backfill paces itself in batches, and backs off on a quota error (code 201).
 - **Media is text-only for history:** collectors delete files after every consumer has acknowledged them, or at their deadline. A backfill analyses the text of posts and comments, and the metadata of their media, but not old images or videos.
 
 ## How it works
@@ -27,10 +28,16 @@ sb-analysis backfill --from 2026-10-01 --to 2026-11-01 --account fb:page:123 --k
 - **Filters:** a time range (required), accounts, platforms, kinds, and "not analysed with the current model and prompt version".
 - **`--dry-run`:** counts the items and estimates the cost at batch prices, without analysing anything. `--max-usd` refuses a run whose estimate is higher.
 
-**2. Reading:**
-- **Pages:** in order of creation time and content id, each page continuing from the last row of the one before (no offsets), a few thousand rows at a time.
-- **Latest version:** only the latest version of each item. The platform's writer keeps one table per message type, each with a `<table>_latest` view, in database `securebrand` (the master, 6 Nov); the backfill reads the posts' and comments' `_latest` views.
-- **Columns:** only those the analysis needs: ids, text, title and description, spans, language hints, account, post and parent ids, times, and media references.
+**2. Reading (the platform's layout, from the master, 6 November):**
+- **Tables:** `posts`, `comments` and `media` in database `securebrand`. All are `ReplacingMergeTree`, partitioned by `toYYYYMM(observed_at)` and ordered by `(platform, id, version, event_id)`.
+- **Not the `_latest` views:** they group the whole table, so a backfill never scans them.
+- **By account:**
+  - `item_accounts` is ordered by account: `WHERE account_id = ? AND relation = 'account' AND item_kind = 'post'`, with an `observed_at` range, gives the post ids cheaply;
+  - then `posts` is read with `WHERE platform = ? AND id IN (…)`, which uses the sort key.
+- **By time range:** filter on `observed_at` (it prunes partitions), then keep the newest version of each id, by the same rule as the views: the newest non-partial event for the content.
+- **Comments of those posts:** today a scan, since `post_id` is not in the sort key. The master is asking for skip indexes (`comments.post_id`, `posts.account_id`, `media.owner_id`, and `published_at`); the plan counts on them.
+- **What is read:** the base tables keep `event`, the whole event as protojson. Decoding it into the contract's types gives exactly what was published, so the backfill feeds the REQ-022 adapter the same messages Kafka would, and needs none of the flattened column names.
+- **Pages:** a few thousand ids at a time, each page continuing from the last (no offsets).
 
 **3. The same path as Kafka:**
 - **Same adapter:** each row goes through the adapter REQ-022 builds for `content.post.v1` and `content.comment.v1`. Text is joined in the same order and spans converted in the same way. Phone numbers, e-mails and the names of tagged people never reach the AI provider (D-010).
@@ -61,12 +68,9 @@ sb-analysis backfill --from 2026-10-01 --to 2026-11-01 --account fb:page:123 --k
   - integration tests against a ClickHouse container with synthetic rows.
 - **Cost of a run:** this depends on the period and the accounts. The dry run gives the figure before anything is spent, and the daily budget limits the pace.
 
-## Questions for the master
+## The master's answers (6 November)
 
-1. **Columns:** the column names of the posts', comments' and media tables (their `_latest` views). The master answered the rest of this question: one table per message type, a `<table>_latest` view each, and analysis results in `item_analysis`, all in database `securebrand`.
-2. **Sort key:** what are those tables ordered and partitioned by? A backfill reads by time range and account; reading in the tables' own order keeps it cheap for ClickHouse.
-3. **The writer:** when will the platform's writer fill ClickHouse? Until then a backfill reads nothing.
-4. **Limits:** may a backfill read at, say, 5,000 rows a second from the read-only user, or should it go slower?
+All four questions are answered above: the tables and how to read them by account or by time, the sort and partition keys, when rows appear (as each collector adopts the contract), and the read limits of `analysis_ro`. One thing is still open: the skip indexes for comments by post, which the master is asking the writer's session for.
 
 ## For the owner
 
