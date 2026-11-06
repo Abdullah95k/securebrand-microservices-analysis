@@ -21,9 +21,10 @@ import (
 // Event is what one record means to the analysis service. Exactly one field
 // is set; a record the service ignores decodes to no event.
 type Event struct {
-	Item    *core.Item
-	Media   *core.MediaJob
-	Erasure *core.Erasure
+	Item      *core.Item
+	Media     *core.MediaJob
+	MediaGone *core.MediaGone
+	Erasure   *core.Erasure
 }
 
 // Decoder maps topics (without prefix) to their adapter.
@@ -72,11 +73,15 @@ func (d Decoder) ContentTopics() []string {
 	return ts
 }
 
-// MediaTopics are the topics announcing media files to analyse.
+// MediaTopics are the topics announcing media files to analyse, and the
+// contract's announcements of deleted files.
 func (d Decoder) MediaTopics() []string {
 	var ts []string
 	if d.FB {
 		ts = append(ts, topics.MediaReady)
+	}
+	if d.Content {
+		ts = append(ts, topics.ContentMediaReady, topics.ContentMediaDeleted)
 	}
 	return ts
 }
@@ -113,6 +118,8 @@ func (d Decoder) Decode(topic string, value []byte) ([]Event, error) {
 		return nil, nil
 	case topics.ContentPost, topics.ContentComment:
 		return decodeContract(topic, value)
+	case topics.ContentMediaReady, topics.ContentMediaDeleted:
+		return decodeContractMedia(topic, value)
 	}
 	return nil, nil
 }
@@ -262,7 +269,7 @@ func FromFBMediaReady(m *fbv1.MediaReady) *core.MediaJob {
 		DurationMS:     m.DurationMs,
 		AltText:        m.AltText,
 		DeleteAfter:    ts(m.DeleteAfter),
-		AckFormat:      "fb",
+		AckFormat:      core.AckFB,
 	}
 	if o := m.Object; o != nil {
 		j.Bucket, j.Key, j.Size, j.ContentType = o.Bucket, o.Key, o.Size, o.ContentType

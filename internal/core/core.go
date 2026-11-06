@@ -114,9 +114,28 @@ type MediaJob struct {
 	DurationMS  int64
 	AltText     string
 	DeleteAfter time.Time
-	// AckFormat selects the acknowledgement: "fb" (fb.media.processed.v1)
-	// or "content" (content.media.processed.v1).
+	// AckFormat selects the acknowledgement: AckFB (fb.media.processed.v1)
+	// or AckContract (the contract's content.media.processed.v1).
 	AckFormat string
+	// From the contract (content.media.ready.v1): the media's role
+	// (content, attachment, cover, thumbnail...; Kind holds its type), the
+	// file's hex SHA-256 and the announcement's attempt (1 for the first).
+	Role    string
+	Sha256  string
+	Attempt int
+}
+
+// Media acknowledgement formats.
+const (
+	AckFB       = "fb"
+	AckContract = "contract"
+)
+
+// MediaGone says a media file was deleted from storage
+// (content.media.deleted.v1): a job still waiting for it can't run.
+type MediaGone struct {
+	MediaID string
+	Reason  string
 }
 
 // IsVideo reports whether the job is a video.

@@ -54,7 +54,15 @@ The Helm chart (`deploy/helm/sb-analysis`) runs `analysis` (all roles but media)
 `sb_analysis_media_ttl_at_risk > 0` means files are within 6h of deletion (`delete_after`). Files deleted before analysis are lost for it: fbs logs `ttl_expired`.
 - Scale `analysis-media`, or raise `analysis.media.workers`.
 - `failed_permanent` acks for videos with "ffmpeg not found" mean the media workers run the default image: use the media image `sb-analysis-media:dev` (`make docker-analysis-media`; Compose: `SB_ANALYSIS_IMAGE=sb-analysis-media:dev`).
-- `analysis.media.kinds` lists the kinds analysed. Others are acknowledged without analysis (`skipped`).
+- **What is analysed:**
+  - fbs's media: `analysis.media.kinds` lists the kinds analysed;
+  - the contract's media: `analysis.media.contract_kinds` lists the type/role pairs analysed (default: images and videos that are the content or an attachment, and cover images).
+  - Others are acknowledged without analysis: `PROCESSED` on fbs's topic (as before), `SKIPPED` with reason `policy:type/role` on the contract's.
+- **The contract's acknowledgements** (`content.media.processed.v1`):
+  - each carries the consumer `sb-analysis`, an `event_id` of its own, and the platform code;
+  - skips and failures carry a short `reason` (`policy:sticker/attachment`, `too_large`, `undecodable`, `gone`, `no_ffmpeg`, `route_disabled:image`, `refused:<model>`, `erased_subject`), with the details in `error`.
+- **Identical files:** a contract file whose SHA-256 was analysed before, under another media ID, reuses that analysis. No download and no provider call; `media_analyses.reused_from` names the source.
+- **Files deleted first** (`content.media.deleted.v1`): a job still waiting is closed (`media_jobs.state = 'gone'`) and not acknowledged.
 - **Memory and disk:** a video streams to a temporary file (`/tmp`, up to `analysis.media.max_bytes`, 500 MiB) and never passes through memory. An image is read into memory up to `image_max_bytes` (32 MiB) and `image_max_pixels` (40 megapixels, judged from its header before decoding); larger files fail permanently and are acknowledged. At start, `workers` is lowered to fit the container's memory limit (`worker_memory_mib` each, after 256 MiB), with a warning in the log. The chart gives `analysis-media` 2 GiB of memory and a 3 GiB `/tmp`.
 
 ## Dead letters
@@ -101,7 +109,7 @@ Keep the price table in `configs/default.yaml` current when providers change pri
 
 ## Outbox
 
-Results (`analysis.result.v1`, `analysis.media.v1`) and media acks (`fb.media.processed.v1`) leave through `analysis.outbox`, published by the relay role.
+Results (`analysis.result.v1`, `analysis.media.v1`) and media acks (`fb.media.processed.v1`, `content.media.processed.v1`) leave through `analysis.outbox`, published by the relay role.
 - A growing `sb_analysis_outbox_backlog` means the relay is down or cannot produce.
 - Acks wait in the outbox too, so a long outage can push media past its TTL.
 - Records are delivered at least once: consumers deduplicate on `event_id`.

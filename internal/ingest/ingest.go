@@ -177,6 +177,7 @@ func (c *Consumer) Flush(ctx context.Context, recs []*kgo.Record) error {
 	var (
 		items    []*core.Item
 		media    []*core.MediaJob
+		gone     []*core.MediaGone
 		erasures []*core.Erasure
 	)
 	for _, r := range recs {
@@ -194,6 +195,8 @@ func (c *Consumer) Flush(ctx context.Context, recs []*kgo.Record) error {
 				items = append(items, e.Item)
 			case e.Media != nil:
 				media = append(media, e.Media)
+			case e.MediaGone != nil:
+				gone = append(gone, e.MediaGone)
 			case e.Erasure != nil:
 				erasures = append(erasures, e.Erasure)
 			}
@@ -215,6 +218,17 @@ func (c *Consumer) Flush(ctx context.Context, recs []*kgo.Record) error {
 	if len(media) > 0 {
 		if _, err := c.store.InsertMediaJobs(ctx, media, c.consumer); err != nil {
 			return fmt.Errorf("media: %w", err)
+		}
+	}
+	// After the announcements: a file announced and deleted in one batch
+	// isn't waited for.
+	if len(gone) > 0 {
+		n, err := c.store.MediaGone(ctx, gone)
+		if err != nil {
+			return fmt.Errorf("media deleted: %w", err)
+		}
+		if n > 0 {
+			slog.Info("analysis: media files deleted before analysis", "jobs", n)
 		}
 	}
 	for _, e := range erasures {

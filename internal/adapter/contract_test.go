@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	contentv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/content/v1"
+	mediav1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/media/v1"
 
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/topics"
@@ -130,7 +131,7 @@ func TestContractPartialAndHiddenAuthor(t *testing.T) {
 
 func TestDecodeContractAndFB(t *testing.T) {
 	d := NewDecoder([]string{"fb", "content"})
-	if len(d.ItemTopics()) != 5 || len(d.ContentTopics()) != 4 || len(d.MediaTopics()) != 1 {
+	if len(d.ItemTopics()) != 5 || len(d.ContentTopics()) != 4 || len(d.MediaTopics()) != 3 {
 		t.Fatalf("topics %v %v %v", d.ItemTopics(), d.ContentTopics(), d.MediaTopics())
 	}
 	b, _ := proto.Marshal(&contentv1.Post{Envelope: &contentv1.Envelope{Id: "tt:post:1", Platform: "tt", Version: 1,
@@ -144,5 +145,41 @@ func TestDecodeContractAndFB(t *testing.T) {
 	}
 	if PlatformName("yt") != "youtube" || PlatformName("zz") != "zz" {
 		t.Fatal("platform names from the contract's registry")
+	}
+}
+
+// TestContractMediaSample maps the contract's own media_ready sample: a
+// TikTok cover image.
+func TestContractMediaSample(t *testing.T) {
+	var m mediav1.MediaReady
+	sample(t, "media_ready.tt.json", &m)
+	j := FromContractMediaReady(&m)
+	if j.MediaID != "tt:media:00000000-0000-5000-8000-000000000001" || j.OwnerContentID != "tt:post:7400000000000000001" ||
+		j.SourceID != "tt:account:7000000000000000001" || j.Platform != "tiktok" || j.Kind != "image" || j.Role != "cover" ||
+		j.Bucket != "media" || j.Key != "tt/00/00/cover.jpeg" || j.Size != 430000 || j.Attempt != 1 || j.IsVideo() ||
+		j.Sha256 != "aa00000000000000000000000000000000000000000000000000000000000001" || j.AckFormat != core.AckContract ||
+		j.DeleteAfter.IsZero() {
+		t.Fatalf("job %+v", j)
+	}
+}
+
+func TestDecodeContractMedia(t *testing.T) {
+	d := NewDecoder([]string{"content"})
+	b, _ := proto.Marshal(&mediav1.MediaReady{EventId: "e1", MediaId: "fb:media:1", Platform: "fb",
+		Type: contentv1.MediaType_MEDIA_TYPE_VIDEO, Role: contentv1.MediaRole_MEDIA_ROLE_PROFILE_PICTURE,
+		Object: &mediav1.StorageObject{Bucket: "b", Key: "k", Sha256: "ABC"}})
+	evs, err := d.Decode(topics.ContentMediaReady, b)
+	if err != nil || len(evs) != 1 || evs[0].Media == nil || evs[0].Media.Kind != "video" || evs[0].Media.Role != "profile_picture" ||
+		!evs[0].Media.IsVideo() || evs[0].Media.Sha256 != "abc" {
+		t.Fatalf("ready %v %v", evs, err)
+	}
+	b, _ = proto.Marshal(&mediav1.MediaReady{MediaId: "fb:media:1"})
+	if _, err := d.Decode(topics.ContentMediaReady, b); err == nil {
+		t.Fatal("a media announcement without event_id was accepted")
+	}
+	b, _ = proto.Marshal(&mediav1.MediaDeleted{EventId: "e2", MediaId: "fb:media:1", Reason: mediav1.DeleteReason_DELETE_REASON_EXPIRED})
+	evs, err = d.Decode(topics.ContentMediaDeleted, b)
+	if err != nil || len(evs) != 1 || evs[0].MediaGone == nil || *evs[0].MediaGone != (core.MediaGone{MediaID: "fb:media:1", Reason: "expired"}) {
+		t.Fatalf("deleted %v %v", evs, err)
 	}
 }

@@ -9,9 +9,9 @@
 
 | Part | What | State |
 |---|---|---|
-| A | Contract in: posts and comments (`content.post.v1`, `content.comment.v1`) | **Built** (step 1, this pull request) |
-| B | Contract out: `securebrand.analysis.v1` from the contract; delete our own protos | **Built** (step 1) |
-| C | The media hand-off (`content.media.ready.v1`, `.processed.v1`, `.deleted.v1`) | Next |
+| A | Contract in: posts and comments (`content.post.v1`, `content.comment.v1`) | **Merged** (step 1, `cbf46fd`) |
+| B | Contract out: `securebrand.analysis.v1` from the contract; delete our own protos | **Merged** (step 1, `cbf46fd`) |
+| C | The media hand-off (`content.media.ready.v1`, `.processed.v1`, `.deleted.v1`) | **Built** (step 2, in review) |
 | D | Bots keyed by the author's account ID; hidden authors left out | Mostly built in step 1: scoring is keyed by `author.account.id`, hidden authors are left out, and `AuthorFlag` carries `author_id`. Still to do: the owner's `authors` commands take and show the account ID (today a hex key). |
 | E | Captions used as the transcript (`transcript_source`) | To do |
 | F | The full end-to-end test: every kind produced, a deletion and an estimate | Step 1 covers posts, comments, replies and a deletion; the rest comes with C and E |
@@ -84,6 +84,68 @@ This is also what the proposed "early-running switch" needed. **Whether producti
 - **Span units, partial events and hidden authors:** `TestJoinTextsAndSpanUnits`, `TestContractPartialAndHiddenAuthor`.
 - **A bug the end-to-end test caught:** a partial deletion has no publish time, and ingest dropped items without one. It now uses the observation time; the stored item's own time is used when it is marked.
 - All unit tests with race detection, all integration tests, and golangci-lint pass.
+
+## Step 2: the media hand-off
+
+### What it reads
+
+With `analysis.inputs: [content]`, sb-analysis also reads:
+- **`content.media.ready.v1`:** each announced file becomes a media job. The job keeps the media's type and role, the file's SHA-256, the owner (post or comment) and its account, the deadline (`delete_after`), and the announcement's `attempt`.
+- **`content.media.deleted.v1`:** a job still waiting for a file that has been deleted is closed (`gone`). Nothing is fetched, and no acknowledgement is sent: the platform has stopped waiting.
+
+Media announcements and deletions keep flowing while ingest is paused for a full queue (fix 6), as fbs's media did.
+
+### The media policy: (type, role) pairs
+
+`analysis.media.contract_kinds` (new setting) lists the pairs analysed.
+- **The default:** `image/content`, `image/attachment`, `image/cover`, `video/content`, `video/attachment`.
+- **Skipped by default:** stickers, GIFs, a video's thumbnail (the video itself is analysed), profile pictures, banners, audio and documents.
+- **Each skipped file** is acknowledged as `SKIPPED` with the reason `policy:<type>/<role>`.
+- **A wrong entry is refused at start:** a pair must use the contract's own type and role names.
+
+### The acknowledgements (`content.media.processed.v1`)
+
+- **Consumer `sb-analysis`:** the contract's registry name. fbs's acks keep `analysis`, as fbs expects.
+- **A unique `event_id`:** every acknowledgement gets a fresh one, so a retried file's second acknowledgement is a new event.
+- **The status:**
+  - `PROCESSED`: analysed, or served from an identical file;
+  - `SKIPPED`: by policy, an erased subject, a disabled route, or a refusal;
+  - `FAILED_PERMANENT`: too large, undecodable, gone, or no ffmpeg;
+  - `FAILED_RETRYABLE`: out of tries on a temporary error.
+- **A short `reason`** on every skip and failure, with the details in `error`. The codes are listed in the runbook.
+- **The platform code** in `platform`.
+- **Results** go to `analysis.media.v1` (the contract's `MediaAnalysis`), for analysed and reused files only.
+
+### Identical files are analysed once
+
+When an announced file's SHA-256 matches a file already analysed under another media ID, that analysis is reused. The file isn't downloaded and no provider is called.
+- The copy is stored for the new media ID, and `media_analyses.reused_from` names the source.
+- It is published on `analysis.media.v1` and acknowledged `PROCESSED`.
+- Its logos and entities count as mentions of the new media, under its own owner and day.
+
+### Changed (for the owner)
+
+- **Migration `00005`** adds `role`, `sha256` and `attempt` to `analysis.media_jobs`, and `sha256` and `reused_from` to `analysis.media_analyses`, plus an index. Nothing removed.
+- **New setting:** `analysis.media.contract_kinds`.
+- **fbs's acknowledgements** (`fb.media.processed.v1`) are unchanged: same consumer, same statuses, same error text.
+- **The stored note on a skipped job** (`media_jobs.last_error`) is now a short code (`route_disabled:image`, `refused:<model>`) instead of a sentence. It is internal only.
+
+### Evidence
+
+- **`TestContractMediaHandOff`** (Postgres). It runs five contract files through the worker:
+  - an image is analysed: one provider call, published on `analysis.media.v1`, acknowledged `PROCESSED`;
+  - a second media ID with the same SHA-256 reuses that analysis: no second provider call, and no download (its file isn't even in storage), with `reused_from` set, published and acknowledged `PROCESSED`;
+  - a sticker attachment is `SKIPPED` with `policy:sticker/attachment`;
+  - an undecodable file is `FAILED_PERMANENT` with `undecodable` and an error detail;
+  - a file deleted first is closed as `gone` and never acknowledged.
+  - Every acknowledgement carries `sb-analysis`, the platform `tt` and its own `event_id`, and nothing goes to fbs's topic.
+  - **The test catches a broken reuse:** with reuse switched off on purpose, it failed.
+- **`TestContractMediaSample`:** the contract's own `media_ready.tt.json` maps correctly.
+- **`TestDecodeContractMedia`:** decoding announcements and deletions, and refusing an announcement without `event_id`.
+- **`TestContractKinds`:** the setting refuses a pair that isn't the contract's type and role.
+- The existing media test still passes: fbs's acknowledgements are as before.
+- All unit tests with race detection, all integration tests and golangci-lint pass.
+- **Not yet:** conformance checks on `MediaProcessed` and `MediaAnalysis`. They need contract v1.2.0 (question 1), and come with part F.
 
 ### Questions for the master
 

@@ -3,17 +3,21 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 	// Timezone data for analysis.timezone: the distroless image has none.
 	_ "time/tzdata"
+
+	contentv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/content/v1"
 )
 
 // Analysis configures sb-analysis, the platform-neutral content analysis
 // service (docs/design/analysis-service.md).
 type Analysis struct {
 	// Inputs: "fb" (the Facebook adapter over fb.post.v1, fb.comment.v1,
-	// fb.media.ready.v1 and fb.erasure.v1) and/or "content" (the canonical
-	// content.* topics).
+	// fb.media.ready.v1 and fb.erasure.v1) and/or "content" (the platform's
+	// contract: content.post.v1, content.comment.v1, content.media.ready.v1
+	// and content.media.deleted.v1).
 	Inputs        []string `koanf:"inputs"`
 	ConsumerGroup string   `koanf:"consumer_group"`
 	// Postgres: "" uses postgres.dsn (the analysis tables live in schema
@@ -235,9 +239,14 @@ type AnalysisMedia struct {
 	Enabled bool `koanf:"enabled"`
 	// Consumer is the name acks carry; it must match media.required_consumers.
 	Consumer string `koanf:"consumer"`
-	// Kinds analysed; other kinds are acknowledged without analysis.
-	Kinds   []string `koanf:"kinds"`
-	Workers int      `koanf:"workers"`
+	// Kinds analysed, of fbs's media (fb.media.ready.v1); other kinds are
+	// acknowledged without analysis.
+	Kinds []string `koanf:"kinds"`
+	// ContractKinds: the contract's media (content.media.ready.v1)
+	// analysed, as "type/role" pairs ("image/content", "video/attachment");
+	// other pairs are acknowledged as SKIPPED with reason "policy:type/role".
+	ContractKinds []string `koanf:"contract_kinds"`
+	Workers       int      `koanf:"workers"`
 	// MaxBytes caps a video (streamed to a temporary file, never held in
 	// memory); ImageMaxBytes and ImageMaxPixels cap an image (read into
 	// memory and decoded). Larger files fail permanently and are acked.
@@ -323,6 +332,11 @@ func (a *Analysis) Validate() error {
 	for _, in := range a.Inputs {
 		if in != "fb" && in != "content" {
 			errs = append(errs, fmt.Errorf("analysis.inputs: %q must be fb or content", in))
+		}
+	}
+	for _, k := range a.Media.ContractKinds {
+		if !ValidContractKind(k) {
+			errs = append(errs, fmt.Errorf("analysis.media.contract_kinds: %q must be type/role, from the contract's media types and roles", k))
 		}
 	}
 	for name, r := range a.Routes {
@@ -427,4 +441,17 @@ func (a *Analysis) Validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// ValidContractKind reports whether k is "type/role" with a type and a role
+// of the contract's MediaType and MediaRole, in lower case without their
+// prefixes ("image/content").
+func ValidContractKind(k string) bool {
+	t, r, ok := strings.Cut(k, "/")
+	if !ok || t == "unspecified" || r == "unspecified" {
+		return false
+	}
+	_, tok := contentv1.MediaType_value["MEDIA_TYPE_"+strings.ToUpper(t)]
+	_, rok := contentv1.MediaRole_value["MEDIA_ROLE_"+strings.ToUpper(r)]
+	return tok && rok && t == strings.ToLower(t) && r == strings.ToLower(r)
 }

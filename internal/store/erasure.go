@@ -315,7 +315,7 @@ func (s *Store) ackPendingMedia(ctx context.Context, tx pgx.Tx, where string, ar
 		return err
 	}
 	for i := range jobs {
-		if err := ackTx(ctx, tx, &jobs[i], consumer, "processed", "erased subject"); err != nil {
+		if err := ackTx(ctx, tx, &jobs[i], consumer, "skipped", "erased_subject", "erased subject"); err != nil {
 			return err
 		}
 	}

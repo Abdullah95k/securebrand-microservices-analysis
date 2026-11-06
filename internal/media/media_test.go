@@ -19,6 +19,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	mediav1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/media/v1"
+
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/config"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/media"
@@ -204,7 +206,7 @@ func TestWorkerAnalysesSkipsAndFails(t *testing.T) {
 	objs["b/canon"] = pngBytes(t, 200, 200)
 	canon := job("canon", "image") // announced through the contract (content.media.ready.v1)
 	canon.MediaID, canon.Key, canon.OwnerContentID, canon.SourceID = "fb:media:canon", "canon", "fb:post:1", "fb:account:1"
-	canon.AckFormat = store.AckContract
+	canon.AckFormat, canon.Role = core.AckContract, "content"
 	jobs := []*core.MediaJob{job("img", "photo"), job("stk", "sticker"), job("bad", "photo"), job("gone", "photo"), canon}
 	if _, err := st.InsertMediaJobs(ctx, jobs, "analysis"); err != nil {
 		t.Fatal(err)
@@ -396,5 +398,127 @@ func TestWorkerHidesTaggedPeople(t *testing.T) {
 	var stored string
 	if err := st.DB.QueryRow(ctx, `SELECT text FROM analysis.content_items WHERE content_id = 'fb:post:1'`).Scan(&stored); err != nil || stored != text {
 		t.Fatalf("stored text %q %v", stored, err)
+	}
+}
+
+func contractJob(id, role, sha string, deleteIn time.Duration) *core.MediaJob {
+	return &core.MediaJob{MediaID: id, OwnerContentID: "tt:post:1", Platform: "tiktok", SourceID: "tt:account:1", Kind: "image",
+		Role: role, Bucket: "b", Key: id, Sha256: sha, DeleteAfter: time.Now().Add(deleteIn), AckFormat: core.AckContract, Attempt: 1}
+}
+
+// contractAcks reads the acknowledgements on the contract's
+// content.media.processed.v1, by media ID.
+func contractAcks(t *testing.T, st *store.Store) map[string][]*mediav1.MediaProcessed {
+	t.Helper()
+	rows, err := st.DB.Query(context.Background(), `SELECT payload FROM analysis.outbox WHERE topic = $1 ORDER BY id`, topics.ContentMediaProcessed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := map[string][]*mediav1.MediaProcessed{}
+	for rows.Next() {
+		var b []byte
+		if err := rows.Scan(&b); err != nil {
+			t.Fatal(err)
+		}
+		var m mediav1.MediaProcessed
+		if err := proto.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		out[m.MediaId] = append(out[m.MediaId], &m)
+	}
+	return out
+}
+
+// TestContractMediaHandOff covers the contract's media hand-off: analysed,
+// reused for an identical file, skipped by policy, failed, and deleted
+// before analysis; every acknowledgement as sb-analysis, with a reason on
+// skips and failures and an event ID of its own.
+func TestContractMediaHandOff(t *testing.T) {
+	st, w, fp, objs := setup(t)
+	ctx := context.Background()
+	sha := strings.Repeat("ab", 32)
+	objs["b/tt:media:a"] = pngBytes(t, 300, 200)
+	objs["b/tt:media:x"] = []byte("garbage")
+	// tt:media:b is the same file as tt:media:a under another ID; its
+	// object is not in storage, so it can only be served by reuse.
+	sticker := contractJob("tt:media:s", "attachment", "", 3*time.Hour)
+	sticker.Kind = "sticker"
+	jobs := []*core.MediaJob{contractJob("tt:media:a", "content", sha, time.Hour), contractJob("tt:media:b", "content", sha, 2*time.Hour),
+		sticker, contractJob("tt:media:x", "content", "", 4*time.Hour), contractJob("tt:media:g", "content", "", 5*time.Hour)}
+	if _, err := st.InsertMediaJobs(ctx, jobs, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	// The platform deleted tt:media:g's file before it was analysed.
+	if n, err := st.MediaGone(ctx, []*core.MediaGone{{MediaID: "tt:media:g", Reason: "expired"}, {MediaID: "tt:media:none"}}); err != nil || n != 1 {
+		t.Fatalf("gone: %d %v", n, err)
+	}
+	for i := 0; i < 6; i++ {
+		if _, err := w.Once(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := contractAcks(t, st)
+	want := map[string]struct {
+		status mediav1.ProcessStatus
+		reason string
+	}{
+		"tt:media:a": {mediav1.ProcessStatus_PROCESS_STATUS_PROCESSED, ""},
+		"tt:media:b": {mediav1.ProcessStatus_PROCESS_STATUS_PROCESSED, ""},
+		"tt:media:s": {mediav1.ProcessStatus_PROCESS_STATUS_SKIPPED, "policy:sticker/attachment"},
+		"tt:media:x": {mediav1.ProcessStatus_PROCESS_STATUS_FAILED_PERMANENT, "undecodable"},
+	}
+	ids := map[string]bool{}
+	for id, wa := range want {
+		acks := got[id]
+		if len(acks) != 1 {
+			t.Fatalf("%s: %d acknowledgements", id, len(acks))
+		}
+		a := acks[0]
+		if a.Status != wa.status || a.Reason != wa.reason || a.Consumer != "sb-analysis" || a.Platform != "tt" ||
+			a.EventId == "" || ids[a.EventId] || a.ProcessedAt == nil {
+			t.Errorf("%s: %v", id, a)
+		}
+		ids[a.EventId] = true
+	}
+	if a := got["tt:media:x"]; len(a) == 1 && a[0].Error == "" {
+		t.Error("a failure's acknowledgement has no error detail")
+	}
+	if len(got["tt:media:g"]) != 0 {
+		t.Error("a deleted file was acknowledged")
+	}
+	var state string
+	if err := st.DB.QueryRow(ctx, `SELECT state FROM analysis.media_jobs WHERE media_id = 'tt:media:g'`).Scan(&state); err != nil || state != "gone" {
+		t.Fatalf("deleted file's job %q %v", state, err)
+	}
+	// One provider call: tt:media:b reused tt:media:a's analysis.
+	if n := fp.Calls(); n != 1 {
+		t.Fatalf("%d provider calls, want 1", n)
+	}
+	var from, desc string
+	if err := st.DB.QueryRow(ctx, `SELECT coalesce(b.reused_from, ''), b.description FROM analysis.media_analyses b
+		JOIN analysis.media_analyses a ON a.media_id = 'tt:media:a' AND a.description = b.description AND a.sha256 = b.sha256
+		WHERE b.media_id = 'tt:media:b'`).Scan(&from, &desc); err != nil || from != "tt:media:a" || desc == "" {
+		t.Fatalf("reused analysis: from %q %v", from, err)
+	}
+	// Both analyses are published on analysis.media.v1; nothing for the
+	// skipped, failed or deleted ones.
+	var keys []string
+	rows, err := st.DB.Query(ctx, `SELECT key FROM analysis.outbox WHERE topic = 'analysis.media.v1' ORDER BY key`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var k string
+		_ = rows.Scan(&k)
+		keys = append(keys, k)
+	}
+	rows.Close()
+	if strings.Join(keys, ",") != "tt:media:a,tt:media:b" {
+		t.Fatalf("published media analyses %v", keys)
+	}
+	// Nothing went to fbs's acknowledgement topic.
+	if a := acks(t, st); len(a) != 0 {
+		t.Fatalf("contract media acknowledged on fbs's topic: %v", a)
 	}
 }
