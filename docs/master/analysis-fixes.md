@@ -9,9 +9,9 @@
 | 3 | No unlimited budget by accident (C7) | [#5](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/5) | **Done** (merged 6 Nov, `3f18a15`) | See [Fix 3](#fix-3-no-unlimited-budget-by-accident) |
 | 4 | Media memory: stream files to disk (B2) | [#6](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/6) | **Done** (merged 6 Nov, `34545d9`) | See [Fix 4](#fix-4-media-memory) |
 | 5 | The provider's rate limit, fleet-wide (B6) | [#7](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/7) | **Done** (merged 6 Nov, `cfc8125`) | See [Fix 5](#fix-5-the-providers-rate-limit-fleet-wide) |
-| 6 | Backpressure: cap the queue, pause ingest (C6) | [#8](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/8) | In review | See [Fix 6](#fix-6-backpressure) |
+| 6 | Backpressure: cap the queue, pause ingest (C6) | [#8](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/8) | **Done** (merged 6 Nov, `1006f37`) | See [Fix 6](#fix-6-backpressure) |
 | 7 | The quality evaluation | – | Waiting: runs on the production cluster once fbs collects there (owner, 6 Nov) | – |
-| 8 | The real-time lane: tracked brands and entities, hot-tier accounts | – | Not started; asked the master where account tiers come from | – |
+| 8 | The real-time lane: tracked brands and entities, hot-tier accounts | [#9](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/9) | In review | See [Fix 8](#fix-8-the-real-time-lane) |
 | 9 | A backfill path (plan only) | – | Not started; asked the master which permanent store to read | – |
 
 ## The owner's answers (6 November)
@@ -34,6 +34,29 @@
   - **Account tiers (fix 8):** from `registry.account_request.v1`. Until the registry publishes, a config list of hot accounts by id, empty by default.
   - **Backfill (fix 9):** from ClickHouse, through the secret `clickhouse-ro` (read-only). Until the platform's writer has filled it, a backfill reads nothing and logs that; never a collector's database.
   - **Budget:** $5 a day, as a hard stop.
+
+## Fix 8: the real-time lane
+
+- **Before:** items mentioning an entity a client tracks already went to the real-time lane, and so did a fixed list of sources. "Hot" accounts were not defined.
+- **Now:**
+  - items from **hot-tier accounts** also go real time: the account's posts, and the comments on them;
+  - everything else takes the half-price batch lane;
+  - media stays real time, because its files are deleted at their deadline.
+- **The hot tier**, until the platform's account registry publishes tiers (`registry.account_request.v1`, which REQ-022 brings), as the master proposed:
+  - `analysis.urgent.hot_accounts`, a config list, empty by default;
+  - the accounts clients monitor (`analysis.client_sources`, `sb-analysis sources monitor`), since the contract says client watchlists put their accounts in the hot tier. They are re-read every `analysis.urgent.refresh` (1 minute), and a failed read keeps the last list. `analysis.urgent.watchlists: false` turns this off.
+  - The older `urgent.sources` counts too.
+  - The registry will plug into the same lookup (`HotAccounts`), so the planning code doesn't change.
+- **New settings, nothing removed:** `analysis.urgent.hot_accounts`, `watchlists`, `refresh`.
+- **Evidence:**
+  - **`TestHotAccountsGoRealtime` (Postgres):**
+    - a comment on a watched account's post went real time, with urgent priority;
+    - so did one from a configured hot account;
+    - one from another account went to batch;
+    - with watchlists off, the watched account went to batch.
+    - With the hot-tier check removed on purpose, both hot cases failed.
+  - **`TestHotAccountsListRefreshAndFailure`:** the config list, the once-a-minute re-read, a changed watchlist, and a failed read.
+  - The existing tracked-entity test still passes, as do unit and integration tests and lint.
 
 ## Fix 6: backpressure
 

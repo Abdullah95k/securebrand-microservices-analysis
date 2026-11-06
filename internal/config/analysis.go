@@ -159,7 +159,16 @@ type Urgent struct {
 	// TrackedEntities: items whose text matches the alias of an entity some
 	// client tracks.
 	TrackedEntities bool `koanf:"tracked_entities"`
-	// Sources always analysed in real time.
+	// HotAccounts are hot-tier accounts by source id (e.g. "fb:page:123"):
+	// their posts, and the comments on them, are analysed in real time.
+	// The platform's account registry takes over with the contract.
+	HotAccounts []string `koanf:"hot_accounts"`
+	// Watchlists: the accounts clients monitor (sb-analysis sources
+	// monitor) are hot too, re-read every Refresh.
+	Watchlists bool          `koanf:"watchlists"`
+	Refresh    time.Duration `koanf:"refresh"`
+	// Sources always analysed in real time (older name; same as
+	// hot_accounts).
 	Sources []string `koanf:"sources"`
 }
 
@@ -366,6 +375,9 @@ func (a *Analysis) Validate() error {
 	}
 	if a.Grouping.MaxItems <= 0 || a.Grouping.MaxChars <= 0 {
 		errs = append(errs, errors.New("analysis.grouping.max_items and max_chars must be > 0"))
+	}
+	if a.Urgent.Watchlists && a.Urgent.Refresh <= 0 {
+		errs = append(errs, errors.New("analysis.urgent.refresh must be > 0 with watchlists"))
 	}
 	if b := a.Backpressure; b.MaxQueue <= 0 || b.ResumeQueue < 0 || b.ResumeQueue >= b.MaxQueue || b.CheckEvery <= 0 {
 		errs = append(errs, errors.New("analysis.backpressure: max_queue must be > 0, resume_queue between 0 and below it, check_every > 0"))

@@ -48,19 +48,21 @@ type Pipeline struct {
 
 	// tax is the topic list in use, with the prompts and schemas built
 	// from it; the dynamic topic list swaps in new versions.
-	tax       atomic.Pointer[taxState]
-	urgentSrc map[string]bool
-	now       func() time.Time
+	tax atomic.Pointer[taxState]
+	hot *HotAccounts
+	now func() time.Time
 }
 
 // New builds a pipeline.
 func New(st *store.Store, providers *registry.Registry, tax *taxonomy.Taxonomy, cfg config.Analysis, calib map[string]*Calibration) *Pipeline {
 	p := &Pipeline{Store: st, Providers: providers, Cfg: cfg, Pricing: provider.Pricing(cfg.Pricing), Calib: calib,
-		urgentSrc: map[string]bool{}, now: time.Now, down: map[string]time.Time{}}
+		now: time.Now, down: map[string]time.Time{}}
 	p.SetTaxonomy(tax)
-	for _, s := range cfg.Urgent.Sources {
-		p.urgentSrc[s] = true
+	var watchlists func(context.Context) ([]string, error)
+	if cfg.Urgent.Watchlists && st != nil {
+		watchlists = st.HotSources
 	}
+	p.hot = NewHotAccounts(append(append([]string{}, cfg.Urgent.HotAccounts...), cfg.Urgent.Sources...), watchlists, cfg.Urgent.Refresh)
 	routeCaps := map[string]float64{}
 	for name, r := range cfg.Routes {
 		routeCaps[name] = r.DailyUSD
@@ -106,9 +108,11 @@ func (p *Pipeline) SetEntities(r *entities.Registry) { p.entities.Store(r) }
 // Entities returns the current registry snapshot.
 func (p *Pipeline) Entities() *entities.Registry { return p.entities.Load() }
 
-// Plan decides an ingested item's route, lane and priority: urgent items
-// (a tracked entity's alias in the text, or a priority source) skip the
-// batch lane.
+// Plan decides an ingested item's route, lane and priority. Urgent items
+// go to the real-time lane (results within minutes): those from a hot-tier
+// account (HotAccounts), and those mentioning an entity a client tracks.
+// Everything else takes its route's lane: the half-price batch lane for
+// posts and comments.
 func (p *Pipeline) Plan(it *core.Item) store.Plan {
 	route := core.RouteFor(it, p.Cfg.Grouping.PostShortChars)
 	lane := p.Cfg.Routes[route].Lane
@@ -116,7 +120,7 @@ func (p *Pipeline) Plan(it *core.Item) store.Plan {
 		lane = core.LaneBatch
 	}
 	pl := store.Plan{Route: route, Lane: lane, Priority: core.PriorityNormal}
-	if p.urgentSrc[it.SourceID] || (p.Cfg.Urgent.TrackedEntities && p.trackedHit(it.Text)) {
+	if p.hot.Hot(it.SourceID) || (p.Cfg.Urgent.TrackedEntities && p.trackedHit(it.Text)) {
 		pl.Lane, pl.Priority = core.LaneRealtime, core.PriorityUrgent
 	}
 	return pl

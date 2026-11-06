@@ -15,7 +15,7 @@
 
 ## Work in progress (from 6 Nov)
 
-- **REQ-011, the fixes:** one row per fix in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md). Fixes 1 to 5 are merged (a repository of its own; its own chart and images; no unlimited budget by accident; media memory; shared rate limits); fix 6 (backpressure), the last fix before the canary, is in review.
+- **REQ-011, the fixes:** one row per fix in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md). Fixes 1 to 6, all of those before the canary, are merged. Fix 8 (the real-time lane: hot-tier accounts) is in review. Fix 7 (the quality evaluation) waits for fbs to collect in production; fix 9 (the backfill plan) is next.
 - **REQ-022, adopting contract v1.0.0:** after the fixes REQ-011 lists before the canary; its record will be `docs/master/analysis-contract-adoption.md`.
 - **Questions for the master:** [`docs/master/questions-for-master-2026-11-06.md`](master/questions-for-master-2026-11-06.md).
 
@@ -95,3 +95,5 @@
 - **6 Nov, REQ-011 fix 5 (in review):** each AI provider's rate limit is shared by every pod through Valkey, with a per-pod fallback while Valkey is unreachable. All new settings; nothing removed.
 - **6 Nov:** REQ-011 fix 5 merged (pull request #7, `cfc8125`).
 - **6 Nov, REQ-011 fix 6 (in review):** at 200,000 queued items ingest pauses new content, which waits in Kafka, and resumes at 150,000. Media announcements and erasures keep flowing. All new settings; nothing removed.
+- **6 Nov:** REQ-011 fix 6 merged (pull request #8, `1006f37`); the master has the commit to pin.
+- **6 Nov, REQ-011 fix 8 (in review):** items from hot-tier accounts go to the real-time lane, along with mentions of tracked entities; everything else goes batch. The hot tier is a config list plus the clients' watchlists until the platform's registry publishes tiers. All new settings; nothing removed.
