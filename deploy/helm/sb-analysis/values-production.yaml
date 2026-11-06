@@ -1,0 +1,58 @@
+# Production values for the platform's cluster (namespace "analysis",
+# deployed by Argo CD from gitops/services/analysis.yaml in the platform
+# repository). The platform builds the images from a commit of this
+# repository and sets image.repository/tag and mediaImage.repository/tag.
+#
+# Every topic and Schema Registry subject is the platform's: this chart
+# creates none and registers none.
+
+# Off until REQ-022 (adopting contract v1.0.0). Until then sb-analysis reads
+# and writes its draft schemas, while the platform's content.* and
+# analysis.* topics carry the contract's: running now would misread the
+# platform's media events (content.media.ready.v1 has the same name) and put
+# draft records on the platform's topics. The migrate hook still runs, so
+# the database side can be checked.
+components:
+  analysis:
+    replicas: 0
+  analysis-media:
+    replicas: 0
+
+# Credentials from the secret "platform-credentials" in the namespace:
+# POSTGRES_* (database "analysis", PostgreSQL 18), KAFKA_* (user
+# analysis-kafka, allowed content.* and analysis.*), S3_* (media read from
+# S3_BUCKET_MEDIA, under each collector's prefix).
+platformCredentials:
+  enabled: true
+  secret: platform-credentials
+
+# The AI provider's key: secret "ai-provider", key API_KEY.
+aiProvider:
+  enabled: true
+  secret: ai-provider
+  key: API_KEY
+  provider: anthropic
+
+serviceMonitor:
+  enabled: false
+alerts:
+  enabled: false
+
+config:
+  service: {name: sb-analysis, env: prod}
+  log: {level: info, format: json}
+  kafka:
+    client_id: sb-analysis
+    topic_prefix: ""
+  postgres:
+    # The secret's parts (platformCredentials) are used; no DSN.
+    dsn: ""
+    max_conns: 20
+  analysis:
+    consumer_group: sb-analysis
+    postgres:
+      dsn: ""            # "" = the parts above
+      max_conns: 10
+    # The daily AI budget: $5, the pilot's figure, until the owner sets
+    # another (owner and master, 6 November 2026).
+    budget: {daily_usd: 5}

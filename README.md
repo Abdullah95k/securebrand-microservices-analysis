@@ -73,7 +73,19 @@ make docker
 make docker-media
 ```
 
-`sb-analysis:dev` holds `sb-analysis` and `sb-eval`; `sb-analysis-media:dev` adds ffmpeg for the media workers.
+`sb-analysis:dev` holds `sb-analysis` and `sb-eval`; `sb-analysis-media:dev` adds ffmpeg for the media workers. A tag `vX.Y.Z` publishes both to GHCR, with the Helm chart (`.github/workflows/release.yml`).
+
+## Kubernetes
+
+The Helm chart is [`deploy/helm/sb-analysis`](deploy/helm/sb-analysis):
+- two Deployments, `analysis` and `analysis-media`;
+- `sb-analysis migrate` as a hook before each install and upgrade;
+- optionally a ServiceMonitor and the alert rules (`files/alerts.yaml`).
+
+[`values-production.yaml`](deploy/helm/sb-analysis/values-production.yaml) is for the platform's cluster:
+- credentials come key by key from the secret `platform-credentials`, and the AI key from `ai-provider`;
+- the platform builds the images and sets `image.repository`, `image.tag`, `mediaImage.repository` and `mediaImage.tag`;
+- the chart creates no topics and registers no schemas.
 
 ## Repository layout
 
@@ -87,6 +99,7 @@ gen/go               generated protobuf code
 migrations           the analysis's SQL migrations (schema "analysis")
 configs              default config, topics for local brokers, entity and taxonomy seeds
 deploy/docker        the images
+deploy/helm          the Helm chart (values-production.yaml for the platform's cluster)
 deploy/dev           the local test stack
 deploy/analysis      the Compose deployment next to the fbs pilot
 docs                 design, ADRs, runbook, evaluation, reports

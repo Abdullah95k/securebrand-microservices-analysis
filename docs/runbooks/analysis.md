@@ -2,7 +2,7 @@
 
 The design is in [docs/design/analysis-service.md](../design/analysis-service.md) and the evaluation in [docs/analysis/evaluation.md](../analysis/evaluation.md). Commands run in the analysis container or pod:
 - **Compose (next to the fbs pilot):** `make analysis-cmd ARGS="..."` (`deploy/analysis/compose.yml`);
-- **Kubernetes:** `kubectl exec deploy/sb-analysis -- sb-analysis ...` (the chart of its own comes with REQ-011 fix 2).
+- **Kubernetes:** `kubectl -n analysis exec deploy/<release>-analysis -- sb-analysis ...` (the chart: `deploy/helm/sb-analysis`).
 
 All times in reports and budgets are Iraq time (Asia/Baghdad, UTC+3).
 
@@ -15,7 +15,7 @@ All times in reports and budgets are Iraq time (Asia/Baghdad, UTC+3).
 - **relay:** the outbox to Kafka;
 - **rollup:** daily rollups, the daily topic curation and the daily bot scoring (each job takes a database lock, so replicas never overlap).
 
-In Kubernetes, run `analysis` (all roles but media) and `analysis-media` (media, on the ffmpeg image `sb-analysis-media`) as two Deployments. Scaling:
+The Helm chart (`deploy/helm/sb-analysis`) runs `analysis` (all roles but media) and `analysis-media` (media, on the ffmpeg image `sb-analysis-media`), and `sb-analysis migrate` as a pre-install and pre-upgrade hook. Credentials come from the platform's secrets (`platform-credentials`, `ai-provider`); the chart creates no topics and registers no schemas. Scaling:
 - **Ingest:** scales on Kafka lag (KEDA).
 - **Pipeline:** I/O-bound; one replica handles ~10 items/s with batching. More replicas share the queue safely (`SKIP LOCKED`).
 - **Media:** scale on `sb_analysis_media_ttl_at_risk` and the pending `media_jobs`.

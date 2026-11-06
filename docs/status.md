@@ -6,7 +6,7 @@
 
 | Area | State |
 |---|---|
-| Code | Built and tested: unit and integration tests with race detection against real Postgres, Redpanda and Valkey. In `main` of the public repository `Abdullah95k/securebrand-microservices-analysis`. **6 Nov: becoming a repository of its own** (REQ-011 fix 1, in review): fbs's code removed; fbs's module is a dependency for the fb protos only. |
+| Code | Built and tested: unit and integration tests with race detection against real Postgres, Redpanda and Valkey. In `main` of the public repository `Abdullah95k/securebrand-microservices-analysis`. **A repository of its own since 6 Nov** (REQ-011 fix 1, `b080a72`): fbs's code is removed, and fbs's module is a dependency for the fb protos only. |
 | Running | **Nowhere.** Never analysed real content; never called an AI provider with real data. From 6 Nov, testing happens on the production cluster, at full scale (owner's D-026): no new runs on the shared server. |
 | Pilot server | **No new runs there** (owner's D-026, 6 Nov). The Compose deployment next to the fbs pilot (`deploy/analysis/compose.yml`) stays in the repository; it was never started. |
 | Quality | **Not measured.** The evaluation (`docs/analysis/evaluation.md`, about $3–5) is approved; it runs on the production cluster once fbs collects there (owner, 6 Nov). |
@@ -15,7 +15,7 @@
 
 ## Work in progress (from 6 Nov)
 
-- **REQ-011, the fixes:** one row per fix in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md). Fix 1 (a repository of its own) is in review.
+- **REQ-011, the fixes:** one row per fix in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md). Fix 1 (a repository of its own) is merged; fix 2 (its own chart, `values-production.yaml`, images on a tag) is in review.
 - **REQ-022, adopting contract v1.0.0:** after the fixes REQ-011 lists before the canary; its record will be `docs/master/analysis-contract-adoption.md`.
 - **Questions for the master:** [`docs/master/questions-for-master-2026-11-06.md`](master/questions-for-master-2026-11-06.md).
 
@@ -41,7 +41,7 @@
 
 ## Open decisions (owner or master)
 
-1. **Where the images and the chart are published, and the production namespace** (asked the master, 6 Nov).
+1. **Where the platform's conventions file (`infra/README.md`) is** (asked the master, 6 Nov). The master answered the rest of question 1: the platform builds the images, the namespace is `analysis`.
 2. **Where account tiers come from,** for the real-time lane's hot-tier accounts (asked the master, 6 Nov).
 3. **Which permanent store a backfill reads** (asked the master, 6 Nov).
 4. **sb-analysis's own text copy:** keep it, or slim it to working state once the platform's entity layer and the client app exist (the owner's decision 7, "keep both for now"; REQ-011, later).
@@ -78,3 +78,8 @@
   - **Changed names:** environment variables `SB_ANALYSIS_*` (were `FBS_*`), metrics `sb_analysis_*` (were `fbs_analysis_*`). Nothing depended on the old names yet.
   - **Bug fix:** the migrations' version table is now schema-qualified.
   - **Unchanged:** no topic, field or schema was renamed or removed. Details in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md).
+- **6 Nov:** REQ-011 fix 1 merged (pull request #3, `b080a72`).
+- **6 Nov, the master:** the platform builds production images itself; namespace `analysis`; secrets `platform-credentials` and `ai-provider`; Kafka user `analysis-kafka` (`content.*`, `analysis.*`); database `analysis`; $5 a day.
+- **6 Nov, REQ-011 fix 2 (in review):** its own Helm chart with `values-production.yaml`, images on a tag, chart checks in CI, and the alert rules moved from fbs's chart.
+  - **Both workloads are at 0 replicas in production until REQ-022:** the platform's topics carry the contract's schemas, not sb-analysis's draft ones.
+  - **New, nothing removed:** the database settings as parts (host, port, and so on) alongside the DSN.
