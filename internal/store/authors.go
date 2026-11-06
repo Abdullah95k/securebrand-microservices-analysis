@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,8 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	analysisv1 "github.com/abdullah95k/securebrand-microservices-analysis/gen/go/securebrand/analysis/v1"
-	"github.com/abdullah95k/securebrand-microservices-analysis/internal/adapter"
+	analysisv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/analysis/v1"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/topics"
 )
@@ -222,10 +220,15 @@ func (s *Store) authorChanged(ctx context.Context, tx pgx.Tx, platform string, k
 		ON CONFLICT (day) DO UPDATE SET marked_at = now()`, platform, key, s.Loc.String()); err != nil {
 		return err
 	}
+	// Published only for authors known by their contract account ID (items
+	// read through the contract); fbs's pseudonymous keys stay in Postgres.
+	id := string(key)
+	if ownerKind(id) != "account" {
+		return nil
+	}
 	now := time.Now()
-	k := hex.EncodeToString(key)
-	return outbox(ctx, tx, topics.AnalysisAuthor, k, &analysisv1.AuthorFlag{
-		EventId: fmt.Sprintf("%s:%d", k, now.UnixMilli()), Platform: adapter.PlatformEnum(platform), AuthorKey: key,
+	return outbox(ctx, tx, topics.AnalysisAuthor, id, &analysisv1.AuthorFlag{
+		EventId: fmt.Sprintf("%s:%d", id, now.UnixMilli()), Platform: core.PlatformCode(id), AuthorId: id,
 		Bot: bot, Score: int32(score), Reasons: reasons, ScoredAt: timestamppb.New(now)})
 }
 

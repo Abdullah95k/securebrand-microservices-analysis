@@ -45,8 +45,8 @@ const (
 	PriorityBackground = 2
 )
 
-// Item is a canonical content item, decoded from content.item.v1 or from a
-// collector's topics by an adapter.
+// Item is a content item, decoded by an adapter from the platform's contract
+// (content.post.v1, content.comment.v1) or from fbs's own fb.* topics.
 type Item struct {
 	ContentID      string
 	Platform       string // facebook | instagram | tiktok | x | telegram | youtube
@@ -67,7 +67,30 @@ type Item struct {
 	// RemoveSpans are byte ranges of the text that carry no content of
 	// their own (tagged accounts), for the analyzable check.
 	RemoveSpans []textnorm.Span
+	// From the platform's contract (zero for fbs's own topics): the
+	// envelope.version that brought this text, a comment's depth (0 on the
+	// post, 1+ for replies), and the author's account ID ("" when the
+	// platform hides the author).
+	Version  int64
+	Depth    int
+	AuthorID string
 }
+
+// PlatformCode is the contract's platform code of a contract ID
+// ("fb:comment:1" -> "fb"); "" when the ID has no code.
+func PlatformCode(id string) string {
+	for i := 0; i < len(id); i++ {
+		if id[i] == ':' {
+			return id[:i]
+		}
+	}
+	return ""
+}
+
+// FromContract reports whether the item came through the platform's
+// contract (it has an envelope version), so its results may be published
+// on the contract's topics.
+func (it *Item) FromContract() bool { return it.Version > 0 }
 
 // Analyzable reports whether the item has text worth analysing.
 func (it *Item) Analyzable() bool { return textnorm.Analyzable(it.Text, it.RemoveSpans) }
@@ -212,6 +235,10 @@ type Provenance struct {
 	Fallback        bool
 	AnalyzedAt      time.Time
 	RequestID       string
+	// Routing: why the item took its lane (urgent_source, tracked_entity or
+	// normal); MatchedEntityIDs: the tracked entities found in it.
+	Routing          string
+	MatchedEntityIDs []string
 }
 
 // RouteFor picks the route of an item from its kind and length: short posts

@@ -6,9 +6,12 @@ package relay
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
+
+	contracts "github.com/abdullah95k/securebrand-contracts"
 
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/ametrics"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/kafka"
@@ -54,10 +57,7 @@ func (r *Relay) Once(ctx context.Context, batch int) (int, error) {
 		out := make([]*kgo.Record, len(recs))
 		for i, rec := range recs {
 			out[i] = &kgo.Record{Topic: r.Producer.Topic(rec.Topic), Key: []byte(rec.Key), Value: rec.Payload,
-				Headers: []kgo.RecordHeader{
-					{Key: kafka.HeaderType, Value: []byte(rec.Type)},
-					{Key: kafka.HeaderContentType, Value: []byte(kafka.ContentTypeProto)},
-				}}
+				Headers: Headers(rec.Type)}
 		}
 		if err := r.Producer.ProduceSync(ctx, out...); err != nil {
 			return err
@@ -72,3 +72,27 @@ func (r *Relay) Once(ctx context.Context, batch int) (int, error) {
 	}
 	return n, err
 }
+
+// Headers are a record's headers by its message type: the contract's
+// "sb-type" (the full message name) and "sb-contract" (the contract version)
+// on contract messages; fbs's "fbs-type" on fbs's own (the media
+// acknowledgements of fb.media.processed.v1).
+func Headers(msgType string) []kgo.RecordHeader {
+	if strings.HasPrefix(msgType, "securebrand.fb.") {
+		return []kgo.RecordHeader{
+			{Key: kafka.HeaderType, Value: []byte(msgType)},
+			{Key: kafka.HeaderContentType, Value: []byte(kafka.ContentTypeProto)},
+		}
+	}
+	return []kgo.RecordHeader{
+		{Key: HeaderSBType, Value: []byte(msgType)},
+		{Key: HeaderSBContract, Value: []byte(contracts.Version)},
+		{Key: kafka.HeaderContentType, Value: []byte(kafka.ContentTypeProto)},
+	}
+}
+
+// The contract's record headers.
+const (
+	HeaderSBType     = "sb-type"
+	HeaderSBContract = "sb-contract"
+)

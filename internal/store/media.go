@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	analysisv1 "github.com/abdullah95k/securebrand-microservices-analysis/gen/go/securebrand/analysis/v1"
-	contentv1 "github.com/abdullah95k/securebrand-microservices-analysis/gen/go/securebrand/content/v1"
-	"github.com/abdullah95k/securebrand-microservices-analysis/internal/adapter"
+	analysisv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/analysis/v1"
+	contentv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/content/v1"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/textnorm"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/topics"
@@ -172,8 +172,12 @@ func (s *Store) FinishMedia(ctx context.Context, r MediaResult) error {
 			WHERE media_id = $1`, j.MediaID); err != nil {
 			return err
 		}
-		if err := outbox(ctx, tx, topics.AnalysisMedia, j.MediaID, mediaEvent(&r)); err != nil {
-			return err
+		// Published only for media announced through the contract; results
+		// of fbs's own media stay in Postgres.
+		if j.AckFormat == AckContract {
+			if err := outbox(ctx, tx, topics.AnalysisMedia, j.MediaID, mediaEvent(&r)); err != nil {
+				return err
+			}
 		}
 		return ackTx(ctx, tx, j, r.Consumer, "processed", "")
 	})
@@ -208,16 +212,23 @@ func mediaEntities(m *core.MediaResult, origin string) []core.Entity {
 	return out
 }
 
+// AckContract marks a media job announced through the contract
+// (content.media.ready.v1): acknowledged and published in the contract's
+// formats.
+const AckContract = "contract"
+
 func mediaEvent(r *MediaResult) *analysisv1.MediaAnalysis {
 	m := &r.Result
 	ev := &analysisv1.MediaAnalysis{
-		EventId: r.Job.MediaID + ":" + r.Prov.AnalyzedAt.UTC().Format(time.RFC3339), MediaId: r.Job.MediaID,
-		OwnerContentId: r.Job.OwnerContentID, Platform: adapter.PlatformEnum(r.Job.Platform), SourceId: r.Job.SourceID,
-		Kind: mediaKind(r.Job.Kind), TextInImage: m.TextInImage, Description: m.Description, Labels: m.Labels,
+		EventId: r.Job.MediaID + ":" + r.Prov.AnalyzedAt.UTC().Format(time.RFC3339Nano), MediaId: r.Job.MediaID,
+		OwnerId: r.Job.OwnerContentID, OwnerKind: ownerKind(r.Job.OwnerContentID), Platform: core.PlatformCode(r.Job.MediaID),
+		AccountId: r.Job.SourceID, Type: mediaType(r.Job.Kind),
+		TextInImage: m.TextInImage, Description: m.Description, Labels: m.Labels,
 		PeopleCount: int32(m.PeopleCount), Topics: m.Topics, Transcript: m.Transcript, AdType: m.AdType, Legal: m.Legal,
 		Sentiment: &analysisv1.Sentiment{Label: m.Sentiment, Score: float32(m.Score), Confidence: float32(m.Confidence)},
-		Provenance: &analysisv1.Provenance{Provider: r.Prov.Provider, Model: r.Prov.Model, PromptVersion: r.Prov.PromptVersion,
-			TaxonomyVersion: r.Prov.TaxonomyVersion, SchemaVersion: r.Prov.SchemaVersion, Route: r.Prov.Route, Lane: r.Prov.Lane,
+		Provenance: &analysisv1.Provenance{Producer: Producer, ProducerVersion: ProducerVersion, Provider: r.Prov.Provider,
+			Model: r.Prov.Model, PromptVersion: r.Prov.PromptVersion, TaxonomyVersion: r.Prov.TaxonomyVersion,
+			SchemaVersion: r.Prov.SchemaVersion, Route: r.Prov.Route, Lane: r.Prov.Lane,
 			AnalyzedAt: timestamppb.New(r.Prov.AnalyzedAt), Purpose: "current", Fallback: r.Prov.Fallback, AnalysisVersion: 1},
 	}
 	for _, l := range m.Logos {
@@ -230,18 +241,27 @@ func mediaEvent(r *MediaResult) *analysisv1.MediaAnalysis {
 	return ev
 }
 
-func mediaKind(kind string) contentv1.MediaKind {
+// ownerKind is the entity kind of a contract ID ("post", "comment", ...).
+func ownerKind(id string) string {
+	parts := strings.SplitN(id, ":", 3)
+	if len(parts) == 3 {
+		return parts[1]
+	}
+	return ""
+}
+
+func mediaType(kind string) contentv1.MediaType {
 	switch kind {
 	case "video", "reel", "comment_video":
-		return contentv1.MediaKind_MEDIA_KIND_VIDEO
+		return contentv1.MediaType_MEDIA_TYPE_VIDEO
 	case "comment_gif", "gif":
-		return contentv1.MediaKind_MEDIA_KIND_GIF
+		return contentv1.MediaType_MEDIA_TYPE_GIF
 	case "sticker":
-		return contentv1.MediaKind_MEDIA_KIND_STICKER
+		return contentv1.MediaType_MEDIA_TYPE_STICKER
 	case "audio":
-		return contentv1.MediaKind_MEDIA_KIND_AUDIO
+		return contentv1.MediaType_MEDIA_TYPE_AUDIO
 	}
-	return contentv1.MediaKind_MEDIA_KIND_IMAGE
+	return contentv1.MediaType_MEDIA_TYPE_IMAGE
 }
 
 // FailMedia records a failed attempt. A permanent failure, or a retryable
@@ -276,12 +296,6 @@ func (s *Store) FailMedia(ctx context.Context, j core.MediaJob, consumer, reason
 func ackTx(ctx context.Context, tx pgx.Tx, j *core.MediaJob, consumer, status, errMsg string) error {
 	now := timestamppb.Now()
 	switch j.AckFormat {
-	case "content":
-		st := map[string]contentv1.ProcessStatus{"processed": contentv1.ProcessStatus_PROCESS_STATUS_PROCESSED,
-			"failed_permanent": contentv1.ProcessStatus_PROCESS_STATUS_FAILED_PERMANENT,
-			"failed_retryable": contentv1.ProcessStatus_PROCESS_STATUS_FAILED_RETRYABLE}[status]
-		return outbox(ctx, tx, topics.ContentMediaProcessed, j.MediaID, &contentv1.MediaProcessed{
-			EventId: j.MediaID + ":" + consumer, MediaId: j.MediaID, Consumer: consumer, Status: st, ProcessedAt: now, Error: cutErr(errMsg)})
 	default:
 		st := map[string]fbv1.ProcessStatus{"processed": fbv1.ProcessStatus_PROCESS_STATUS_PROCESSED,
 			"failed_permanent": fbv1.ProcessStatus_PROCESS_STATUS_FAILED_PERMANENT,

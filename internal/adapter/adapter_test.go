@@ -8,9 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	contentv1 "github.com/abdullah95k/securebrand-microservices-analysis/gen/go/securebrand/content/v1"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
-	"github.com/abdullah95k/securebrand-microservices-analysis/internal/topics"
 	fbv1 "github.com/abdullah95k/securebrand-microservices/gen/go/securebrand/fb/v1"
 )
 
@@ -97,41 +95,6 @@ func TestFromFBMediaReadyAndErasure(t *testing.T) {
 	a := FromFBErasure(&fbv1.ErasureEvent{RequestId: "r", SubjectType: fbv1.SubjectType_SUBJECT_TYPE_AUTHOR, AuthorKey: []byte{1, 2}})
 	if a == nil || SubjectKey(a) != "0102" || a.RequestID != "r" {
 		t.Fatalf("author erasure %+v", a)
-	}
-}
-
-func TestDecodeCanonicalAndFB(t *testing.T) {
-	d := NewDecoder([]string{"fb", "content"})
-	if len(d.ItemTopics()) != 5 || len(d.MediaTopics()) != 2 {
-		t.Fatalf("topics %v %v", d.ItemTopics(), d.MediaTopics())
-	}
-	ci := &contentv1.ContentItem{ContentId: "x:comment:1", Platform: contentv1.Platform_PLATFORM_X, Kind: contentv1.ContentKind_CONTENT_KIND_REPLY,
-		SourceId: "x:account:2", ObservedAt: timestamppb.New(t0), Text: "@user hi",
-		Mentions: []*contentv1.Mention{{Offset: 0, Length: 5, Type: "user"}}, Media: []*contentv1.MediaRef{{MediaId: "m"}}}
-	b, _ := proto.Marshal(ci)
-	evs, err := d.Decode(topics.ContentItem, b)
-	if err != nil || len(evs) != 1 {
-		t.Fatalf("decode %v %v", evs, err)
-	}
-	it := evs[0].Item
-	if it.Platform != "x" || it.Kind != core.KindReply || !it.CreatedAt.Equal(t0) || len(it.RemoveSpans) != 1 || len(it.MediaIDs) != 1 {
-		t.Fatalf("canonical %+v", it)
-	}
-	if _, err := d.Decode(topics.ContentItem, mustMarshal(&contentv1.ContentItem{})); err == nil {
-		t.Fatal("item without id accepted")
-	}
-	if _, err := d.Decode(topics.Comment, []byte{0xff, 0xff}); err == nil {
-		t.Fatal("garbage decoded")
-	}
-	if evs, err := d.Decode("other.topic", b); err != nil || evs != nil {
-		t.Fatal("unknown topic should decode to nothing")
-	}
-	only := NewDecoder([]string{"content"})
-	if len(only.ItemTopics()) != 2 {
-		t.Fatal("content-only topics")
-	}
-	if PlatformEnum(PlatformName(contentv1.Platform_PLATFORM_TIKTOK)) != contentv1.Platform_PLATFORM_TIKTOK || PlatformName(99) != "unknown" {
-		t.Fatal("platform names")
 	}
 }
 

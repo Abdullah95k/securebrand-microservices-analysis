@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,8 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	analysisv1 "github.com/abdullah95k/securebrand-microservices-analysis/gen/go/securebrand/analysis/v1"
-	"github.com/abdullah95k/securebrand-microservices-analysis/internal/adapter"
+	analysisv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/analysis/v1"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/topics"
 )
@@ -202,12 +202,17 @@ func (s *Store) writeOne(ctx context.Context, tx pgx.Tx, r *ItemResult, req uuid
 	if _, err := tx.Exec(ctx, `INSERT INTO analysis.rollup_dirty (day) VALUES ($1) ON CONFLICT (day) DO UPDATE SET marked_at = now()`, day); err != nil {
 		return false, false, err
 	}
-	ev := ItemEvent(it, &x, &p, r.Route, r.InputHash, version)
-	if ev.AuthorBot, err = authorBot(ctx, tx, it.Platform, it.AuthorKey); err != nil {
-		return false, false, err
-	}
-	if err := outbox(ctx, tx, topics.AnalysisResult, it.ContentID, ev); err != nil {
-		return false, false, err
+	// Only items read through the platform's contract are published: their
+	// results carry contract IDs and the analysed envelope.version. Results
+	// of items from fbs's own topics stay in Postgres.
+	if it.FromContract() {
+		ev := ItemEvent(it, &x, &p, r.Route, r.InputHash, version)
+		if ev.AuthorBot, err = authorBot(ctx, tx, it.Platform, it.AuthorKey); err != nil {
+			return false, false, err
+		}
+		if err := outbox(ctx, tx, topics.AnalysisResult, it.ContentID, ev); err != nil {
+			return false, false, err
+		}
 	}
 	for _, fu := range r.FollowUps {
 		if _, err := tx.Exec(ctx, `INSERT INTO analysis.analysis_queue (content_id, route, created_at, thread_id, lane, priority, reason)
@@ -254,18 +259,31 @@ func (s *Store) dequeue(ctx context.Context, tx pgx.Tx, id, route string, req uu
 	return err
 }
 
-// ItemEvent is the analysis.result.v1 record of a result.
+// Producer names sb-analysis in every record's provenance; ProducerVersion
+// is its build (set at link time with -X).
+const Producer = "sb-analysis"
+
+var ProducerVersion = "dev"
+
+// ItemEvent is the analysis.result.v1 record of a result, in the contract's
+// securebrand.analysis.v1: the item's contract IDs, the envelope.version
+// that was analysed, why it took its lane and the tracked entities that
+// matched (for the alert engine).
 func ItemEvent(it *core.Item, x *core.Result, p *core.Provenance, route string, inputHash []byte, version int) *analysisv1.ItemAnalysis {
+	kind := "post"
+	if it.Kind != core.KindPost {
+		kind = "comment"
+	}
 	ev := &analysisv1.ItemAnalysis{
-		EventId:   fmt.Sprintf("%s:%d", it.ContentID, version),
-		ContentId: it.ContentID,
-		Platform:  adapter.PlatformEnum(it.Platform),
-		Kind:      adapter.KindEnum(it.Kind),
-		SourceId:  it.SourceID,
-		ThreadId:  it.ThreadID,
-		AuthorKey: it.AuthorKey,
-		CreatedAt: timestamppb.New(it.CreatedAt),
-		Lang:      x.Lang, Dialect: x.Dialect, Script: x.Script, CodeSwitch: x.CodeSwitch,
+		EventId:        fmt.Sprintf("%s:%d", it.ContentID, version),
+		ContentId:      it.ContentID,
+		Platform:       core.PlatformCode(it.ContentID),
+		Kind:           kind,
+		AccountId:      it.SourceID,
+		AuthorId:       it.AuthorID,
+		ContentVersion: it.Version,
+		CreatedAt:      timestamppb.New(it.CreatedAt),
+		Lang:           x.Lang, Dialect: x.Dialect, Script: x.Script, CodeSwitch: x.CodeSwitch,
 		Sentiment: &analysisv1.Sentiment{Label: x.Sentiment, Score: float32(x.Score), Confidence: float32(x.Confidence),
 			CalibratedConfidence: float32(x.CalibratedConfidence)},
 		Topics: x.Topics, Keywords: x.Keywords, Intent: x.Intent, Emotion: x.Emotion,
@@ -275,10 +293,19 @@ func ItemEvent(it *core.Item, x *core.Result, p *core.Provenance, route string, 
 		Refused:               x.Refused,
 		AdType:                x.AdType,
 		Legal:                 x.Legal,
-		Provenance: &analysisv1.Provenance{Provider: p.Provider, Model: p.Model, PromptVersion: p.PromptVersion,
-			TaxonomyVersion: p.TaxonomyVersion, SchemaVersion: p.SchemaVersion, Route: route, Lane: p.Lane,
-			AnalyzedAt: timestamppb.New(p.AnalyzedAt), InputHash: inputHash, AnalysisVersion: uint32(version),
-			Purpose: "current", Fallback: p.Fallback},
+		Routing:               orDefault(p.Routing, "normal"),
+		MatchedEntityIds:      p.MatchedEntityIDs,
+		Provenance: &analysisv1.Provenance{Producer: Producer, ProducerVersion: ProducerVersion, Provider: p.Provider,
+			Model: p.Model, PromptVersion: p.PromptVersion, TaxonomyVersion: p.TaxonomyVersion, SchemaVersion: p.SchemaVersion,
+			Route: route, Lane: p.Lane, AnalyzedAt: timestamppb.New(p.AnalyzedAt), InputHash: hex.EncodeToString(inputHash),
+			AnalysisVersion: uint32(version), Purpose: "current", Fallback: p.Fallback},
+	}
+	if kind == "comment" {
+		ev.PostId = it.ThreadID
+		ev.Depth = int32(it.Depth)
+		if it.Depth > 0 {
+			ev.ParentCommentId = it.ParentID
+		}
 	}
 	for _, e := range x.Entities {
 		ev.Entities = append(ev.Entities, &analysisv1.EntityMention{EntityId: e.ID, Name: e.Name, Type: e.Type, Aspect: e.Aspect,

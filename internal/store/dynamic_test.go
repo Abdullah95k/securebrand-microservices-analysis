@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 
-	analysisv1 "github.com/abdullah95k/securebrand-microservices-analysis/gen/go/securebrand/analysis/v1"
+	analysisv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/analysis/v1"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/bots"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/taxonomy"
@@ -192,8 +192,9 @@ func TestAdsLegalAndBotScoring(t *testing.T) {
 	ctx := context.Background()
 	base := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Hour)
 	var items []*core.Item
-	// A bot: 40 copies of one long text across 5 threads in one hour.
-	bot := "bot-1"
+	// A bot: 40 copies of one long text across 5 threads in one hour. Its
+	// key is a contract account ID; the others are fbs's author keys.
+	bot := "fb:account:9001"
 	spamText := "اربح جوال ايفون مجانا ادخل على الرابط الان وسجل رقمك"
 	for i := range 40 {
 		it := comment(fmt.Sprintf("fb:comment:b%d", i), spamText, base.Add(time.Duration(i)*time.Minute), bot)
@@ -261,7 +262,7 @@ func TestAdsLegalAndBotScoring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// bot-1, human-1, fan-1 (5+ items) and the five network accounts; the
+	// The bot, human-1, fan-1 (5+ items) and the five network accounts; the
 	// quoting people are neither busy nor coordinated.
 	if run.Scored != 8 || run.Flagged != 6 || run.Changed != 6 {
 		t.Fatalf("run %+v", run)
@@ -287,13 +288,11 @@ func TestAdsLegalAndBotScoring(t *testing.T) {
 	if n := count(t, s, `SELECT count(*) FROM analysis.authors WHERE encode(author_key, 'escape') LIKE 'quote-%'`); n != 0 {
 		t.Fatal("people quoting a poem on different days were scored as coordinated")
 	}
+	// Only authors known by a contract account ID are published (the
+	// contract keys AuthorFlag by author_id); fbs's author keys stay here.
 	flags := outboxOf(t, s, topics.AnalysisAuthor, func() *analysisv1.AuthorFlag { return &analysisv1.AuthorFlag{} })
-	byKey := map[string]string{}
-	for _, f := range flags {
-		byKey[string(f.AuthorKey)] = f.Bot
-	}
-	if len(flags) != 6 || byKey[bot] != bots.Likely || byKey["net-0"] != bots.Suspected {
-		t.Fatalf("author events %v", byKey)
+	if len(flags) != 1 || flags[0].AuthorId != bot || flags[0].Bot != bots.Likely || flags[0].Platform != "fb" {
+		t.Fatalf("author events %v", flags)
 	}
 	// A second run changes nothing and publishes nothing.
 	if run, _ = s.ScoreAuthors(ctx, 30*24*time.Hour, 10, 5, scorer); run.Changed != 0 {
@@ -313,6 +312,7 @@ func TestAdsLegalAndBotScoring(t *testing.T) {
 		t.Fatal("flag rollup")
 	}
 	// A new result of a flagged author carries the level.
+	items[25].Version = 1 // published only for contract items
 	write(t, s, items[25], core.Result{})
 	res := outboxOf(t, s, topics.AnalysisResult, func() *analysisv1.ItemAnalysis { return &analysisv1.ItemAnalysis{} })
 	if last := res[len(res)-1]; last.AuthorBot != bots.Likely || last.ContentId != items[25].ContentID {

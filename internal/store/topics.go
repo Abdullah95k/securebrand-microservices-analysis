@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	analysisv1 "github.com/abdullah95k/securebrand-microservices-analysis/gen/go/securebrand/analysis/v1"
+	analysisv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/analysis/v1"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/taxonomy"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/textnorm"
@@ -568,8 +568,9 @@ func (s *Store) repointTopic(ctx context.Context, tx pgx.Tx, id string, into *st
 }
 
 func topicEvent(id, parent, en, ar, status, into string) *analysisv1.TopicUpdate {
-	return &analysisv1.TopicUpdate{TopicId: id, ParentId: parent, NameEn: en, NameAr: ar, Status: status, MergedInto: into,
-		UpdatedAt: timestamppb.Now()}
+	now := time.Now()
+	return &analysisv1.TopicUpdate{EventId: fmt.Sprintf("%s:%s:%d", id, status, now.UnixNano()), TopicId: id, ParentId: parent,
+		NameEn: en, NameAr: ar, Status: status, MergedInto: into, UpdatedAt: timestamppb.New(now)}
 }
 
 // TopicHit is a topic found for a search, with its sub-topics.

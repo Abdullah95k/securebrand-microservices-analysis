@@ -4,6 +4,8 @@ cloud.google.com/go/auth/oauth2adapt v0.2.3 h1:MlxF+Pd3OmSudg/b1yZ5lJwoXCEaeedAg
 cloud.google.com/go/auth/oauth2adapt v0.2.3/go.mod h1:tMQXOfZzFuNuUxOypHlQEXgdfX5cuhwU+ffUuXRJE8I=
 cloud.google.com/go/compute/metadata v0.5.0 h1:Zr0eK8JbFv6+Wi4ilXAR8FJ3wyNdpxHKJNPos6LTZOY=
 cloud.google.com/go/compute/metadata v0.5.0/go.mod h1:aHnloV2TPI38yx4s9+wAZhHykWvVCfu7hQbF+9CWoiY=
+github.com/abdullah95k/securebrand-contracts v1.0.0 h1:3GrFJtUgnX2Zl5qwh8g3OHuxYRlUA3laQygGt2kJUno=
+github.com/abdullah95k/securebrand-contracts v1.0.0/go.mod h1:u+FKXRwTV6g6eohS61WtlVDEEawSW1mmtbM7rsK+/6Y=
 github.com/abdullah95k/securebrand-microservices v0.0.0-20261105235346-f87d6aef08b9 h1:/jvQvHf/8pB/bxVdI272LcerGOTWhWhBrqGSCVnRvfo=
 github.com/abdullah95k/securebrand-microservices v0.0.0-20261105235346-f87d6aef08b9/go.mod h1:IZAVGeA4nS/huRcZXPJzv97nirzjrvxZ+RfrypQrCmY=
 github.com/anthropics/anthropic-sdk-go/v2 v2.4.0 h1:r7bwP/ZaCeEbn5zM5vUacHfyD1DUxXbbzWEeCtViBQI=

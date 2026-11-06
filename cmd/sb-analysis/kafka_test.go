@@ -30,7 +30,7 @@ func TestOwnTopicsOnly(t *testing.T) {
 			t.Errorf("fbs topic %s in the analysis list", s.Name)
 		}
 	}
-	for _, want := range []string{"analysis.result.v1", "analysis.author.v1", "content.item.v1"} {
+	for _, want := range []string{"analysis.result.v1", "analysis.author.v1", "content.post.v1", "content.comment.v1"} {
 		if !seen[want] {
 			t.Errorf("%s missing", want)
 		}

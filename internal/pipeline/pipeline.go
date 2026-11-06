@@ -126,6 +126,27 @@ func (p *Pipeline) Plan(it *core.Item) store.Plan {
 	return pl
 }
 
+// routing says why an item takes its lane, as the alert engine reads it:
+// urgent_source (a hot-tier account), tracked_entity, or normal; and the
+// tracked entities its text mentions.
+func (p *Pipeline) routing(it *core.Item) (string, []string) {
+	var ids []string
+	seen := map[string]bool{}
+	for _, m := range p.Entities().Find(it.Text) {
+		if m.Tracked && !m.Ambiguous && !seen[m.EntityID] {
+			seen[m.EntityID] = true
+			ids = append(ids, m.EntityID)
+		}
+	}
+	switch {
+	case p.hot.Hot(it.SourceID):
+		return "urgent_source", ids
+	case p.Cfg.Urgent.TrackedEntities && len(ids) > 0:
+		return "tracked_entity", ids
+	}
+	return "normal", ids
+}
+
 func (p *Pipeline) trackedHit(text string) bool {
 	for _, m := range p.Entities().Find(text) {
 		if m.Tracked && !m.Ambiguous {
@@ -478,6 +499,7 @@ func (p *Pipeline) result(s sent, it core.Item, hash []byte, r core.Result, cost
 		Prov: core.Provenance{Provider: s.provider, Model: s.model, PromptVersion: prompt.PromptVersion, TaxonomyVersion: p.Taxonomy().Version,
 			SchemaVersion: prompt.SchemaVersion, Route: s.route, Lane: s.lane, Fallback: s.fallback, AnalyzedAt: p.now().UTC(),
 			RequestID: s.id.String()}}
+	ir.Prov.Routing, ir.Prov.MatchedEntityIDs = p.routing(&it)
 	if s.route == core.RouteComment || s.route == core.RoutePost {
 		if p.escalate(r) {
 			ir.FollowUps = append(ir.FollowUps, core.RouteEscalation)

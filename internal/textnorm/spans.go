@@ -43,6 +43,41 @@ func UTF16Span(s string, off, n int) (Span, bool) {
 	return Span{Start: start, End: end}, true
 }
 
+// CodePointSpan converts a span counted in Unicode code points to bytes of
+// s; false when it falls outside s.
+func CodePointSpan(s string, off, n int) (Span, bool) {
+	if off < 0 || n <= 0 {
+		return Span{}, false
+	}
+	start, end, i := -1, -1, 0
+	for b := range s {
+		if i == off {
+			start = b
+		}
+		if i == off+n {
+			end = b
+			break
+		}
+		i++
+	}
+	if end < 0 && i == off+n {
+		end = len(s)
+	}
+	if start < 0 || end < 0 {
+		return Span{}, false
+	}
+	return Span{Start: start, End: end}, true
+}
+
+// ByteSpan checks a span counted in bytes of s: false when it falls
+// outside s or cuts a character.
+func ByteSpan(s string, off, n int) (Span, bool) {
+	if off < 0 || n <= 0 || off+n > len(s) || !utf8.RuneStart(s[off]) || (off+n < len(s) && !utf8.RuneStart(s[off+n])) {
+		return Span{}, false
+	}
+	return Span{Start: off, End: off + n}, true
+}
+
 // MaskSpans replaces each span of s with placeholder, except those whose
 // text keep reports true for (keep may be nil). Spans that overlap an
 // earlier one, fall outside s or cut a character are ignored, so a bad

@@ -93,7 +93,9 @@ func TestClaimWriteResultsAndStaleness(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	at := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
-	if _, err := s.Ingest(ctx, []*core.Item{comment("fb:comment:1", "حلو", at, "a1"), comment("fb:comment:2", "زين", at, "a2")}, plan); err != nil {
+	c1 := comment("fb:comment:1", "حلو", at, "a1")
+	c1.Version = 1 // a contract item: its result is published
+	if _, err := s.Ingest(ctx, []*core.Item{c1, comment("fb:comment:2", "زين", at, "a2")}, plan); err != nil {
 		t.Fatal(err)
 	}
 	claimed, err := s.Claim(ctx, core.LaneBatch, core.RouteComment, 10, time.Hour, 0)
