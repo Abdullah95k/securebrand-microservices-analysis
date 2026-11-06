@@ -3,7 +3,7 @@
 *The record of REQ-022, kept current for the master session and the owner. Times are Iraq time. Started 6 November 2026.*
 
 - **The contract:** the Go module `github.com/abdullah95k/securebrand-contracts`, tag **v1.0.0**, pinned in `go.mod`, as REQ-022 says. The master asks for v1.2.0 (question 1 below); that waits for the owner.
-- **Production stays off** (`values-production.yaml`, replicas 0) until every part below is merged.
+- **Done** (6 November, `fe0dc52`): every part below is merged. Production stays off (`values-production.yaml`, replicas 0) until the owner decides to switch it on ("Switching on", below).
 
 ## Progress
 
@@ -12,9 +12,9 @@
 | A | Contract in: posts and comments (`content.post.v1`, `content.comment.v1`) | **Merged** (step 1, `cbf46fd`) |
 | B | Contract out: `securebrand.analysis.v1` from the contract; delete our own protos | **Merged** (step 1, `cbf46fd`) |
 | C | The media hand-off (`content.media.ready.v1`, `.processed.v1`, `.deleted.v1`) | **Merged** (step 2, `a0d6a6f`) |
-| D | Bots keyed by the author's account ID; hidden authors left out | **Built** (step 1, merged; the `authors` commands in step 3, in review) |
-| E | Captions used as the transcript (`transcript_source`) | **Built** (step 3, in review) |
-| F | The full end-to-end test: every kind produced, a deletion and an estimate | **Built** (step 4, in review) |
+| D | Bots keyed by the author's account ID; hidden authors left out | **Merged** (steps 1 and 3, `fe0dc52`) |
+| E | Captions used as the transcript (`transcript_source`) | **Merged** (step 3, `fe0dc52`) |
+| F | The full end-to-end test: every kind produced, a deletion and an estimate | **Merged** (step 4, `fe0dc52`) |
 
 ## Step 1: contract in and out
 

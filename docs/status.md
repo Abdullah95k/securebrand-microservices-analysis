@@ -10,13 +10,13 @@
 | Running | **Nowhere.** Never analysed real content; never called an AI provider with real data. From 6 Nov, testing happens on the production cluster, at full scale (owner's D-026): no new runs on the shared server. |
 | Pilot server | **No new runs there** (owner's D-026, 6 Nov). The Compose deployment next to the fbs pilot (`deploy/analysis/compose.yml`) stays in the repository; it was never started. |
 | Quality | **Not measured.** The evaluation (`docs/analysis/evaluation.md`, about $3–5) is approved; it runs on the production cluster once fbs collects there (owner, 6 Nov). |
-| Contract | **Adopting v1.0.0 (REQ-022), in steps.** Merged: step 1 (`cbf46fd`): posts and comments in, the contract's `securebrand.analysis.v1` out; step 2 (`a0d6a6f`): the media hand-off. In review: step 3 (the `authors` commands by account ID, captions as the video transcript) and step 4 (an end-to-end test where every kind sb-analysis produces passes the contract's checks). Still reads `fb.*` too (`[fb]`, the default); those results stay in Postgres. Record: [`analysis-contract-adoption.md`](master/analysis-contract-adoption.md). |
+| Contract | **Contract v1.0.0 adopted (REQ-022 done, `fe0dc52`).** sb-analysis reads the contract's `content.post.v1`, `content.comment.v1`, `content.media.ready.v1` and `content.media.deleted.v1` (`analysis.inputs: [content]`), and publishes the contract's `analysis.*` and `content.media.processed.v1` (as `sb-analysis`). A CI end-to-end test checks every kind it produces against the contract. It still reads `fb.*` too (`[fb]`, the default today); those results stay in Postgres. Production stays at 0 replicas until the owner switches it on. Record: [`analysis-contract-adoption.md`](master/analysis-contract-adoption.md). |
 | Schema Registry | sb-analysis registers nothing (standing instruction: no `securebrand.content.*` until the master publishes v1). **But the pilot's shared registry already holds 9 subjects from this repository's copy** (confirmed 6 Nov, 00:58 Iraq time): the 4 `content.*` subjects, `securebrand/content/v1/content.proto`, and the 4 `analysis.*` subjects, almost certainly from a `make pilot-up` run from this copy around 1 November. The master (6 Nov): they don't block the platform, since staging and production get their own registry. **Leave them in place; delete nothing.** |
 
 ## Work in progress (from 6 Nov)
 
 - **REQ-011, the fixes:** one row per fix in [`docs/master/analysis-fixes.md`](master/analysis-fixes.md). Fixes 1 to 6 (all those before the canary) and 8 (the real-time lane) are merged, and so is fix 9's plan ([`analysis-backfill-plan.md`](master/analysis-backfill-plan.md)). Fix 7 (the quality evaluation) waits for fbs to collect in production.
-- **REQ-022, adopting contract v1.0.0:** steps 1 (contract in and out) and 2 (the media hand-off) are merged; steps 3 (the `authors` commands by account ID, captions as transcript) and 4 (the every-kind end-to-end test) are in review. With them REQ-022 is complete; switching production on waits for the owner (see "Switching on" in the record). Record: [`docs/master/analysis-contract-adoption.md`](master/analysis-contract-adoption.md).
+- **REQ-022, adopting contract v1.0.0: done** (6 Nov, `fe0dc52`; pull requests #11, #12, #13). Switching production on waits for the owner: see "Switching on" in [the record](master/analysis-contract-adoption.md). Record: [`docs/master/analysis-contract-adoption.md`](master/analysis-contract-adoption.md).
 - **Questions for the master:** [`docs/master/questions-for-master-2026-11-06.md`](master/questions-for-master-2026-11-06.md).
 
 ## Reports for the master (5 Nov)
@@ -41,6 +41,7 @@
 
 ## Open decisions (owner or master)
 
+0. **For the owner: switch production on, and on which input?** `[content]` once the platform's collectors publish the contract, `[fb]` (results kept in Postgres) until then, or both. The master then restores write access to `analysis.*`, and the replicas go up with the $5 daily cap. This also answers decision 1 below.
 0. **For the owner: pin contract v1.2.0 instead of v1.0.0?** The master asks for it (6 Nov): v1.2.0 adds the conformance checks v1.0.0 lacks (`MediaAnalysis`, `AuthorFlag`, `TopicUpdate`, `MediaProcessed`, `MediaDeleted`). The messages sb-analysis reads and writes are identical in both. Recommended: yes.
 
 1. **For the owner: run in production before REQ-022?** The master suggests reading fbs's `fb.*` topics in production until the contract is adopted. That needs a switch, not in REQ-011, that keeps results in Postgres and off the platform's `analysis.*` topics, whose contract format the draft results don't match. The canary also waits for fixes 3 to 6.
@@ -124,3 +125,4 @@
   - **The test:** a fake platform publishes posts (one with an estimated time), comments, a partial deletion and media, including a file deleted before analysis.
   - **What it checks:** every kind sb-analysis produces comes off Kafka with the contract's headers and passes the contract's checks: `ItemAnalysis`, `MediaAnalysis`, `AuthorFlag`, `TopicUpdate`, `MediaProcessed`.
   - **Small fixes:** a media transcript always carries its language and source; documents keep their type.
+- **6 Nov:** REQ-022 steps 3 and 4 merged (pull request #13, `fe0dc52`). **REQ-022 is done.** The master has the commit; production stays at 0 replicas until the owner decides.
