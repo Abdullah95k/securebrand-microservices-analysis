@@ -206,3 +206,13 @@ func (s *Store) ReplayFailed(ctx context.Context, route string, limit int) (int6
 	}
 	return tag.RowsAffected(), nil
 }
+
+// HotSources lists the accounts any client monitors (the hot tier until the
+// platform's account registry publishes tiers).
+func (s *Store) HotSources(ctx context.Context) ([]string, error) {
+	rows, err := s.DB.Query(ctx, `SELECT DISTINCT source_id FROM analysis.client_sources`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
+}

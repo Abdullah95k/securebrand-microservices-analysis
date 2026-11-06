@@ -96,9 +96,17 @@ analysis:
     # 0.02% of items: ~165 a day at 300M items a year, enough to track
     # quality month by month.
     audit:      {provider: anthropic, model: claude-opus-5-5,   lane: batch,    thinking: adaptive, effort: medium, max_tokens: 16000, sample_rate: 0.0002}
+  # The real-time lane (results within minutes) takes items that mention an
+  # entity a client tracks, and items from hot-tier accounts; everything
+  # else goes to the half-price batch lane. Until the platform's account
+  # registry publishes tiers, the hot tier is hot_accounts plus the
+  # accounts clients monitor (watchlists).
   urgent:
     tracked_entities: true # alias of a tracked entity in the text -> real time
-    sources: []            # e.g. ["fb:page:123"]
+    hot_accounts: []       # e.g. ["fb:page:123"]: their posts and the comments on them
+    watchlists: true       # accounts clients monitor (sb-analysis sources monitor) are hot
+    refresh: 1m            # how often the watchlists are re-read
+    sources: []            # older name for hot_accounts
   providers:
     anthropic:
       kind: anthropic

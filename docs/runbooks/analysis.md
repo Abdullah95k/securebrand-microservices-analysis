@@ -20,6 +20,19 @@ The Helm chart (`deploy/helm/sb-analysis`) runs `analysis` (all roles but media)
 - **Pipeline:** I/O-bound; one replica handles ~10 items/s with batching. More replicas share the queue safely (`SKIP LOCKED`).
 - **Media:** scale on `sb_analysis_media_ttl_at_risk` and the pending `media_jobs`.
 
+## Lanes: real time or batch
+
+- **Real-time lane (results within minutes):**
+  - items that mention an entity a client tracks (`analysis.urgent.tracked_entities`, `sb-analysis entities track`);
+  - items from hot-tier accounts: their posts, and the comments on them.
+- **Batch lane:** everything else, at half price (within 24 hours).
+- **The hot tier, until the platform's account registry publishes tiers:**
+  - `analysis.urgent.hot_accounts` (source ids such as `fb:page:123`);
+  - the accounts clients monitor (`sb-analysis sources monitor --client c --source fb:page:1`), re-read every `analysis.urgent.refresh` (1 minute). Turn that off with `analysis.urgent.watchlists: false`.
+
+  A failed read keeps the last list. Media (images, videos) stays real time: its files are deleted at their deadline.
+- **To look:** `sb_analysis_queue_depth{lane="realtime"}` against `{lane="batch"}`. Each real-time item costs about twice a batch one, so every hot account adds to the daily spend, which the budget caps.
+
 ## Queue backlog
 
 **Look:**

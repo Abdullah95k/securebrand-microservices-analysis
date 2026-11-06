@@ -825,3 +825,48 @@ func TestEntityCurationHidesTags(t *testing.T) {
 		t.Fatalf("curation request %q", users)
 	}
 }
+
+// Fix 8: items from hot-tier accounts go to the real-time lane, the
+// configured ones and those clients monitor (watchlists); the rest of the
+// posts and comments wait for the half-price batch lane.
+func TestHotAccountsGoRealtime(t *testing.T) {
+	e := setup(t, func(a *config.Analysis) {
+		a.Urgent.HotAccounts = []string{"fb:page:7"}
+		a.Urgent.Refresh = time.Millisecond
+	})
+	ctx := context.Background()
+	if _, err := e.s.DB.Exec(ctx, `INSERT INTO analysis.clients VALUES ('c1', 'Client', now())`); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.MonitorSource(ctx, "c1", "fb:page:1"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond) // past the refresh: the watchlist is read again
+	onPage := func(src, id string) *core.Item {
+		c := comment(1, "خدمة عادية اليوم")
+		c.ContentID, c.SourceID = id, src
+		return c
+	}
+	for _, tc := range []struct {
+		it   *core.Item
+		lane string
+	}{
+		{onPage("fb:page:1", "fb:comment:w"), core.LaneRealtime}, // on a watched account's post
+		{onPage("fb:page:7", "fb:comment:h"), core.LaneRealtime}, // a configured hot account
+		{onPage("fb:page:9", "fb:comment:o"), core.LaneBatch},    // anyone else
+	} {
+		pl := e.p.Plan(tc.it)
+		if pl.Lane != tc.lane || (tc.lane == core.LaneRealtime) != (pl.Priority == core.PriorityUrgent) {
+			t.Errorf("%s from %s: lane %s priority %d, want %s", tc.it.ContentID, tc.it.SourceID, pl.Lane, pl.Priority, tc.lane)
+		}
+	}
+	// Watchlists off: only the configured list counts.
+	off := setup(t, func(a *config.Analysis) { a.Urgent.Watchlists = false })
+	if _, err := off.s.DB.Exec(ctx, `INSERT INTO analysis.clients VALUES ('c1', 'Client', now())`); err != nil {
+		t.Fatal(err)
+	}
+	_ = off.s.MonitorSource(ctx, "c1", "fb:page:1")
+	if pl := off.p.Plan(onPage("fb:page:1", "fb:comment:x")); pl.Lane != core.LaneBatch {
+		t.Fatalf("watchlists off, a watched account still went to %s", pl.Lane)
+	}
+}
