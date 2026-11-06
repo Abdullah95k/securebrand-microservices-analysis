@@ -14,7 +14,7 @@
 | C | The media hand-off (`content.media.ready.v1`, `.processed.v1`, `.deleted.v1`) | **Merged** (step 2, `a0d6a6f`) |
 | D | Bots keyed by the author's account ID; hidden authors left out | **Built** (step 1, merged; the `authors` commands in step 3, in review) |
 | E | Captions used as the transcript (`transcript_source`) | **Built** (step 3, in review) |
-| F | The full end-to-end test: every kind produced, a deletion and an estimate | Steps 1 and 2 cover posts, comments, replies, a deletion and media; the full test is the last step |
+| F | The full end-to-end test: every kind produced, a deletion and an estimate | **Built** (step 4, in review) |
 
 ## Step 1: contract in and out
 
@@ -183,6 +183,48 @@ When an announced file's SHA-256 matches a file already analysed under another m
 - **`TestBestCaptions`:** the order of choice, and never a translation. The contract's TikTok sample gives its ASR captions.
 - **`TestAuthorKeysAndLabels`:** the commands read and print account IDs and hex keys.
 - All unit tests with race detection, all integration tests and golangci-lint pass.
+
+## Step 4: every kind, end to end
+
+**`TestContractEveryKindEndToEnd`** (Postgres and Redpanda; runs in CI's integration job). A fake platform publishes, with the contract's headers:
+- a post whose time is an **estimate**: "1d", precision DAY, at 00:00 Iraq time, as D-013 says;
+- 32 copies of one comment from one account across four posts, so bot scoring flags it;
+- a normal comment, later **deleted by a partial event**;
+- three files: an image to analyse, a sticker (skipped by policy), and an image the platform **deletes** before analysis.
+
+sb-analysis runs ingest, pipeline, media and relay. Then the owner's two commands run: bot scoring, and the approval of a new topic.
+
+**Every kind sb-analysis produces then comes off Kafka** with `sb-type` and `sb-contract: 1.0.0`, and passes the contract's checks:
+
+| Kind | Topic | Check |
+|---|---|---|
+| `ItemAnalysis` (34 items) | `analysis.result.v1` | `conformance.ItemAnalysis`, production mode |
+| `MediaAnalysis` | `analysis.media.v1` | the rules of v1.2.0's `conformance.MediaAnalysis` |
+| `AuthorFlag` (the copying account) | `analysis.author.v1` | the rules of v1.2.0's `conformance.AuthorFlag` |
+| `TopicUpdate` (the approved topic) | `analysis.topic.v1` | the rules of v1.2.0's `conformance.TopicUpdate` |
+| `MediaProcessed` (`PROCESSED`, `SKIPPED`) | `content.media.processed.v1` | the rules of v1.2.0's `conformance.MediaProcessed` |
+
+Also checked:
+- the estimated time is kept as the post's time, and published as its `created_at`;
+- the deleted comment is marked deleted;
+- the deleted file is never fetched or acknowledged.
+- **The test catches a broken message:** with the `reason` removed from acknowledgements on purpose, it failed on the sticker's `SKIPPED`.
+
+**Why "the rules of v1.2.0":** v1.0.0's `conformance` package has no checks for those four kinds. The test applies v1.2.0's rules itself, and switches to the package's own functions once the owner agrees to pin v1.2.0 (question 1).
+
+**Two fixes the checks led to** (merged with step 3):
+- a transcript always carries its language (`und` when unknown) and its source;
+- a `document` keeps its type.
+
+## Switching on (after the owner's approval)
+
+REQ-022 is complete with step 4. Production stays at 0 replicas until the owner decides. To switch on:
+1. **The input:** set `analysis.inputs` in `values-production.yaml`:
+   - `[content]` when the platform's collectors publish the contract;
+   - `[fb]` (the early-running option) until then, with results kept in Postgres;
+   - or both.
+2. **The master restores write access** to `analysis.*` for `analysis-kafka`: it asked to be told in the same message as the commit to pin.
+3. **Replicas up** (`components.analysis.replicas`, `components.analysis-media.replicas`), with the $5 daily budget.
 
 ### Questions for the master
 
