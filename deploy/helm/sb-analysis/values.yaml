@@ -47,6 +47,11 @@ platformCredentials:
     SB_ANALYSIS_S3__REGION: S3_REGION
     SB_ANALYSIS_S3__ACCESS_KEY: S3_ACCESS_KEY
     SB_ANALYSIS_S3__SECRET_KEY: S3_SECRET_KEY
+    # Valkey: the AI providers' rate limits shared across every pod.
+    SB_ANALYSIS_VALKEY__HOST: VALKEY_HOST
+    SB_ANALYSIS_VALKEY__PORT: VALKEY_PORT
+    SB_ANALYSIS_VALKEY__PASSWORD: VALKEY_PASSWORD
+    SB_ANALYSIS_VALKEY__TLS__ENABLED: VALKEY_TLS
   # PEM certificates of the same secret, mounted as files under
   # /etc/sb-analysis-certs (the secret's key: the file name), for clients
   # that want a path (kafka.tls.ca_file, postgres.sslrootcert).

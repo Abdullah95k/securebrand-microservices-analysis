@@ -36,6 +36,7 @@ type Analysis struct {
 	Providers map[string]Provider   `koanf:"providers"`
 	Pricing   map[string]ModelPrice `koanf:"pricing"`
 	Budget    AnalysisBudget        `koanf:"budget"`
+	RateLimit AnalysisRateLimit     `koanf:"rate_limit"`
 	Media     AnalysisMedia         `koanf:"media"`
 	Privacy   AnalysisPrivacy       `koanf:"privacy"`
 	Erasure   AnalysisErasure       `koanf:"erasure"`
@@ -168,7 +169,8 @@ type Provider struct {
 	APIKey     string        `koanf:"api_key"`
 	Timeout    time.Duration `koanf:"timeout"`
 	MaxRetries int           `koanf:"max_retries"`
-	// RPS caps requests per second to the provider (0 = unlimited).
+	// RPS caps requests per second to the provider (0 = unlimited): across
+	// every process sharing valkey, or per process without it.
 	RPS float64 `koanf:"rps"`
 	// Batch: whether the provider's batch API is used for the batch lane
 	// (otherwise batch-lane items are sent in real time).
@@ -187,6 +189,15 @@ type ModelPrice struct {
 	BatchDiscount float64 `koanf:"batch_discount"`
 	// PerMinute is the price of one audio minute (speech-to-text models).
 	PerMinute float64 `koanf:"per_minute"`
+}
+
+// AnalysisRateLimit shares the providers' rps limits through valkey.
+type AnalysisRateLimit struct {
+	// KeyPrefix names the Valkey keys (one per provider).
+	KeyPrefix string `koanf:"key_prefix"`
+	// FallbackDivisor: while Valkey is unreachable each process sends at
+	// rps / fallback_divisor (set it to the number of processes).
+	FallbackDivisor int `koanf:"fallback_divisor"`
 }
 
 // AnalysisBudget caps spend per day (in Timezone).

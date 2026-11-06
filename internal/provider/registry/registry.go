@@ -1,5 +1,6 @@
 // Package registry builds the configured providers and wraps every call
-// with a rate limiter and a circuit breaker per provider.
+// with a rate limiter and a circuit breaker per provider. The limiter is
+// per process unless a LimiterFunc shares it (WithLimiters).
 package registry
 
 import (
@@ -20,21 +21,46 @@ import (
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/provider/openaicompat"
 )
 
+// Limiter waits until a request may be sent.
+type Limiter interface {
+	Wait(ctx context.Context) error
+}
+
+// LimiterFunc builds the limiter of a provider allowed rps requests a
+// second.
+type LimiterFunc func(provider string, rps float64) Limiter
+
+// Option configures a Registry.
+type Option func(*Registry)
+
+// WithLimiters replaces the per-process limiters, e.g. by limits shared
+// across processes.
+func WithLimiters(f LimiterFunc) Option { return func(r *Registry) { r.newLimiter = f } }
+
 // Registry holds the providers by configured name.
 type Registry struct {
-	providers map[string]provider.Provider
-	batch     map[string]bool
-	limiters  map[string]*rate.Limiter
-	breakers  *breaker.Set
+	providers  map[string]provider.Provider
+	batch      map[string]bool
+	limiters   map[string]Limiter
+	newLimiter LimiterFunc
+	breakers   *breaker.Set
+}
+
+// localLimiter limits one process: rps a second, bursts of rps.
+func localLimiter(_ string, rps float64) Limiter {
+	return rate.NewLimiter(rate.Limit(rps), max(1, int(rps)))
 }
 
 // ErrUnavailable means the provider's circuit breaker is open.
 var ErrUnavailable = &provider.Error{Retryable: true, Err: fmt.Errorf("provider unavailable (circuit open)")}
 
 // New builds every configured provider.
-func New(cfg map[string]config.Provider) (*Registry, error) {
-	r := &Registry{providers: map[string]provider.Provider{}, batch: map[string]bool{}, limiters: map[string]*rate.Limiter{},
-		breakers: breaker.New(breaker.Config{MinEvents: 10, OpenRate: 0.5})}
+func New(cfg map[string]config.Provider, opts ...Option) (*Registry, error) {
+	r := &Registry{providers: map[string]provider.Provider{}, batch: map[string]bool{}, limiters: map[string]Limiter{},
+		newLimiter: localLimiter, breakers: breaker.New(breaker.Config{MinEvents: 10, OpenRate: 0.5})}
+	for _, o := range opts {
+		o(r)
+	}
 	names := make([]string, 0, len(cfg))
 	for n := range cfg {
 		names = append(names, n)
@@ -71,7 +97,7 @@ func (r *Registry) Add(name string, p provider.Provider, useBatch bool, rps floa
 	r.providers[name] = p
 	r.batch[name] = useBatch
 	if rps > 0 {
-		r.limiters[name] = rate.NewLimiter(rate.Limit(rps), max(1, int(rps)))
+		r.limiters[name] = r.newLimiter(name, rps)
 	} else {
 		delete(r.limiters, name)
 	}

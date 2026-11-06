@@ -66,6 +66,12 @@ API keys come from the environment: `SB_ANALYSIS_ANALYSIS__PROVIDERS__ANTHROPIC_
 
 A 401 in the logs means the key is missing or revoked.
 
+## Rate limits
+
+`analysis.providers.<name>.rps` caps the requests a second to a provider. With `valkey` set (production: the platform's `VALKEY_*`), the cap is shared by every pod: four pods together send at most `rps`. Valkey's own clock decides, so the pods' clocks don't matter. Without Valkey, each process limits itself.
+- **Valkey unreachable:** each pod falls back to `rps / analysis.rate_limit.fallback_divisor` (4) and counts `sb_analysis_rate_limit_fallback_total`; the service keeps running. With more pods than the divisor, the provider sees more than `rps`, and its 429s are retried. Fix Valkey, or raise the divisor to the number of pods.
+- **Too slow:** a provider's queue grows while `rps` is reached: raise `rps` within the provider's own limits (the Anthropic console shows them).
+
 ## Budget
 
 `analysis.budget.daily_usd` caps spend per Iraq day; `analysis.routes.<route>.daily_usd` caps one route. Spend is measured from real token usage at list prices (`analysis.pricing`), plus speech-to-text minutes at the transcription model's `per_minute` price (logged as `video` requests of that model; an own Whisper server is priced 0).

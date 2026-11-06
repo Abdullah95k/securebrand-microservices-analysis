@@ -23,8 +23,8 @@ components:
 # POSTGRES_* (database "analysis", PostgreSQL 18), KAFKA_* (user
 # analysis-kafka: content.* and analysis.*; until REQ-022 also consumes fb.*
 # and registry.* and produces fb.media.processed.v1), S3_* (media read from
-# S3_BUCKET_MEDIA, under each collector's prefix). Valkey (VALKEY_*) and
-# ClickHouse (secret clickhouse-ro) come with REQ-011 fixes 5 and 9.
+# S3_BUCKET_MEDIA, under each collector's prefix), VALKEY_* (shared rate
+# limits). ClickHouse (secret clickhouse-ro) comes with REQ-011 fix 9.
 platformCredentials:
   enabled: true
   secret: platform-credentials
@@ -32,6 +32,7 @@ platformCredentials:
   files:
     KAFKA_CA_CERT: kafka-ca.pem
     POSTGRES_CA_CERT: postgres-ca.pem
+    VALKEY_CA_CERT: valkey-ca.pem
 
 # The AI provider's key: secret "ai-provider", key API_KEY.
 aiProvider:
@@ -53,6 +54,10 @@ config:
     topic_prefix: ""
     # Enabled by the secret's KAFKA_TLS; the CA from KAFKA_CA_CERT.
     tls: {ca_file: /etc/sb-analysis-certs/kafka-ca.pem}
+  # The providers' rate limits, shared by every pod (VALKEY_*); TLS on by
+  # the secret's VALKEY_TLS.
+  valkey:
+    tls: {ca_file: /etc/sb-analysis-certs/valkey-ca.pem}
   postgres:
     # The secret's parts (platformCredentials) are used; no DSN. With the
     # CA, sslmode=require also verifies the server's certificate.

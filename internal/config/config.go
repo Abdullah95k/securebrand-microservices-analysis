@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -30,6 +31,9 @@ type Config struct {
 	Kafka    Kafka    `koanf:"kafka"`
 	// S3 is where the media workers read the files named in media events.
 	S3 S3 `koanf:"s3"`
+	// Valkey shares the AI providers' rate limits across processes; without
+	// it each process limits itself.
+	Valkey Valkey `koanf:"valkey"`
 	// Analysis configures the analysis itself.
 	Analysis Analysis `koanf:"analysis"`
 }
@@ -110,6 +114,30 @@ type SASL struct {
 	Mechanism string `koanf:"mechanism"`
 	Username  string `koanf:"username"`
 	Password  string `koanf:"password"`
+}
+
+// Valkey is addr, or its parts host and port as a platform secret gives
+// them ("" = none).
+type Valkey struct {
+	Addr     string `koanf:"addr"`
+	Host     string `koanf:"host"`
+	Port     string `koanf:"port"`
+	Password string `koanf:"password"`
+	DB       int    `koanf:"db"`
+	TLS      TLS    `koanf:"tls"`
+}
+
+// Address returns host:port when host is set (port 6379 by default), else
+// addr.
+func (v Valkey) Address() string {
+	if v.Host == "" {
+		return v.Addr
+	}
+	port := v.Port
+	if port == "" {
+		port = "6379"
+	}
+	return net.JoinHostPort(v.Host, port)
 }
 
 type S3 struct {

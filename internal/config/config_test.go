@@ -124,6 +124,9 @@ func TestPlatformCredentialsEnv(t *testing.T) {
 		"SB_ANALYSIS_KAFKA__SASL__USERNAME":  "analysis-kafka",
 		"SB_ANALYSIS_KAFKA__TLS__ENABLED":    "true",
 		"SB_ANALYSIS_S3__ENDPOINT":           "https://s3.platform:443/",
+		"SB_ANALYSIS_VALKEY__HOST":           "valkey.platform",
+		"SB_ANALYSIS_VALKEY__PORT":           "25061",
+		"SB_ANALYSIS_VALKEY__TLS__ENABLED":   "true",
 	} {
 		t.Setenv(k, v)
 	}
@@ -140,6 +143,15 @@ func TestPlatformCredentialsEnv(t *testing.T) {
 	}
 	if c.S3.Endpoint != "s3.platform:443" || !c.S3.UseSSL {
 		t.Fatalf("s3: %+v", c.S3)
+	}
+	if c.Valkey.Address() != "valkey.platform:25061" || !c.Valkey.TLS.Enabled {
+		t.Fatalf("valkey: %+v", c.Valkey)
+	}
+	if got := (Valkey{Addr: "localhost:6379"}).Address(); got != "localhost:6379" {
+		t.Fatalf("valkey addr: %q", got)
+	}
+	if got := (Valkey{Host: "v"}).Address(); got != "v:6379" {
+		t.Fatalf("valkey default port: %q", got)
 	}
 }
 
