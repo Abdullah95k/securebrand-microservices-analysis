@@ -6,7 +6,7 @@
 |---|---|---|---|---|
 | 1 | A repository of its own (Part D) | [#3](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/3) | **Done** (merged 6 Nov, `b080a72`) | See [Fix 1](#fix-1-a-repository-of-its-own) |
 | 2 | Its own packaging: Helm chart, images on a tag, CI, metric prefix `sb_analysis_` (A1, A3) | [#4](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/4) | **Done** (merged 6 Nov, `22f8938`) | See [Fix 2](#fix-2-its-own-packaging) |
-| 3 | No unlimited budget by accident (C7) | this repository's pull request for fix 3 | In review | See [Fix 3](#fix-3-no-unlimited-budget-by-accident) |
+| 3 | No unlimited budget by accident (C7) | [#5](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/5) | In review | See [Fix 3](#fix-3-no-unlimited-budget-by-accident) |
 | 4 | Media memory: stream files to disk (B2) | – | Not started | – |
 | 5 | The provider's rate limit, fleet-wide (B6) | – | Not started | – |
 | 6 | Backpressure: cap the queue, pause ingest (C6) | – | Not started | – |
