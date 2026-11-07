@@ -61,6 +61,8 @@ A sentiment kappa above 0.6 is good and above 0.8 very good. Lower means the gui
 
 ## 2b. Labels from the strongest model instead (the owner's choice)
 
+> **Not run for now (the owner, 7 November 2026: "just Haiku for now").** No Opus labels, not even once. Haiku is measured only if a person labels the sample (section 2), or once the owner allows this step.
+
 Without a labeller, Claude Opus 5.5 (adaptive thinking, effort medium) labels the sample. Every other model is then measured by its agreement with Opus:
 
 ```bash

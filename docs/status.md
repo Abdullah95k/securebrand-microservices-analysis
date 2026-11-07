@@ -9,7 +9,7 @@
 | Code | Built and tested: unit and integration tests with race detection against real Postgres, Redpanda and Valkey. In `main` of the public repository `Abdullah95k/securebrand-microservices-analysis`. **A repository of its own since 6 Nov** (REQ-011 fix 1, `b080a72`): fbs's code is removed, and fbs's module is a dependency for the fb protos only. |
 | Running | **Started in production (7 Nov, 06:39 Iraq time)** at `5df7e33`: the migrate hook passed and svc-analysis synced. It reads `[content, fb]`, with a $10 daily hard stop and Claude Haiku. Running at `fdf8e73` since 10:47 Iraq time, 7 Nov (less database use while idle). The whisper server is up: the model download finished and it is Ready. PostgreSQL now allows 200 connections (was 50), since 14:32 Iraq time. No new runs on the shared server (owner's D-026). |
 | Pilot server | **No new runs there** (owner's D-026, 6 Nov). The Compose deployment next to the fbs pilot (`deploy/analysis/compose.yml`) stays in the repository; it was never started. |
-| Quality | **Not measured.** The evaluation (`docs/analysis/evaluation.md`, about $3–5) is approved; it runs on the production cluster once fbs collects there (owner, 6 Nov). |
+| Quality | **Not measured, and on hold.** The owner (7 Nov): "just Haiku for now", so the one-off check with Opus labels (about $3–5) doesn't run. Haiku can still be measured at no AI cost if a person labels the sample (`docs/analysis/evaluation.md`, section 2). |
 | Contract | **Contract v1.2.0** (owner, 7 Nov; REQ-022 done on v1.0.0, `fe0dc52`). sb-analysis reads the contract's `content.post.v1`, `content.comment.v1`, `content.media.ready.v1` and `content.media.deleted.v1`, and publishes the contract's `analysis.*` and `content.media.processed.v1` (as `sb-analysis`). In CI, every kind it produces passes the contract's own conformance checks (production mode). It also reads fbs's `fb.*`, whose results stay in Postgres. Record: [`analysis-contract-adoption.md`](master/analysis-contract-adoption.md). |
 | Schema Registry | sb-analysis registers nothing (standing instruction: no `securebrand.content.*` until the master publishes v1). **But the pilot's shared registry already holds 9 subjects from this repository's copy** (confirmed 6 Nov, 00:58 Iraq time): the 4 `content.*` subjects, `securebrand/content/v1/content.proto`, and the 4 `analysis.*` subjects, almost certainly from a `make pilot-up` run from this copy around 1 November. The master (6 Nov): they don't block the platform, since staging and production get their own registry. **Leave them in place; delete nothing.** |
 
@@ -41,9 +41,8 @@
 
 ## Open decisions (owner or master)
 
-1. **For the owner: the one-off quality check (fix 7).** It has Claude Opus label 1,200 real items once (about $3–5) to measure Haiku against. Does "Haiku only" cover this one-off check too?
-2. **fbs's move to the contract:** a cut-over at one time T, designed when fbs's version is near (master, 7 Nov). No adapters for tks, igs or yts.
-3. **sb-analysis's own text copy:** keep it, or slim it to working state once the platform's entity layer and the client app exist (the owner's decision 7, "keep both for now"; REQ-011, later).
+1. **fbs's move to the contract:** a cut-over at one time T, designed when fbs's version is near (master, 7 Nov). No adapters for tks, igs or yts.
+2. **sb-analysis's own text copy:** keep it, or slim it to working state once the platform's entity layer and the client app exist (the owner's decision 7, "keep both for now"; REQ-011, later).
 
 ## Changes since the last update
 
@@ -178,3 +177,4 @@
   - The migrate hook ran twice and applied both times. The second time it found the database full ("server login has been failing … remaining connection slots are reserved"), waited 1 s, then went through. Before, that failed the deployment.
   - About 7 minutes after the new pods started, sb-analysis held 5 server connections (1 active, 4 idle), down from 6. The platform now closes idle server connections after 10 s, and PgBouncer replaces older ones within an hour.
 - **7 Nov, 14:32 Iraq time: PostgreSQL's limit is 200 connections, up from 50** (the master; platform pull request #38). Right after, 64 were in use across every service. sb-analysis's pods came through PostgreSQL's restart without restarting. Nothing pending from sb-analysis.
+- **7 Nov: the quality check stays Haiku-only** (the owner: "just Haiku for now"). The one-off Opus labelling of 1,200 items (fix 7) doesn't run, so Haiku's quality stays unmeasured. A person can still label the sample at no AI cost. Decision 22.
