@@ -47,18 +47,18 @@ The "stronger setup" (a more expensive AI, Sonnet, for posts, images and videos)
 
 Server and storage costs come on top: roughly 330 GB of database storage a year at 300 million items.
 
-## Your decisions (answered 1 November 2026)
+## Your decisions (answered 1 November 2026, and later as dated)
 
 | # | Question | Your answer | What the system does |
 |---|---|---|---|
 | 1 | Send comments to Anthropic? | Yes | Analysis uses Claude. Phone numbers, e-mails and author names never leave. Your lawyer should still check the data-processing terms. |
-| 2 | Daily spending limit | Set after the test | $5 a day on the pilot until then. |
+| 2 | Daily spending limit | Set after the test; then, 7 Nov: no cap, use Haiku | Production has no daily cap (see 19). The pilot kept $5 a day. |
 | 3 | Everything within minutes? | No, within hours is fine | Bulk at half price; brand mentions within a minute. |
 | 4 | Topic list | Fine, if missing topics are added automatically | New topics are proposed by the AI, checked for duplicates, and approved by a second AI every 6 hours once 5 posts use them. You can step in at any time. |
 | 5 | Brand list | Fine, if missing ones are added automatically | New brands, organisations, public figures, positions and places found 5+ times are approved by the AI every 6 hours; spelling variants are merged into the known one. |
 | 6 | People | Public accounts stored | Public figures and public accounts are stored automatically. Private people are never stored. When the AI is unsure whether someone is public, it does not store them. |
 | 7 | Two copies of comments | Keep both for now | Both kept. |
-| 8-9 | Labeller and quality bar | No labeller; rely on the AI | The strongest AI (Opus) labels 1,200 real items once, about $3-5, and Haiku is measured against it (step 6 below). Production keeps checking 1 in 5,000 items with Opus. |
+| 8-9 | Labeller and quality bar | No labeller; rely on the AI | The strongest AI (Opus) labels 1,200 real items once, about $3-5, and Haiku is measured against it (step 6 below). Since 7 Nov (see 19), production no longer checks 1 in 5,000 items with Opus. |
 | 10 | Backup AI company | You asked me to choose | **Google Gemini** (reasons below). It is already set up on the pilot as the backup, and starts working as soon as you add its key (step 5). |
 | 11 | Legal flags | Religion: always flag criticism | Insults, mockery or attacks on any religion, sect, sacred text, symbol or religious figure are always flagged. A respectful question or disagreement, someone stating their own belief, and criticism of a cleric's *political* actions are not flagged on their own. Iraqi law punishes insulting religion, not disagreement, and many politicians are clerics. Peaceful political criticism and a person's sexuality are not flagged on their own; hate speech, threats, defamation, misinformation and the rest always are. |
 | 12 | Bot flags | Show them; users can mark "not a bot", with a log | Bot flags are shown on every item of the account. Anyone you allow can mark an account "not a bot" (or "is a bot"). Each decision is logged with who, when, why and the before/after. |
@@ -66,6 +66,9 @@ Server and storage costs come on top: roughly 330 GB of database storage a year 
 | 14 | Very large posts | Every comment | Every comment is analysed. |
 | 15 | Names of tagged people (6 Nov) | Hide them from the AI | When a commenter tags someone, that person's name is written as "@user" before anything is sent to the AI. Tagged brands and public figures stay readable, and the saved text is unchanged. |
 | 16 | Deleting data on an erasure request (6 Nov) | Never without your order | An erasure request from the collector is only recorded; nothing is deleted. A recorded request is deleted only when you order it, with `make analysis-cmd ARGS='erasures apply --request <id> --yes-delete'`. `make analysis-cmd ARGS='erasures list'` shows the requests received. |
+| 17 | Where production reads from (7 Nov) | fbs, tks, yts, igs, and the contract | Production reads the contract's topics (`content.*`), which every collector (fbs, tks, yts, igs) publishes as it adopts the contract, and fbs's own `fb.*` topics until fbs does. Results from `fb.*` stay in the analysis database; everything else is also published to the platform. |
+| 18 | Contract version (7 Nov) | v1.2.0 | Pinned. The test that runs in CI checks every kind of result with the contract's own checks. |
+| 19 | Daily cap (7 Nov) | No cap; use Haiku | No daily spending limit in production. Every AI call uses Claude Haiku: the text, image and video analysis, and the topic and brand list upkeep. The second opinion from a stronger model on unsure brand mentions, and the Opus quality sample, are switched off. Speech in videos comes only from the platform's captions, so no speech-to-text is bought. Spending is still measured (`sb_analysis_cost_usd_total`). |
 
 **Why Google Gemini as the backup:**
 - its prices are confirmed on Google's official page (OpenAI's could not be checked);

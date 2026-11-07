@@ -1,16 +1,16 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 6 November 2026 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 7 November 2026 (Iraq time).*
 
 ## Where it stands
 
 | Area | State |
 |---|---|
 | Code | Built and tested: unit and integration tests with race detection against real Postgres, Redpanda and Valkey. In `main` of the public repository `Abdullah95k/securebrand-microservices-analysis`. **A repository of its own since 6 Nov** (REQ-011 fix 1, `b080a72`): fbs's code is removed, and fbs's module is a dependency for the fb protos only. |
-| Running | **Nowhere.** Never analysed real content; never called an AI provider with real data. From 6 Nov, testing happens on the production cluster, at full scale (owner's D-026): no new runs on the shared server. |
+| Running | **Switched on in the chart (owner, 7 Nov), not yet running.** `values-production.yaml` now runs both workloads (1 replica each), reads `[content, fb]`, has no daily cap and uses Claude Haiku only. It runs once the master pins this commit and gives `analysis-kafka` write access to `analysis.*` again. Never analysed real content so far. No new runs on the shared server (owner's D-026). |
 | Pilot server | **No new runs there** (owner's D-026, 6 Nov). The Compose deployment next to the fbs pilot (`deploy/analysis/compose.yml`) stays in the repository; it was never started. |
 | Quality | **Not measured.** The evaluation (`docs/analysis/evaluation.md`, about $3–5) is approved; it runs on the production cluster once fbs collects there (owner, 6 Nov). |
-| Contract | **Contract v1.0.0 adopted (REQ-022 done, `fe0dc52`).** sb-analysis reads the contract's `content.post.v1`, `content.comment.v1`, `content.media.ready.v1` and `content.media.deleted.v1` (`analysis.inputs: [content]`), and publishes the contract's `analysis.*` and `content.media.processed.v1` (as `sb-analysis`). A CI end-to-end test checks every kind it produces against the contract. It still reads `fb.*` too (`[fb]`, the default today); those results stay in Postgres. Production stays at 0 replicas until the owner switches it on. Record: [`analysis-contract-adoption.md`](master/analysis-contract-adoption.md). |
+| Contract | **Contract v1.2.0** (owner, 7 Nov; REQ-022 done on v1.0.0, `fe0dc52`). sb-analysis reads the contract's `content.post.v1`, `content.comment.v1`, `content.media.ready.v1` and `content.media.deleted.v1`, and publishes the contract's `analysis.*` and `content.media.processed.v1` (as `sb-analysis`). In CI, every kind it produces passes the contract's own conformance checks (production mode). It also reads fbs's `fb.*`, whose results stay in Postgres. Record: [`analysis-contract-adoption.md`](master/analysis-contract-adoption.md). |
 | Schema Registry | sb-analysis registers nothing (standing instruction: no `securebrand.content.*` until the master publishes v1). **But the pilot's shared registry already holds 9 subjects from this repository's copy** (confirmed 6 Nov, 00:58 Iraq time): the 4 `content.*` subjects, `securebrand/content/v1/content.proto`, and the 4 `analysis.*` subjects, almost certainly from a `make pilot-up` run from this copy around 1 November. The master (6 Nov): they don't block the platform, since staging and production get their own registry. **Leave them in place; delete nothing.** |
 
 ## Work in progress (from 6 Nov)
@@ -41,11 +41,8 @@
 
 ## Open decisions (owner or master)
 
-0. **For the owner: switch production on, and on which input?** `[content]` once the platform's collectors publish the contract, `[fb]` (results kept in Postgres) until then, or both. The master then restores write access to `analysis.*`, and the replicas go up with the $5 daily cap. This also answers decision 1 below.
-0. **For the owner: pin contract v1.2.0 instead of v1.0.0?** The master asks for it (6 Nov): v1.2.0 adds the conformance checks v1.0.0 lacks (`MediaAnalysis`, `AuthorFlag`, `TopicUpdate`, `MediaProcessed`, `MediaDeleted`). The messages sb-analysis reads and writes are identical in both. Recommended: yes.
-
-1. **For the owner: run in production before REQ-022?** The master suggests reading fbs's `fb.*` topics in production until the contract is adopted. That needs a switch, not in REQ-011, that keeps results in Postgres and off the platform's `analysis.*` topics, whose contract format the draft results don't match. The canary also waits for fixes 3 to 6.
-2. **For the owner: is the $5 a day a hard stop for urgent items too?** Today `analysis.budget.urgent_exempt: true` lets urgent real-time items continue over the cap. The master asks for a hard stop.
+1. **For the master: what do tks, yts and igs publish in production today?** The owner wants all four collectors read. If they publish the contract's `content.*` topics, `[content, fb]` already covers them. If some still publish topics of their own, they need adapters like fbs's, proposed first.
+2. **For the owner: the one-off quality check (fix 7).** It has Claude Opus label 1,200 real items once (about $3–5) to measure Haiku against. Does "Haiku only" cover this one-off check too, or only the running service?
 3. **sb-analysis's own text copy:** keep it, or slim it to working state once the platform's entity layer and the client app exist (the owner's decision 7, "keep both for now"; REQ-011, later).
 
 ## Changes since the last update
@@ -126,3 +123,13 @@
   - **What it checks:** every kind sb-analysis produces comes off Kafka with the contract's headers and passes the contract's checks: `ItemAnalysis`, `MediaAnalysis`, `AuthorFlag`, `TopicUpdate`, `MediaProcessed`.
   - **Small fixes:** a media transcript always carries its language and source; documents keep their type.
 - **6 Nov:** REQ-022 steps 3 and 4 merged (pull request #13, `fe0dc52`). **REQ-022 is done.** The master has the commit; production stays at 0 replicas until the owner decides.
+- **6 Nov:** status update merged (pull request #14, `8dacd75`).
+- **7 Nov, the owner's decisions:**
+  - production reads every collector: the contract's `content.*` (fbs, tks, yts, igs as each adopts it) and fbs's `fb.*`;
+  - contract v1.2.0;
+  - no daily cap, Claude Haiku only.
+- **7 Nov, applying them (in review):**
+  - contract v1.2.0 pinned, and CI's end-to-end test now uses the contract's own checks for all five kinds;
+  - `values-production.yaml`: both workloads on (1 replica each), `inputs: [content, fb]`, no cap (`allow_unlimited: true`), escalation and audit off, curation on Haiku;
+  - new `TestProductionConfig` guards those settings, and CI checks that production renders both workloads.
+  - Nothing removed; no topic, field or schema changed. The headers now say `sb-contract: 1.2.0`.
