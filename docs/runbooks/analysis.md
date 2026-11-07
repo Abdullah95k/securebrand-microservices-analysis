@@ -23,7 +23,19 @@ The Helm chart (`deploy/helm/sb-analysis`) runs `analysis` (all roles but media)
 - It opens at most 4 connections per process, and closes idle ones after 30 seconds.
 - `make test-pgbouncer` (and CI) run the tests through a PgBouncer set up the same way.
 - Errors like `prepared statement … does not exist` mean something bypasses `pg.Open`.
-- **At start:** a full server (`too many connections`, 53300) or one starting up (57P03) is retried for about two minutes, with `pg: server busy at start; retrying` in the log. Any other error stops the start at once. Credentials come from the platform's secrets (`platform-credentials`, `ai-provider`); the chart creates no topics and registers no schemas. Scaling:
+- **A full database** is waited for, with `pg: server busy; retrying` and the step (`connect` or `migrate`) in the log:
+  - what counts as full: PostgreSQL's `too many connections` (53300) or `starting up` (57P03), and PgBouncer's own `query_wait_timeout`, `server login has been failing … (server_login_retry)`, `no more connections allowed`, `client_login_timeout` and `pgbouncer cannot connect to server`;
+  - a pod's start waits about two minutes, then fails and the pod restarts;
+  - the migrate hook waits up to 30 minutes, then fails: a failed hook blocks the deployment. Each migration is its own transaction, so a migration cut off by a full pool runs again;
+  - any other error stops at once.
+- **It touches the database as little as it can while idle** (the master, 7 Nov: idle polls kept the shared database's connections busy):
+  - an empty queue is polled by one worker for all of them, and less often each time it is still empty: the real-time lane from `realtime.poll` (1 s) up to `realtime.idle_poll` (15 s), the media queue from `media.poll` (2 s) up to `media.idle_poll` (30 s), and the outbox from 0.5 s up to 10 s. Work found sets the wait back and wakes every worker;
+  - a real-time item is claimed within `idle_poll` after its 20 s `wait`, so still within about a minute;
+  - `/readyz` pings PostgreSQL at most once a minute and answers from that ping in between, a failure included; `/healthz` (liveness) doesn't touch the database;
+  - the queue and outbox gauges are refreshed once a minute while idle.
+  An idle `analysis` pod sends about 20 queries a minute (before: about 12 a second); an idle `analysis-media` pod under 10 (before: about 2 a second).
+
+Credentials come from the platform's secrets (`platform-credentials`, `ai-provider`); the chart creates no topics and registers no schemas. Scaling:
 - **Ingest:** scales on Kafka lag (KEDA).
 - **Pipeline:** I/O-bound; one replica handles ~10 items/s with batching. More replicas share the queue safely (`SKIP LOCKED`).
 - **Media:** scale on `sb_analysis_media_ttl_at_risk` and the pending `media_jobs`.

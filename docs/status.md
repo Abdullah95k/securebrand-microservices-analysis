@@ -169,3 +169,8 @@
   - **Whisper (the master, 08:40 Iraq time):** Ready since 07:33 Iraq time with no restarts, and it answers its health check. The model download finished this time.
   - **No transcription yet:** no video without captions has arrived, because the collectors don't have their proxies yet.
   - **analysis-media's readiness** failed twice (08:12 and 08:39 Iraq time). Its check pings PostgreSQL with a 3 s timeout, and the shared database was busy. It processes the queue, not requests, so a short not-ready changes nothing.
+- **7 Nov, 10:07 Iraq time: PostgreSQL full again** (the master: 47 of 50, analysis 4). The master asked every service to stop touching the database every few seconds, and for a migrate hook that waits for a free slot. **In review:**
+  - **Idle polling:** an empty queue is polled by one worker for all of them, less often each time: real time up to every 15 s, media up to 30 s, the outbox up to 10 s. A real-time item is still claimed within about a minute.
+  - **Readiness** pings PostgreSQL at most once a minute and reuses the answer; liveness never touches it.
+  - **Result:** an idle `analysis` pod sends about 20 queries a minute instead of about 12 a second; `analysis-media` under 10 instead of 2 a second.
+  - **The migrate hook** waits up to 30 minutes for a free slot, including PgBouncer's own "pool full" errors, instead of about 2.

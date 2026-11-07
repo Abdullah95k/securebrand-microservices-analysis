@@ -127,7 +127,10 @@ type RealtimeLane struct {
 	// Wait lets a thread's siblings accumulate before an item is claimed.
 	Wait  time.Duration `koanf:"wait"`
 	Lease time.Duration `koanf:"lease"`
-	Poll  time.Duration `koanf:"poll"`
+	// Poll is the wait after an empty poll; while the lane stays empty it
+	// doubles up to IdlePoll, and one worker polls for all of them.
+	Poll     time.Duration `koanf:"poll"`
+	IdlePoll time.Duration `koanf:"idle_poll"`
 }
 
 // Route configures one content type: which model, lane and fallback.
@@ -256,12 +259,15 @@ type AnalysisMedia struct {
 	// WorkerMemoryMiB is one worker's worst case (a decoded image at
 	// image_max_pixels, or an ffmpeg run); workers are lowered at start to
 	// fit the container's memory limit.
-	WorkerMemoryMiB int           `koanf:"worker_memory_mib"`
-	ImageMaxSide    int           `koanf:"image_max_side"`
-	Poll            time.Duration `koanf:"poll"`
-	Lease           time.Duration `koanf:"lease"`
-	MaxTries        int           `koanf:"max_tries"`
-	Video           VideoConfig   `koanf:"video"`
+	WorkerMemoryMiB int `koanf:"worker_memory_mib"`
+	ImageMaxSide    int `koanf:"image_max_side"`
+	// Poll is the wait after an empty poll; while the queue stays empty it
+	// doubles up to IdlePoll, and one worker polls for all of them.
+	Poll     time.Duration `koanf:"poll"`
+	IdlePoll time.Duration `koanf:"idle_poll"`
+	Lease    time.Duration `koanf:"lease"`
+	MaxTries int           `koanf:"max_tries"`
+	Video    VideoConfig   `koanf:"video"`
 }
 
 // VideoConfig: key frames with ffmpeg, speech-to-text through a provider.

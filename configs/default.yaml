@@ -85,7 +85,12 @@ analysis:
     workers: 4
     wait: 20s              # let a thread's siblings arrive before claiming
     lease: 2m
+    # After an empty poll the lane waits poll, then twice as long each time
+    # up to idle_poll, with one worker polling for all: the database is
+    # shared (through PgBouncer), so an idle lane mustn't query it every
+    # second. A real-time item is claimed within idle_poll of its wait.
     poll: 1s
+    idle_poll: 15s
   # One model per content type; the evaluation (sb-eval) decides. Thinking
   # is off for classification: Claude Haiku 5.5 thinks by default and bills
   # thinking as output.
@@ -201,6 +206,7 @@ analysis:
     image_max_pixels: 40000000 # 40 megapixels: about 160 MiB decoded
     image_max_side: 1024
     poll: 2s
+    idle_poll: 30s         # as realtime.idle_poll: one worker polls an empty queue, less often
     lease: 10m
     max_tries: 5
     video:

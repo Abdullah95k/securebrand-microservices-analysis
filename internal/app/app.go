@@ -193,7 +193,9 @@ func (a *App) Components(roles []string) ([]func(context.Context) error, error) 
 			}
 			fns = append(fns, a.Pipeline.RunRealtime, a.Pipeline.RunBatch,
 				func(ctx context.Context) error {
-					return Every(ctx, "queue-metrics", 15*time.Second, a.Pipeline.QueueMetrics)
+					// Once a minute: the alerts on these wait 10 minutes or
+					// more, and the database is shared.
+					return Every(ctx, "queue-metrics", time.Minute, a.Pipeline.QueueMetrics)
 				})
 		case "media":
 			if !cfg.Media.Enabled {

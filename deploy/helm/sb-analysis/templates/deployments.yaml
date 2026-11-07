@@ -39,9 +39,12 @@ spec:
           {{- include "sba.envFrom" $root | nindent 10 }}
           ports:
             - {name: metrics, containerPort: 9090}
+          # /readyz pings PostgreSQL at most once a minute and answers from
+          # that in between; the ping may take up to 3 seconds.
           readinessProbe:
             httpGet: {path: /readyz, port: metrics}
             periodSeconds: 10
+            timeoutSeconds: 5
             failureThreshold: 3
           livenessProbe:
             httpGet: {path: /healthz, port: metrics}
