@@ -10,7 +10,7 @@
 | 4 | Media memory: stream files to disk (B2) | [#6](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/6) | **Done** (merged 6 Nov, `34545d9`) | See [Fix 4](#fix-4-media-memory) |
 | 5 | The provider's rate limit, fleet-wide (B6) | [#7](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/7) | **Done** (merged 6 Nov, `cfc8125`) | See [Fix 5](#fix-5-the-providers-rate-limit-fleet-wide) |
 | 6 | Backpressure: cap the queue, pause ingest (C6) | [#8](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/8) | **Done** (merged 6 Nov, `1006f37`) | See [Fix 6](#fix-6-backpressure) |
-| 7 | The quality evaluation | – | **Waiting:** runs on the production cluster once fbs collects there (owner, 6 Nov). The steps for the owner come then. | – |
+| 7 | The quality evaluation | – | **On hold (owner, 7 Nov: "just Haiku for now"):** the Opus labelling doesn't run, so Haiku's quality stays unmeasured. A person can label the sample with the labelling tool at no AI cost; otherwise it waits for the owner. | – |
 | 8 | The real-time lane: tracked brands and entities, hot-tier accounts | [#9](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/9) | **Done** (merged 6 Nov, `8cc528d`) | See [Fix 8](#fix-8-the-real-time-lane) |
 | 9 | A backfill path (plan only) | [#10](https://github.com/Abdullah95k/securebrand-microservices-analysis/pull/10) | **Plan merged** (6 Nov, `4002dfd`; the master's answers included). Building it comes after REQ-022, with the owner's approval | [`analysis-backfill-plan.md`](analysis-backfill-plan.md) |
 
