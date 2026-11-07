@@ -22,7 +22,8 @@ The Helm chart (`deploy/helm/sb-analysis`) runs `analysis` (all roles but media)
 - It keeps no session state: only transaction-level advisory locks, with no `SET`, temporary tables or `LISTEN`.
 - It opens at most 4 connections per process, and closes idle ones after 30 seconds.
 - `make test-pgbouncer` (and CI) run the tests through a PgBouncer set up the same way.
-- Errors like `prepared statement … does not exist` mean something bypasses `pg.Open`. Credentials come from the platform's secrets (`platform-credentials`, `ai-provider`); the chart creates no topics and registers no schemas. Scaling:
+- Errors like `prepared statement … does not exist` mean something bypasses `pg.Open`.
+- **At start:** a full server (`too many connections`, 53300) or one starting up (57P03) is retried for about two minutes, with `pg: server busy at start; retrying` in the log. Any other error stops the start at once. Credentials come from the platform's secrets (`platform-credentials`, `ai-provider`); the chart creates no topics and registers no schemas. Scaling:
 - **Ingest:** scales on Kafka lag (KEDA).
 - **Pipeline:** I/O-bound; one replica handles ~10 items/s with batching. More replicas share the queue safely (`SKIP LOCKED`).
 - **Media:** scale on `sb_analysis_media_ttl_at_risk` and the pending `media_jobs`.

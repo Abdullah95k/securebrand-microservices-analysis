@@ -7,7 +7,7 @@
 | Area | State |
 |---|---|
 | Code | Built and tested: unit and integration tests with race detection against real Postgres, Redpanda and Valkey. In `main` of the public repository `Abdullah95k/securebrand-microservices-analysis`. **A repository of its own since 6 Nov** (REQ-011 fix 1, `b080a72`): fbs's code is removed, and fbs's module is a dependency for the fb protos only. |
-| Running | **Switched on (owner, 7 Nov); deploying.** The master pinned `b3d94d4` (contract v1.2.0, `[content, fb]`, Haiku) and then `c37a753` (speech in videos with an own Whisper server); it reports when they're synced. Next in review: the $10 daily hard stop. No new runs on the shared server (owner's D-026). |
+| Running | **Started in production (7 Nov, 06:39 Iraq time)** at `5df7e33`: the migrate hook passed and svc-analysis synced. It reads `[content, fb]`, with a $10 daily hard stop and Claude Haiku. The whisper server isn't up yet: the master is checking its volume and the model download. No new runs on the shared server (owner's D-026). |
 | Pilot server | **No new runs there** (owner's D-026, 6 Nov). The Compose deployment next to the fbs pilot (`deploy/analysis/compose.yml`) stays in the repository; it was never started. |
 | Quality | **Not measured.** The evaluation (`docs/analysis/evaluation.md`, about $3–5) is approved; it runs on the production cluster once fbs collects there (owner, 6 Nov). |
 | Contract | **Contract v1.2.0** (owner, 7 Nov; REQ-022 done on v1.0.0, `fe0dc52`). sb-analysis reads the contract's `content.post.v1`, `content.comment.v1`, `content.media.ready.v1` and `content.media.deleted.v1`, and publishes the contract's `analysis.*` and `content.media.processed.v1` (as `sb-analysis`). In CI, every kind it produces passes the contract's own conformance checks (production mode). It also reads fbs's `fb.*`, whose results stay in Postgres. Record: [`analysis-contract-adoption.md`](master/analysis-contract-adoption.md). |
@@ -154,3 +154,9 @@
     - it describes statements instead of keeping them prepared (`cache_describe`), and closes idle connections after 30 s;
     - production opens at most 4 connections per process;
     - the whole suite runs through PgBouncer in CI and with `make test-pgbouncer`.
+- **7 Nov:** the PgBouncer fit merged (pull request #19, `5df7e33`). CI ran the suite through PgBouncer too.
+- **7 Nov, 06:39 Iraq time: sb-analysis started in production.** The migrate hook passed at `5df7e33`.
+  - The master fixed the `analysis-media` image pull (401): DigitalOcean's pull secret sits only on the namespace's default ServiceAccount.
+  - **In review:**
+    - `values-production.yaml` now names that pull secret too;
+    - a full database at start (53300, when several services start at once) is retried for about two minutes instead of restarting the pod.
