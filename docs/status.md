@@ -166,4 +166,6 @@
   - **The shared PostgreSQL ran out of connections from 07:37 to 08:00 Iraq time.** sb-analysis restarted once and one migrate hook failed; both recovered without help.
   - **sb-analysis's share is small:** 2 pods × at most 4 connections, about 16 while a rolling update overlaps them, and 2 more during the migrate hook. No transaction stays open across an AI, Whisper or storage call.
   - **The cause (the master):** tks, igs and fbs rolled out at the same time. PgBouncer keeps a server pool per database and user, and about 12 of them share the 50 slots. At 07:46 Iraq time: fbs 11 (10 idle; now capped at 4 per process), PgBouncer 9, tks 9, analysis 6, igs 4, DigitalOcean 4, schema registry 2, postgres 2. The master is putting the database's size to the owner. sb-analysis's limits stay as they are (the master agreed).
-  - **Waiting for:** the model download's log, and the first Whisper transcription.
+  - **Whisper (the master, 08:40 Iraq time):** Ready since 07:33 Iraq time with no restarts, and it answers its health check. The model download finished this time.
+  - **No transcription yet:** no video without captions has arrived, because the collectors don't have their proxies yet.
+  - **analysis-media's readiness** failed twice (08:12 and 08:39 Iraq time). Its check pings PostgreSQL with a 3 s timeout, and the shared database was busy. It processes the queue, not requests, so a short not-ready changes nothing.
