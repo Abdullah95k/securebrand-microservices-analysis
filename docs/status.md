@@ -7,7 +7,7 @@
 | Area | State |
 |---|---|
 | Code | Built and tested: unit and integration tests with race detection against real Postgres, Redpanda and Valkey. In `main` of the public repository `Abdullah95k/securebrand-microservices-analysis`. **A repository of its own since 6 Nov** (REQ-011 fix 1, `b080a72`): fbs's code is removed, and fbs's module is a dependency for the fb protos only. |
-| Running | **Started in production (7 Nov, 06:39 Iraq time)** at `5df7e33`: the migrate hook passed and svc-analysis synced. It reads `[content, fb]`, with a $10 daily hard stop and Claude Haiku. The whisper server isn't up yet: its model download was OOM-killed, and the fix (pull request #20, `4e7a58e`) is with the master to pin. No new runs on the shared server (owner's D-026). |
+| Running | **Started in production (7 Nov, 06:39 Iraq time)** at `5df7e33`: the migrate hook passed and svc-analysis synced. It reads `[content, fb]`, with a $10 daily hard stop and Claude Haiku. Running at `4e7a58e` since 7 Nov, about 08:12 Iraq time. The whisper server is up: the model download finished and it is Ready. No new runs on the shared server (owner's D-026). |
 | Pilot server | **No new runs there** (owner's D-026, 6 Nov). The Compose deployment next to the fbs pilot (`deploy/analysis/compose.yml`) stays in the repository; it was never started. |
 | Quality | **Not measured.** The evaluation (`docs/analysis/evaluation.md`, about $3–5) is approved; it runs on the production cluster once fbs collects there (owner, 6 Nov). |
 | Contract | **Contract v1.2.0** (owner, 7 Nov; REQ-022 done on v1.0.0, `fe0dc52`). sb-analysis reads the contract's `content.post.v1`, `content.comment.v1`, `content.media.ready.v1` and `content.media.deleted.v1`, and publishes the contract's `analysis.*` and `content.media.processed.v1` (as `sb-analysis`). In CI, every kind it produces passes the contract's own conformance checks (production mode). It also reads fbs's `fb.*`, whose results stay in Postgres. Record: [`analysis-contract-adoption.md`](master/analysis-contract-adoption.md). |
@@ -162,3 +162,8 @@
     - a full database at start (53300, when several services start at once) is retried for about two minutes instead of restarting the pod.
 - **7 Nov, the whisper server's model download was OOM-killed** in production at its 1 GiB limit (the Xet client buffers the model in memory; found by the master). It now downloads by plain HTTP, streamed to the volume, with a 3 GiB limit. In review, with the start-up fixes above.
 - **7 Nov:** the start-up fixes merged (pull request #20, `4e7a58e`): the pull secret, the retry for a full database, and the model download by plain HTTP. Sent to the master to pin; waiting for the whisper pod's first start.
+- **7 Nov, 08:12 Iraq time: `4e7a58e` live** (reported by the master). svc-analysis is Synced and Healthy, and the whisper pod is Running and Ready with no restarts.
+  - **The shared PostgreSQL ran out of connections from 07:37 to 08:00 Iraq time.** sb-analysis restarted once and one migrate hook failed; both recovered without help.
+  - **sb-analysis's share is small:** 2 pods × at most 4 connections, about 16 while a rolling update overlaps them, and 2 more during the migrate hook. No transaction stays open across an AI, Whisper or storage call.
+  - **Asked the master** which connections filled the slots: through the PgBouncer pools or direct to PostgreSQL, and by which database user.
+  - **Waiting for:** the model download's log, and the first Whisper transcription.
