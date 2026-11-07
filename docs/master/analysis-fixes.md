@@ -18,6 +18,7 @@
 
 - **Fix 7:** the evaluation runs on the production cluster, once fbs collects there (option b), not on the shared server.
 - **Fix 3:** the canary on production gets a $5 daily cap on AI spending. The pilot keeps $5 a day (1 November).
+  - **Changed 7 Nov:** no cap in production; Claude Haiku for everything instead. Set through fix 3's explicit opt-in (`allow_unlimited: true`).
 - **Questions for the master:** [`questions-for-master-2026-11-06.md`](questions-for-master-2026-11-06.md) covers where the images and the chart go, the production namespace, account tiers, and the backfill store.
 - **The master's answer on question 1 (6 Nov):**
   - the platform builds sb-analysis's images from a commit of this repository and keeps them in its own registry;

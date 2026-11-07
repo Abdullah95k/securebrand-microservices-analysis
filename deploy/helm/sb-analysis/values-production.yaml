@@ -6,21 +6,19 @@
 # Every topic and Schema Registry subject is the platform's: this chart
 # creates none and registers none.
 
-# Off for now: REQ-022 (adopting the contract) is being built in steps, and
-# production waits for all of them. Turned on after REQ-022, or, with the
-# owner's approval, earlier on fbs's fb.* topics (analysis.inputs: [fb]),
-# whose results stay in Postgres and never reach the platform's analysis.*
-# topics. The migrate hook still runs, so the database side can be checked.
+# On (the owner, 7 November 2026), after REQ-022 (contract v1.2.0). The
+# platform's Kafka user may write analysis.* again from the commit the
+# master pins with this change.
 components:
   analysis:
-    replicas: 0
+    replicas: 1
   analysis-media:
-    replicas: 0
+    replicas: 1
 
 # Credentials from the secret "platform-credentials" in the namespace:
 # POSTGRES_* (database "analysis", PostgreSQL 18), KAFKA_* (user
-# analysis-kafka: content.* and analysis.*; until REQ-022 also consumes fb.*
-# and registry.* and produces fb.media.processed.v1), S3_* (media read from
+# analysis-kafka: content.* and analysis.*; also consumes fb.* and
+# registry.* and produces fb.media.processed.v1), S3_* (media read from
 # S3_BUCKET_MEDIA, under each collector's prefix), VALKEY_* (shared rate
 # limits). ClickHouse (secret clickhouse-ro) comes with REQ-011 fix 9.
 platformCredentials:
@@ -67,6 +65,21 @@ config:
     postgres:
       dsn: ""            # "" = the parts above
       max_conns: 10
-    # The daily AI budget: $5, the pilot's figure, until the owner sets
-    # another (owner and master, 6 November 2026).
-    budget: {daily_usd: 5}
+    # Every collector (the owner, 7 November 2026): the contract's content.*
+    # topics, which fbs, tks, yts and igs publish as each adopts the
+    # contract, and fbs's own fb.* topics until fbs does (their results stay
+    # in Postgres; they have no contract IDs).
+    inputs: [content, fb]
+    # No daily cap (the owner, 7 November 2026): cost is held down by using
+    # Claude Haiku for everything instead. allow_unlimited is the explicit
+    # opt-in REQ-011 fix 3 asks for.
+    budget: {daily_usd: 0, allow_unlimited: true}
+    # Haiku only (the owner, 7 November 2026): the text, image and video
+    # routes already use it; the stronger second opinion (escalation) and
+    # the quality sample (audit, Claude Opus) are off; the topic and entity
+    # curation use Haiku.
+    routes:
+      escalation: {enabled: false, model: claude-haiku-5-5}
+      audit: {enabled: false, model: claude-haiku-5-5}
+    topics:
+      curation: {model: claude-haiku-5-5}

@@ -2,7 +2,9 @@
 
 *The record of REQ-022, kept current for the master session and the owner. Times are Iraq time. Started 6 November 2026.*
 
-- **The contract:** the Go module `github.com/abdullah95k/securebrand-contracts`, tag **v1.0.0**, pinned in `go.mod`, as REQ-022 says. The master asks for v1.2.0 (question 1 below); that waits for the owner.
+- **The contract:** the Go module `github.com/abdullah95k/securebrand-contracts`, pinned in `go.mod`:
+  - REQ-022 was built on **v1.0.0**;
+  - since 7 November, **v1.2.0**, on the owner's decision (question 1 below). The messages are identical; v1.2.0 adds the checks.
 - **Done** (6 November, `fe0dc52`): every part below is merged. Production stays off (`values-production.yaml`, replicas 0) until the owner decides to switch it on ("Switching on", below).
 
 ## Progress
@@ -210,25 +212,34 @@ Also checked:
 - the deleted file is never fetched or acknowledged.
 - **The test catches a broken message:** with the `reason` removed from acknowledgements on purpose, it failed on the sticker's `SKIPPED`.
 
-**Why "the rules of v1.2.0":** v1.0.0's `conformance` package has no checks for those four kinds. The test applies v1.2.0's rules itself, and switches to the package's own functions once the owner agrees to pin v1.2.0 (question 1).
+**Why "the rules of v1.2.0":** v1.0.0's `conformance` package has no checks for those four kinds, so the test first applied v1.2.0's rules itself. **Since 7 November** (v1.2.0 pinned), it uses the package's own `conformance.MediaAnalysis`, `AuthorFlag`, `TopicUpdate` and `MediaProcessed`, in production mode.
 
 **Two fixes the checks led to** (merged with step 3):
 - a transcript always carries its language (`und` when unknown) and its source;
 - a `document` keeps its type.
 
-## Switching on (after the owner's approval)
+## Switching on (the owner, 7 November 2026)
 
-REQ-022 is complete with step 4. Production stays at 0 replicas until the owner decides. To switch on:
-1. **The input:** set `analysis.inputs` in `values-production.yaml`:
-   - `[content]` when the platform's collectors publish the contract;
-   - `[fb]` (the early-running option) until then, with results kept in Postgres;
-   - or both.
-2. **The master restores write access** to `analysis.*` for `analysis-kafka`: it asked to be told in the same message as the commit to pin.
-3. **Replicas up** (`components.analysis.replicas`, `components.analysis-media.replicas`), with the $5 daily budget.
+The owner's answers:
+- **Inputs:** every collector. The contract's topics, which fbs, tks, yts and igs publish as each adopts the contract, and fbs's own `fb.*` until fbs does: `analysis.inputs: [content, fb]`.
+- **Contract:** v1.2.0.
+- **Budget:** no daily cap; Claude Haiku for everything.
+
+**Applied in `values-production.yaml`:**
+- both workloads at 1 replica;
+- `inputs: [content, fb]`;
+- `budget: {daily_usd: 0, allow_unlimited: true}`;
+- escalation and audit off;
+- topic and entity curation on Haiku;
+- speech-to-text off (as before), so transcripts come from captions only.
+
+`TestProductionConfig` loads production's configuration as the chart builds it and fails if any of this drifts.
+
+**What remains is the master's:** pin the commit, and give `analysis-kafka` write access to `analysis.*` again in the same change.
 
 ### Questions for the master
 
-1. **Conformance for the other kinds:** v1.0.0's `conformance` package checks `ItemAnalysis` but not `MediaAnalysis`, `AuthorFlag`, `TopicUpdate` or `MediaProcessed`.
+1. **Conformance for the other kinds (answered: v1.2.0, pinned 7 Nov):** v1.0.0's `conformance` package checks `ItemAnalysis` but not `MediaAnalysis`, `AuthorFlag`, `TopicUpdate` or `MediaProcessed`.
    - **The master's answer (6 Nov):** contract **v1.2.0** (commit `30153b4`) adds those checks, plus `MediaDeleted`, with a sample each. The master asks to pin v1.2.0 instead of v1.0.0.
    - **Checked here:** the analysis, content and media protos are identical in v1.0.0 and v1.2.0. The only proto change is two additions to discovery's `Candidate`, which sb-analysis doesn't use.
    - **Waiting for the owner:** REQ-022 names v1.0.0, so the switch is the owner's decision. Recommended: yes. If agreed, it's a small pull request of its own: the new pin, plus the five checks in CI.

@@ -3,7 +3,7 @@ module github.com/abdullah95k/securebrand-microservices-analysis
 go 1.27.2
 
 require (
-	github.com/abdullah95k/securebrand-contracts v1.0.0
+	github.com/abdullah95k/securebrand-contracts v1.2.0
 	github.com/abdullah95k/securebrand-microservices v0.0.0-20261105235346-f87d6aef08b9
 	github.com/anthropics/anthropic-sdk-go/v2 v2.4.0
 	github.com/google/uuid v1.6.0

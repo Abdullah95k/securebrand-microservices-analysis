@@ -8,7 +8,6 @@ import (
 	"image/color"
 	"image/png"
 	"io"
-	"strings"
 	"testing"
 	"time"
 
@@ -60,8 +59,9 @@ func pngFile(t *testing.T) []byte {
 // deletion; sb-analysis runs ingest, pipeline, media and relay against
 // real Postgres and Redpanda; the owner's bot scoring and a topic approval
 // run as their commands do. Every kind sb-analysis produces then comes off
-// Kafka with the contract's headers and passes the contract's checks:
-// ItemAnalysis, MediaAnalysis, AuthorFlag, TopicUpdate and MediaProcessed.
+// Kafka with the contract's headers and passes the contract's own
+// conformance checks in production mode: ItemAnalysis, MediaAnalysis,
+// AuthorFlag, TopicUpdate and MediaProcessed.
 func TestContractEveryKindEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -154,12 +154,13 @@ func TestContractEveryKindEndToEnd(t *testing.T) {
 	}
 
 	prefix := e.cfg.Kafka.TopicPrefix
+	prod := conformance.Options{Production: true}
 	// Every kind, off Kafka, with the contract's headers and checks.
 	results := consume(t, ctx, e.brokers, prefix+topics.AnalysisResult, 34)
 	for id, r := range results {
 		var m analysisv1.ItemAnalysis
 		decode(t, r, &m)
-		if err := conformance.ItemAnalysis(&m, conformance.Options{Production: true}); err != nil {
+		if err := conformance.ItemAnalysis(&m, prod); err != nil {
 			t.Errorf("%s: %v", id, err)
 		}
 	}
@@ -171,19 +172,19 @@ func TestContractEveryKindEndToEnd(t *testing.T) {
 	mediaRes := consume(t, ctx, e.brokers, prefix+topics.AnalysisMedia, 1)
 	var ma analysisv1.MediaAnalysis
 	decode(t, mediaRes["fb:media:1"], &ma)
-	if err := checkMediaAnalysis(&ma); err != nil {
+	if err := conformance.MediaAnalysis(&ma, prod); err != nil {
 		t.Error(err)
 	}
 	flags := consume(t, ctx, e.brokers, prefix+topics.AnalysisAuthor, 1)
 	var af analysisv1.AuthorFlag
 	decode(t, flags["fb:account:666"], &af)
-	if err := checkAuthorFlag(&af); err != nil || af.GetBot() == "" {
+	if err := conformance.AuthorFlag(&af, prod); err != nil || af.GetBot() == "" {
 		t.Errorf("author flag %v: %v", &af, err)
 	}
 	tops := consume(t, ctx, e.brokers, prefix+topics.AnalysisTopic, 1)
 	var tu analysisv1.TopicUpdate
 	decode(t, tops[ids[0][0]], &tu)
-	if err := checkTopicUpdate(&tu); err != nil || tu.GetStatus() != "active" {
+	if err := conformance.TopicUpdate(&tu, prod); err != nil || tu.GetStatus() != "active" {
 		t.Errorf("topic update %v: %v", &tu, err)
 	}
 	acks := consume(t, ctx, e.brokers, prefix+topics.ContentMediaProcessed, 2)
@@ -191,7 +192,7 @@ func TestContractEveryKindEndToEnd(t *testing.T) {
 		"fb:media:2": mediav1.ProcessStatus_PROCESS_STATUS_SKIPPED} {
 		var mp mediav1.MediaProcessed
 		decode(t, acks[id], &mp)
-		if err := checkMediaProcessed(&mp); err != nil || mp.GetStatus() != want {
+		if err := conformance.MediaProcessed(&mp, prod); err != nil || mp.GetStatus() != want {
 			t.Errorf("%s acknowledged %v: %v", id, &mp, err)
 		}
 	}
@@ -215,122 +216,4 @@ func decode(t *testing.T, r *kgo.Record, m proto.Message) {
 	if err := proto.Unmarshal(r.Value, m); err != nil {
 		t.Fatalf("%s: %v", r.Key, err)
 	}
-}
-
-// The contract's checks for the kinds v1.0.0's conformance package doesn't
-// cover yet. They follow the rules of v1.2.0's conformance.MediaAnalysis,
-// AuthorFlag, TopicUpdate and MediaProcessed, which replace them once
-// sb-analysis pins v1.2.0 (the owner's decision).
-
-// contractID reports whether id is "<platform>:<kind>:<native>".
-func contractID(id, kind, platform string) bool {
-	p := strings.SplitN(id, ":", 3)
-	return len(p) == 3 && p[0] == platform && p[1] == kind && p[2] != ""
-}
-
-func checkMediaAnalysis(m *analysisv1.MediaAnalysis) error {
-	var p []string
-	pl := m.GetPlatform()
-	if m.GetEventId() == "" {
-		p = append(p, "event_id empty")
-	}
-	if !contractID(m.GetMediaId(), "media", pl) {
-		p = append(p, "media_id")
-	}
-	if !contractID(m.GetOwnerId(), m.GetOwnerKind(), pl) {
-		p = append(p, "owner_id and owner_kind")
-	}
-	if a := m.GetAccountId(); a != "" && !contractID(a, "account", pl) {
-		p = append(p, "account_id")
-	}
-	if m.GetType() == contentv1.MediaType_MEDIA_TYPE_UNSPECIFIED {
-		p = append(p, "type unspecified")
-	}
-	if m.GetTranscript() != "" && (m.GetTranscriptLang() == "" || m.GetTranscriptSource() == "") {
-		p = append(p, "a transcript needs transcript_lang and transcript_source")
-	}
-	pv := m.GetProvenance()
-	if pv.GetProducer() == "" || pv.GetAnalysisVersion() == 0 || pv.GetAnalyzedAt() == nil {
-		p = append(p, "provenance needs producer, analysis_version and analyzed_at")
-	}
-	return problems("MediaAnalysis", p)
-}
-
-func checkAuthorFlag(m *analysisv1.AuthorFlag) error {
-	var p []string
-	if m.GetEventId() == "" {
-		p = append(p, "event_id empty")
-	}
-	if !contractID(m.GetAuthorId(), "account", m.GetPlatform()) {
-		p = append(p, "author_id")
-	}
-	switch m.GetBot() {
-	case "", "suspected", "likely", "confirmed":
-	default:
-		p = append(p, "bot level")
-	}
-	if m.GetScore() < 0 || m.GetScoredAt() == nil {
-		p = append(p, "score or scored_at")
-	}
-	return problems("AuthorFlag", p)
-}
-
-func checkTopicUpdate(m *analysisv1.TopicUpdate) error {
-	var p []string
-	id := m.GetTopicId()
-	if m.GetEventId() == "" || id == "" {
-		p = append(p, "event_id or topic_id empty")
-	}
-	if par := m.GetParentId(); par != "" && !strings.HasPrefix(id, par+".") {
-		p = append(p, "topic_id doesn't start with its parent")
-	}
-	switch m.GetStatus() {
-	case "active", "rejected":
-		if m.GetMergedInto() != "" {
-			p = append(p, "merged_into set")
-		}
-	case "merged":
-		if m.GetMergedInto() == "" || m.GetMergedInto() == id {
-			p = append(p, "merged_into")
-		}
-	default:
-		p = append(p, "status")
-	}
-	if m.GetTaxonomyVersion() == "" || m.GetUpdatedAt() == nil {
-		p = append(p, "taxonomy_version or updated_at")
-	}
-	return problems("TopicUpdate", p)
-}
-
-func checkMediaProcessed(m *mediav1.MediaProcessed) error {
-	var p []string
-	if m.GetEventId() == "" {
-		p = append(p, "event_id empty")
-	}
-	if !contractID(m.GetMediaId(), "media", m.GetPlatform()) {
-		p = append(p, "media_id")
-	}
-	if m.GetConsumer() != store.ContractConsumer {
-		p = append(p, "consumer not in the registry")
-	}
-	switch m.GetStatus() {
-	case mediav1.ProcessStatus_PROCESS_STATUS_UNSPECIFIED:
-		p = append(p, "status unspecified")
-	case mediav1.ProcessStatus_PROCESS_STATUS_PROCESSED:
-	default:
-		if m.GetReason() == "" {
-			p = append(p, "reason code missing")
-		}
-	}
-	if m.GetProcessedAt() == nil {
-		p = append(p, "processed_at missing")
-	}
-	return problems("MediaProcessed", p)
-}
-
-func problems(kind string, p []string) error {
-	if len(p) == 0 {
-		return nil
-	}
-	return fmt.Errorf("%s: %s", kind, strings.Join(p, "; "))
 }

@@ -13,7 +13,7 @@ Images and videos get logos, text in the image, a description, entities and topi
 
 It reads two inputs, chosen by `analysis.inputs`:
 
-- `content`: the platform's shared contract (`securebrand-contracts` v1.0.0): `content.post.v1` and `content.comment.v1`;
+- `content`: the platform's shared contract (`securebrand-contracts` v1.2.0): `content.post.v1`, `content.comment.v1`, `content.media.ready.v1` and `content.media.deleted.v1`;
 - `fb`: what fbs collects from Facebook (`fb.*` topics), through a Facebook adapter. These results stay in Postgres: they have no contract IDs, so they can't go on the contract's `analysis.*` topics.
 
 fbs itself lives in its own repository, [`Abdullah95k/securebrand-microservices`](https://github.com/Abdullah95k/securebrand-microservices); this repository takes only fbs's public protos and migrations, as a Go module dependency.
@@ -56,7 +56,7 @@ make test-integration
 make lint
 ```
 
-The messages come from the platform's contract, the Go module `github.com/abdullah95k/securebrand-contracts` (pinned at v1.0.0); this repository has no protos of its own. fbs's `securebrand.fb.v1` comes from fbs's module.
+The messages come from the platform's contract, the Go module `github.com/abdullah95k/securebrand-contracts` (pinned at v1.2.0); this repository has no protos of its own. fbs's `securebrand.fb.v1` comes from fbs's module.
 
 ## Configuration
 
