@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -37,7 +38,8 @@ func chartConfig(t *testing.T, values string) string {
 // TestProductionConfig loads production's configuration as the chart
 // builds it (the defaults, the chart's values, then values-production) and
 // checks the owner's decisions of 7 November 2026: every collector read
-// (the contract's topics and fbs's own), no daily cap, Claude Haiku only.
+// (the contract's topics and fbs's own), no daily cap, Claude Haiku for
+// every AI call, and speech transcribed inside the cluster.
 func TestProductionConfig(t *testing.T) {
 	c, err := Load(chartConfig(t, "values.yaml") + "," + chartConfig(t, "values-production.yaml"))
 	if err != nil {
@@ -59,7 +61,17 @@ func TestProductionConfig(t *testing.T) {
 	if a.Topics.Curation.Model != haiku {
 		t.Errorf("curation runs %s, want %s", a.Topics.Curation.Model, haiku)
 	}
-	if a.Media.Video.STTProvider != "" {
-		t.Errorf("speech-to-text %q is on: transcripts come from captions only", a.Media.Video.STTProvider)
+	// Speech in videos (the owner, 7 November 2026): the whisper server in
+	// the cluster, one video at a time, the first 10 minutes at most, with
+	// a timeout and a lease that fit a slow CPU transcription.
+	v := a.Media.Video
+	if v.STTProvider != "whisper" || v.STTConcurrency != 1 || v.MaxSeconds > 600 {
+		t.Errorf("speech-to-text %q, %d at once, %ds: want whisper, 1, at most 600s", v.STTProvider, v.STTConcurrency, v.MaxSeconds)
+	}
+	if w := a.Providers["whisper"]; w.Timeout < 15*time.Minute || w.MaxRetries != 0 {
+		t.Errorf("whisper timeout %v, retries %d: want at least 15m and no immediate retry", w.Timeout, w.MaxRetries)
+	}
+	if a.Media.Lease < 30*time.Minute {
+		t.Errorf("media lease %v is shorter than a slow transcription", a.Media.Lease)
 	}
 }

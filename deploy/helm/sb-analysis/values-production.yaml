@@ -15,6 +15,14 @@ components:
   analysis-media:
     replicas: 1
 
+# Speech in videos (the owner, 7 November 2026), transcribed inside the
+# cluster: Speaches with Whisper large-v3-turbo on CPU (no GPU nodes). The
+# platform's captions come first; Whisper takes the videos without them,
+# one at a time, the first 10 minutes at most.
+whisper:
+  enabled: true
+  storage: {size: 10Gi, storageClassName: do-block-storage}
+
 # Credentials from the secret "platform-credentials" in the namespace:
 # POSTGRES_* (database "analysis", PostgreSQL 18), KAFKA_* (user
 # analysis-kafka: content.* and analysis.*; also consumes fb.* and
@@ -83,3 +91,16 @@ config:
       audit: {enabled: false, model: claude-haiku-5-5}
     topics:
       curation: {model: claude-haiku-5-5}
+    # Speech-to-text on the whisper server above (its address is set by
+    # the chart). On shared CPUs it runs at about real time or slower, so
+    # a 10-minute video can take 10-20 minutes: the call may take 20
+    # minutes, isn't retried at once (a failed video comes back through
+    # the media queue's own retries), and a media job's lease covers it.
+    providers:
+      whisper: {timeout: 20m, max_retries: 0}
+    media:
+      lease: 45m
+      video:
+        stt_provider: whisper
+        stt_language: ar
+        stt_concurrency: 1

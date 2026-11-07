@@ -26,6 +26,9 @@ type Provider struct {
 	Refuse func(req provider.Request) bool
 	// Drop, when set, leaves item i out of a text answer.
 	Drop func(i int) bool
+	// Transcribing, when set, runs inside Transcribe (tests hold a
+	// transcription open with it); its error is returned.
+	Transcribing func(ctx context.Context) error
 
 	mu      sync.Mutex
 	batches map[string][]provider.Request
@@ -286,6 +289,11 @@ func (p *Provider) BatchResults(ctx context.Context, id string) ([]provider.Batc
 }
 
 // Transcribe returns a fixed transcript.
-func (p *Provider) Transcribe(_ context.Context, audio []byte, _, _ string) (string, error) {
+func (p *Provider) Transcribe(ctx context.Context, audio []byte, _, _ string) (string, error) {
+	if p.Transcribing != nil {
+		if err := p.Transcribing(ctx); err != nil {
+			return "", err
+		}
+	}
 	return fmt.Sprintf("نص تجريبي (%d bytes)", len(audio)), nil
 }

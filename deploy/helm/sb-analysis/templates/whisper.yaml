@@ -1,0 +1,147 @@
+{{- /*
+An own speech-to-text server for videos without the platform's captions:
+Speaches (https://github.com/speaches-ai/speaches), OpenAI-compatible
+(POST /v1/audio/transcriptions), with one pinned Whisper model. The audio
+never leaves the cluster. Off by default (whisper.enabled).
+*/ -}}
+{{- if .Values.whisper.enabled }}
+{{- $w := .Values.whisper }}
+{{- $name := printf "%s-whisper" (include "sba.fullname" .) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "sba.labels" . | nindent 4 }}
+    app.kubernetes.io/component: whisper
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with $w.storage.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $w.storage.size }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-model
+  labels:
+    {{- include "sba.labels" . | nindent 4 }}
+    app.kubernetes.io/component: whisper
+data:
+  whisper-model.py: |
+    {{- .Files.Get "files/whisper-model.py" | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "sba.labels" . | nindent 4 }}
+    app.kubernetes.io/component: whisper
+spec:
+  replicas: 1
+  # The model's volume is ReadWriteOnce: a new pod starts only after the
+  # old one has gone.
+  strategy: {type: Recreate}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: {{- include "sba.selector" (dict "root" . "name" "whisper") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "sba.selector" (dict "root" . "name" "whisper") | nindent 8 }}
+      annotations:
+        checksum/model: {{ printf "%s@%s" $w.model.id $w.model.revision | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      # The image's own user (ubuntu, 1000); the volume is made writable
+      # for it.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # Puts the pinned model revision on the volume, once; later
+        # starts find it there.
+        - name: model
+          image: "{{ $w.image.repository }}@{{ $w.image.digest }}"
+          command: ["python", "/scripts/whisper-model.py"]
+          env:
+            - {name: HF_HOME, value: /data/huggingface}
+            - {name: HF_HUB_DISABLE_TELEMETRY, value: "1"}
+            - {name: WHISPER_MODEL, value: {{ $w.model.id | quote }}}
+            - {name: WHISPER_MODEL_REVISION, value: {{ $w.model.revision | quote }}}
+          resources: {{- toYaml $w.modelResources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: scripts, mountPath: /scripts, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      containers:
+        - name: whisper
+          image: "{{ $w.image.repository }}@{{ $w.image.digest }}"
+          env:
+            - {name: HF_HOME, value: /data/huggingface}
+            # Offline: the model is loaded only from the volume, at the
+            # revision the init container pinned.
+            - {name: HF_HUB_OFFLINE, value: "1"}
+            - {name: HF_HUB_DISABLE_TELEMETRY, value: "1"}
+            - {name: ENABLE_UI, value: "false"}
+            - {name: LOG_LEVEL, value: info}
+            - {name: WHISPER__INFERENCE_DEVICE, value: cpu}
+            - {name: WHISPER__COMPUTE_TYPE, value: {{ $w.computeType | quote }}}
+            - {name: WHISPER__CPU_THREADS, value: {{ $w.cpuThreads | quote }}}
+            - {name: WHISPER__NUM_WORKERS, value: "1"}
+            # Keep the model in memory between videos.
+            - {name: WHISPER__TTL, value: "-1"}
+          ports:
+            - {name: http, containerPort: 8000}
+          startupProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+            failureThreshold: {{ $w.startupFailureThreshold }}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 5
+          # Generous: a long transcription keeps the CPU busy.
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 10
+          resources: {{- toYaml $w.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: {{ $name }}}
+        - name: scripts
+          configMap: {name: {{ $name }}-model}
+        - name: tmp
+          emptyDir: {sizeLimit: 2Gi}
+---
+# Inside the cluster only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "sba.labels" . | nindent 4 }}
+    app.kubernetes.io/component: whisper
+spec:
+  type: ClusterIP
+  selector: {{- include "sba.selector" (dict "root" . "name" "whisper") | nindent 4 }}
+  ports:
+    - {name: http, port: 8000, targetPort: http}
+{{- end }}

@@ -66,6 +66,36 @@ The Helm chart (`deploy/helm/sb-analysis`) runs `analysis` (all roles but media)
 - **Transcripts:** a video of a contract post with captions uses the captions (the uploader's first, then the platform's speech-to-text; never a machine translation) and buys no speech-to-text. `transcript_source` says which: `platform_captions` or the speech-to-text model.
 - **Memory and disk:** a video streams to a temporary file (`/tmp`, up to `analysis.media.max_bytes`, 500 MiB) and never passes through memory. An image is read into memory up to `image_max_bytes` (32 MiB) and `image_max_pixels` (40 megapixels, judged from its header before decoding); larger files fail permanently and are acknowledged. At start, `workers` is lowered to fit the container's memory limit (`worker_memory_mib` each, after 256 MiB), with a warning in the log. The chart gives `analysis-media` 2 GiB of memory and a 3 GiB `/tmp`.
 
+## Speech-to-text
+
+Videos are transcribed by a speech-to-text server inside the cluster: **Speaches** with Whisper large-v3-turbo, CPU only. The chart's `whisper` component runs it, and production turns it on (the owner, 7 November 2026). The audio never leaves the cluster.
+
+- **Captions first:** a video whose post has the platform's captions uses them, and isn't sent to Whisper.
+- **Limits:**
+  - one transcription at a time per media process (`analysis.media.video.stt_concurrency`);
+  - the first 10 minutes of a video at most (`max_seconds`).
+  - A video that finds the slot taken waits `stt_wait` (5s), then goes back to the queue for `stt_retry_after` (2m) without counting a try: images keep flowing, and the file's deadline still applies.
+- **Slow by nature:** on shared CPUs, Whisper runs at about real time or slower.
+  - In production a call may take 20 minutes (`analysis.providers.whisper.timeout`), and a media job's lease is 45 minutes.
+  - A failed call isn't retried at once; the media queue retries the video with its backoff.
+- **Pinned:** the image by digest and the model by revision (`whisper.image.digest`, `whisper.model.revision`).
+  - The init container downloads that revision once onto the pod's 10 GiB volume, and later starts find it there.
+  - The server runs offline (`HF_HUB_OFFLINE=1`), so it never fetches anything else.
+  - To change the model, change the revision: the init container downloads it, points the cache at it and removes the old one.
+- **Rollout:** `Recreate`, because the volume can be mounted by one pod at a time.
+- **To look:**
+  - `sb_analysis_media_pending{type="video"}`: the videos waiting;
+  - `sb_analysis_transcriptions_total{outcome}`: calls that worked or failed;
+  - `sb_analysis_stt_deferred_total`: videos put back while the slot was busy.
+- **Alerts:**
+  - `AnalysisVideoBacklogGrowing`: the video backlog has grown for an hour;
+  - `AnalysisTranscriptionsFailing`: speech-to-text calls are failing.
+- **If it can't keep up:** the options are a smaller Whisper model, CPU-optimized nodes, or a speech-to-text API. Each is a cost choice for the owner.
+- **If it fails:**
+  - look at the `…-whisper` pod: the init container's log shows the model download, the server's log the calls;
+  - check the volume (`kubectl get pvc`);
+  - check that `analysis.providers.whisper.base_url` (set by the chart) reaches the Service.
+
 ## Dead letters
 
 Items that failed `analysis.limits.max_attempts` times are in `analysis.dead_letters` with the last error, and `sb_analysis_dead_letters` counts them.
