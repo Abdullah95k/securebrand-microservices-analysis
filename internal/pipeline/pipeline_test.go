@@ -261,6 +261,16 @@ func TestNewTopicsEntityTopicsAndFlags(t *testing.T) {
 	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE content_id = 'fb:comment:4' AND ad_type = 'paid' AND legal = ARRAY['fraud_scam']`); n != 1 {
 		t.Fatal("ad and breach not stored")
 	}
+	// At the daily cap, curation waits: no call, nothing decided.
+	capped := func(context.Context, string, float64) (bool, error) { return false, nil }
+	held := &curate.Curator{Store: e.s, Providers: e.p.Providers, Pricing: e.p.Pricing, Cfg: e.p.Cfg.Topics, Taxonomy: e.p.Taxonomy,
+		Allow: capped}
+	if v, err := held.Run(ctx); err != nil || v != "" {
+		t.Fatalf("curation at the cap: %q %v", v, err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_requests WHERE route = 'curation'`); n != 0 {
+		t.Fatal("curation called the provider at the daily cap")
+	}
 	cur := &curate.Curator{Store: e.s, Providers: e.p.Providers, Pricing: e.p.Pricing, Cfg: e.p.Cfg.Topics, Taxonomy: e.p.Taxonomy}
 	v, err := cur.Run(ctx)
 	if err != nil || v == "" {
@@ -369,6 +379,14 @@ func TestEntityCuration(t *testing.T) {
 	cands = append(cands, store.Candidate{Surface: "Rare Brand", Type: "brand", ContentID: "r1"}) // seen once: waits
 	if err := e.s.AddCandidates(ctx, cands); err != nil {
 		t.Fatal(err)
+	}
+	held := &curate.EntityCurator{Store: e.s, Providers: e.p.Providers, Pricing: e.p.Pricing, Route: e.p.Cfg.Topics.Curation, MinSeen: 5,
+		Registry: e.p.Entities, Allow: func(context.Context, string, float64) (bool, error) { return false, nil }}
+	if n, err := held.Run(ctx); err != nil || n != 0 {
+		t.Fatalf("entity curation at the daily cap decided %d %v", n, err)
+	}
+	if c := e.count(t, `SELECT count(*) FROM analysis.provider_requests WHERE route = 'curation'`); c != 0 {
+		t.Fatal("entity curation called the provider at the daily cap")
 	}
 	cur := &curate.EntityCurator{Store: e.s, Providers: e.p.Providers, Pricing: e.p.Pricing, Route: e.p.Cfg.Topics.Curation, MinSeen: 5,
 		Registry: e.p.Entities}

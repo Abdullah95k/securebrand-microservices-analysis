@@ -38,8 +38,8 @@ func chartConfig(t *testing.T, values string) string {
 // TestProductionConfig loads production's configuration as the chart
 // builds it (the defaults, the chart's values, then values-production) and
 // checks the owner's decisions of 7 November 2026: every collector read
-// (the contract's topics and fbs's own), no daily cap, Claude Haiku for
-// every AI call, and speech transcribed inside the cluster.
+// (the contract's topics and fbs's own), a $10 daily hard stop, Claude
+// Haiku for every AI call, and speech transcribed inside the cluster.
 func TestProductionConfig(t *testing.T) {
 	c, err := Load(chartConfig(t, "values.yaml") + "," + chartConfig(t, "values-production.yaml"))
 	if err != nil {
@@ -49,8 +49,8 @@ func TestProductionConfig(t *testing.T) {
 	if !slices.Equal(a.Inputs, []string{"content", "fb"}) {
 		t.Errorf("inputs %v, want [content fb]", a.Inputs)
 	}
-	if a.Budget.DailyUSD != 0 || !a.Budget.AllowUnlimited {
-		t.Errorf("budget %+v, want no cap", a.Budget)
+	if a.Budget.DailyUSD != 10 || a.Budget.AllowUnlimited || a.Budget.UrgentExempt {
+		t.Errorf("budget %+v, want $10 a day, a hard stop for urgent items too", a.Budget)
 	}
 	const haiku = "claude-haiku-5-5"
 	for name, r := range a.Routes {

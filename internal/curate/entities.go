@@ -35,6 +35,9 @@ type EntityCurator struct {
 	// MaskTags hides the names of tagged people in the examples
 	// (analysis.privacy.mask_tagged_users).
 	MaskTags bool
+	// Allow, when set, checks the daily budget before a paid call (as
+	// Curator.Allow).
+	Allow func(ctx context.Context, route string, est float64) (bool, error)
 }
 
 // Run decides the pending candidates seen at least MinSeen times; it
@@ -85,6 +88,12 @@ func (c *EntityCurator) Run(ctx context.Context) (int, error) {
 	req := provider.Request{ID: uuid.NewString(), Model: c.Route.Model, System: prompt.EntityCurationSystem,
 		User: prompt.EntityCurationUser(cands), Schema: prompt.EntityCurationSchema(), SchemaName: "entity_decisions",
 		MaxTokens: c.Route.MaxTokens, Effort: c.Route.Effort, Thinking: c.Route.Thinking}
+	if ok, err := allowed(ctx, c.Allow, c.Pricing.Estimate(c.Route.Model, len(req.System), len(req.User), 0, 1000, false)); err != nil || !ok {
+		if err == nil {
+			slog.Info("analysis: entity curation deferred, daily budget reached")
+		}
+		return 0, err
+	}
 	start := time.Now()
 	resp, err := c.Providers.Complete(ctx, c.Route.Provider, req)
 	if err != nil {

@@ -33,6 +33,18 @@ type Curator struct {
 	Cfg       config.AnalysisTopics
 	// Taxonomy returns the active list.
 	Taxonomy func() *taxonomy.Taxonomy
+	// Allow, when set, checks the daily budget before a paid call: at the
+	// cap, curation waits for the next run.
+	Allow func(ctx context.Context, route string, est float64) (bool, error)
+}
+
+// allowed reports whether a curation call of about est USD fits today's
+// budget.
+func allowed(ctx context.Context, allow func(context.Context, string, float64) (bool, error), est float64) (bool, error) {
+	if allow == nil {
+		return true, nil
+	}
+	return allow(ctx, "curation", est)
 }
 
 // Run checks the candidates used by at least approve_min_items items and
@@ -81,6 +93,12 @@ func (c *Curator) decide(ctx context.Context, rows []store.TopicRow) ([]store.To
 	rc := c.Cfg.Curation
 	req := provider.Request{ID: uuid.NewString(), Model: rc.Model, System: prompt.CurationSystem, User: prompt.CurationUser(tax, cands),
 		Schema: prompt.CurationSchema(tax), SchemaName: "topic_decisions", MaxTokens: rc.MaxTokens, Effort: rc.Effort, Thinking: rc.Thinking}
+	if ok, err := allowed(ctx, c.Allow, c.Pricing.Estimate(rc.Model, len(req.System), len(req.User), 0, 1000, false)); err != nil || !ok {
+		if err == nil {
+			slog.Info("analysis: topic curation deferred, daily budget reached")
+		}
+		return nil, err
+	}
 	start := time.Now()
 	resp, err := c.Providers.Complete(ctx, rc.Provider, req)
 	if err != nil {

@@ -80,7 +80,15 @@ groups:
         labels: {severity: info}
         annotations:
           summary: The analysis has spent more than 80% of today's budget
-          description: At 100% non-urgent work pauses until the next Iraq day.
+          description: At 100% paid work pauses until the next Iraq day (urgent items too unless analysis.budget.urgent_exempt).
+          runbook_url: https://github.com/abdullah95k/securebrand-microservices-analysis/blob/main/docs/runbooks/analysis.md#budget
+      - alert: AnalysisBudgetReached
+        expr: max(sb_analysis_budget_paused) == 1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: Today's AI budget is spent; paid analysis waits for the next day
+          description: Items, media and curation wait in their queues until 00:00 Iraq time (analysis.budget.daily_usd). Files whose deadline passes before then are lost for analysis; raise the cap only on the owner's decision.
           runbook_url: https://github.com/abdullah95k/securebrand-microservices-analysis/blob/main/docs/runbooks/analysis.md#budget
       - alert: AnalysisOutboxBacklog
         expr: max(sb_analysis_outbox_backlog) > 10000

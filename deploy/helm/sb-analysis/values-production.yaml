@@ -78,10 +78,12 @@ config:
     # contract, and fbs's own fb.* topics until fbs does (their results stay
     # in Postgres; they have no contract IDs).
     inputs: [content, fb]
-    # No daily cap (the owner, 7 November 2026): cost is held down by using
-    # Claude Haiku for everything instead. allow_unlimited is the explicit
-    # opt-in REQ-011 fix 3 asks for.
-    budget: {daily_usd: 0, allow_unlimited: true}
+    # $10 a day, a hard stop (the owner, 7 November 2026; D-031): once
+    # today's spend (Iraq time) reaches it, every paid call waits for the
+    # next day, urgent items and the topic and entity curation included;
+    # sb_analysis_budget_paused is 1 and AnalysisBudgetReached fires. The
+    # whisper server is free and keeps transcribing.
+    budget: {daily_usd: 10, allow_unlimited: false, urgent_exempt: false}
     # Haiku only (the owner, 7 November 2026): the text, image and video
     # routes already use it; the stronger second opinion (escalation) and
     # the quality sample (audit, Claude Opus) are off; the topic and entity
