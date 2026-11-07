@@ -145,3 +145,5 @@
   - `values-production.yaml`: `daily_usd: 10`, `urgent_exempt: false`;
   - the topic and entity curation now also check the budget before their paid call;
   - a new alert, `AnalysisBudgetReached`.
+- **7 Nov:** the $10 daily hard stop merged (pull request #17, `602fd60`); the master pinned it, with the chart's alerts and ServiceMonitor switched on in the platform's values.
+- **7 Nov, the migrate hook failed on the live cluster** (reported by the master; its log is on the way). With the owner's approval, the hook now opens only Postgres: before, it also read the Kafka and Valkey settings and certificates and built the whole app, so a problem there could block the database step. In review.

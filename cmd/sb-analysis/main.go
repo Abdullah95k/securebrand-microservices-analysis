@@ -48,13 +48,7 @@ func main() {
 	case "run":
 		err = runService(args)
 	case "migrate":
-		err = withApp("migrate", args, nil, func(ctx context.Context, a *app.App) error {
-			if err := store.Migrate(ctx, a.DB); err != nil {
-				return err
-			}
-			fmt.Println("analysis migrations applied")
-			return nil
-		})
+		err = migrateCmd(args)
 	case "entities":
 		err = entitiesCmd(args)
 	case "sources":
@@ -114,11 +108,7 @@ func withApp(name string, args []string, fs *flag.FlagSet, fn func(context.Conte
 	cfg := config.MustLoadFromFlags(fs, args)
 	plog.Setup("sb-analysis", cfg.Log.Level, cfg.Log.Format)
 	ctx := context.Background()
-	dsn := cfg.Analysis.Postgres.DSN
-	if dsn == "" {
-		dsn = cfg.Postgres.ConnString()
-	}
-	db, err := pg.Open(ctx, dsn, cfg.Analysis.Postgres.MaxConns)
+	db, err := pg.Open(ctx, analysisDSN(cfg), cfg.Analysis.Postgres.MaxConns)
 	if err != nil {
 		return err
 	}
@@ -132,6 +122,35 @@ func withApp(name string, args []string, fs *flag.FlagSet, fn func(context.Conte
 		return err
 	}
 	return fn(ctx, a)
+}
+
+// analysisDSN is the analysis database: analysis.postgres.dsn, else the
+// shared postgres settings (a DSN, or host, port, user... parts).
+func analysisDSN(cfg *config.Config) string {
+	if cfg.Analysis.Postgres.DSN != "" {
+		return cfg.Analysis.Postgres.DSN
+	}
+	return cfg.Postgres.ConnString()
+}
+
+// migrateCmd applies the analysis migrations. It reads the config and opens
+// Postgres, nothing else: no Kafka, Valkey, S3 or AI provider setting is
+// used, so a problem with one of those can't block the database step (the
+// chart runs it as a hook before every install and upgrade).
+func migrateCmd(args []string) error {
+	cfg := config.MustLoadFromFlags(flag.NewFlagSet("migrate", flag.ExitOnError), args)
+	plog.Setup("sb-analysis", cfg.Log.Level, cfg.Log.Format)
+	ctx := context.Background()
+	db, err := pg.Open(ctx, analysisDSN(cfg), 2)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := store.Migrate(ctx, db); err != nil {
+		return err
+	}
+	fmt.Println("analysis migrations applied")
+	return nil
 }
 
 func runService(args []string) error {
