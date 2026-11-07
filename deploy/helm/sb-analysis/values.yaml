@@ -100,6 +100,33 @@ components:
     tmpSizeLimit: 3Gi
     pdb: {}
 
+# An own speech-to-text server for videos without the platform's captions:
+# Speaches (OpenAI-compatible) with one pinned Whisper model, CPU only. When
+# on, analysis.providers.whisper points at it; set
+# analysis.media.video.stt_provider: whisper to use it. Off by default.
+whisper:
+  enabled: false
+  image:
+    repository: ghcr.io/speaches-ai/speaches
+    # 0.8.3-cpu, pinned by digest (third-party images run by digest).
+    digest: sha256:21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8
+  model:
+    id: deepdml/faster-whisper-large-v3-turbo-ct2   # Whisper large-v3-turbo, CTranslate2
+    revision: 4df90f75321148c3a29a9e2351b7ddf8f5b115a8 # the commit, not a branch
+  computeType: int8
+  cpuThreads: 3
+  # The model (about 1.6 GB) and its cache.
+  storage: {size: 10Gi, storageClassName: ""}
+  resources:
+    requests: {cpu: "2", memory: 4Gi}
+    limits: {cpu: "3", memory: 6Gi}
+  # The init container that downloads the model once.
+  modelResources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi}
+  # Startup checks every 10s; 60 allows 10 minutes to load the model.
+  startupFailureThreshold: 60
+
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 65532

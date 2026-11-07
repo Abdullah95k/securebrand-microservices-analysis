@@ -1,3 +1,15 @@
+{{- /* The config, with the whisper server's address when it runs. */ -}}
+{{- $cfg := deepCopy .Values.config -}}
+{{- if .Values.whisper.enabled -}}
+{{- $analysis := default (dict) $cfg.analysis -}}
+{{- $providers := default (dict) $analysis.providers -}}
+{{- $whisper := default (dict) $providers.whisper -}}
+{{- $_ := set $whisper "base_url" (printf "http://%s-whisper:8000/v1" (include "sba.fullname" .)) -}}
+{{- $_ := set $whisper "transcribe_model" .Values.whisper.model.id -}}
+{{- $_ := set $providers "whisper" $whisper -}}
+{{- $_ := set $analysis "providers" $providers -}}
+{{- $_ := set $cfg "analysis" $analysis -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -5,7 +17,7 @@ metadata:
   labels: {{- include "sba.labels" . | nindent 4 }}
 data:
   config.yaml: |
-    {{- toYaml .Values.config | nindent 4 }}
+    {{- toYaml $cfg | nindent 4 }}
 {{- if .Values.migrate.enabled }}
 ---
 # The same config for the migrate hook, which runs before the release's own
@@ -21,5 +33,5 @@ metadata:
     helm.sh/hook-delete-policy: before-hook-creation
 data:
   config.yaml: |
-    {{- toYaml .Values.config | nindent 4 }}
+    {{- toYaml $cfg | nindent 4 }}
 {{- end }}

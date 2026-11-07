@@ -30,6 +30,22 @@ groups:
           summary: Media files are within 6 hours of deletion and not analysed yet
           description: Scale analysis-media or check its provider; files deleted at their TTL are lost for analysis.
           runbook_url: https://github.com/abdullah95k/securebrand-microservices-analysis/blob/main/docs/runbooks/analysis.md#media
+      - alert: AnalysisVideoBacklogGrowing
+        expr: max(sb_analysis_media_pending{type="video"}) > 0 and max(deriv(sb_analysis_media_pending{type="video"}[1h])) > 0
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: Videos waiting for analysis have kept growing for over an hour
+          description: Speech-to-text (the whisper server, one video at a time) or ffmpeg can't keep up. Options for the owner, each a cost choice - a smaller Whisper model, CPU-optimized nodes, or a speech-to-text API.
+          runbook_url: https://github.com/abdullah95k/securebrand-microservices-analysis/blob/main/docs/runbooks/analysis.md#speech-to-text
+      - alert: AnalysisTranscriptionsFailing
+        expr: sum by (provider) (increase(sb_analysis_transcriptions_total{outcome="error"}[30m])) > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Speech-to-text calls to {{ $labels.provider }} are failing"
+          description: Check the whisper pod (sb-analysis-whisper) - its model volume, its logs, and whether calls time out (analysis.providers.whisper.timeout). Failed videos are retried through the media queue.
+          runbook_url: https://github.com/abdullah95k/securebrand-microservices-analysis/blob/main/docs/runbooks/analysis.md#speech-to-text
       - alert: AnalysisDeadLetters
         expr: max(sb_analysis_dead_letters) > 100
         for: 30m

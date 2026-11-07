@@ -29,6 +29,9 @@ var (
 	OpenBatches   = metrics.AnalysisOpenBatches
 	Media         = metrics.AnalysisMedia
 	MediaAtRisk   = metrics.AnalysisMediaAtRisk
+	MediaPending  = metrics.AnalysisMediaPending
+	Transcribed   = metrics.AnalysisTranscriptions
+	STTDeferred   = metrics.AnalysisSTTDeferred
 	OutboxBacklog = metrics.AnalysisOutboxBacklog
 	Published     = metrics.AnalysisPublished
 	Erasures      = metrics.AnalysisErasures

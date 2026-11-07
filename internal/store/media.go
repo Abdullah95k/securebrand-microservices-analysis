@@ -421,6 +421,25 @@ func (s *Store) OwnerContext(ctx context.Context, ownerID string) (Owner, error)
 	return o, nil
 }
 
+// PendingMedia counts media jobs waiting to be analysed, by kind.
+func (s *Store) PendingMedia(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.DB.Query(ctx, `SELECT kind, count(*) FROM analysis.media_jobs WHERE state = 'pending' GROUP BY kind`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var k string
+		var n int64
+		if err := rows.Scan(&k, &n); err != nil {
+			return nil, err
+		}
+		out[k] = n
+	}
+	return out, rows.Err()
+}
+
 // TTLAtRisk counts pending media jobs within margin of their deletion.
 func (s *Store) TTLAtRisk(ctx context.Context, margin time.Duration) (int64, error) {
 	var n int64

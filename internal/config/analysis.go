@@ -266,15 +266,22 @@ type AnalysisMedia struct {
 
 // VideoConfig: key frames with ffmpeg, speech-to-text through a provider.
 type VideoConfig struct {
-	Enabled     bool          `koanf:"enabled"`
-	FFmpeg      string        `koanf:"ffmpeg"`
-	MaxFrames   int           `koanf:"max_frames"`
-	FrameSide   int           `koanf:"frame_side"`
-	MaxSeconds  int           `koanf:"max_seconds"`
-	STTProvider string        `koanf:"stt_provider"`
-	STTLanguage string        `koanf:"stt_language"`
-	Timeout     time.Duration `koanf:"timeout"`
-	TempDir     string        `koanf:"temp_dir"`
+	Enabled     bool   `koanf:"enabled"`
+	FFmpeg      string `koanf:"ffmpeg"`
+	MaxFrames   int    `koanf:"max_frames"`
+	FrameSide   int    `koanf:"frame_side"`
+	MaxSeconds  int    `koanf:"max_seconds"`
+	STTProvider string `koanf:"stt_provider"`
+	STTLanguage string `koanf:"stt_language"`
+	// STTConcurrency: transcriptions at once per media process. A video
+	// that needs one while all are busy waits up to STTWait, then goes
+	// back to the queue for STTRetryAfter (without counting a try), so
+	// images keep flowing and a slow speech-to-text server isn't flooded.
+	STTConcurrency int           `koanf:"stt_concurrency"`
+	STTWait        time.Duration `koanf:"stt_wait"`
+	STTRetryAfter  time.Duration `koanf:"stt_retry_after"`
+	Timeout        time.Duration `koanf:"timeout"`
+	TempDir        string        `koanf:"temp_dir"`
 }
 
 // AnalysisPrivacy controls what leaves the service and what is stored.

@@ -111,9 +111,18 @@ jobs:
           helm template sba $c -f $c/values-production.yaml | ~/go/bin/kubeconform -strict -summary -ignore-missing-schemas
           helm template sba $c --set alerts.enabled=true,serviceMonitor.enabled=true > /tmp/monitoring.yaml
           grep -q "kind: PrometheusRule" /tmp/monitoring.yaml && grep -q "kind: ServiceMonitor" /tmp/monitoring.yaml
-          # Production runs both workloads (the owner, 7 Nov 2026); its settings
-          # are checked by TestProductionConfig (internal/config).
-          test "$(helm template sba $c -f $c/values-production.yaml | grep -cE '^  replicas: [1-9]')" = 2
+          # Production runs both workloads and the whisper server (the owner,
+          # 7 Nov 2026); its settings are checked by TestProductionConfig
+          # (internal/config).
+          helm template sba $c -f $c/values-production.yaml > /tmp/production.yaml
+          test "$(grep -cE '^  replicas: [1-9]' /tmp/production.yaml)" = 3
+          # The whisper server: image by digest, Recreate (one volume), and
+          # the analysis pointed at its Service.
+          grep -q 'image: "ghcr.io/speaches-ai/speaches@sha256:' /tmp/production.yaml
+          grep -q 'type: Recreate' /tmp/production.yaml
+          grep -q 'base_url: http://sba-whisper:8000/v1' /tmp/production.yaml
+          # Off by default.
+          ! helm template sba $c | grep -q whisper
       - name: Compose files are valid (test stack and the pilot deployment)
         run: |
           docker compose -f deploy/dev/compose.yml config -q

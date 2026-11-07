@@ -7,7 +7,7 @@
 | Area | State |
 |---|---|
 | Code | Built and tested: unit and integration tests with race detection against real Postgres, Redpanda and Valkey. In `main` of the public repository `Abdullah95k/securebrand-microservices-analysis`. **A repository of its own since 6 Nov** (REQ-011 fix 1, `b080a72`): fbs's code is removed, and fbs's module is a dependency for the fb protos only. |
-| Running | **Switched on in the chart (owner, 7 Nov), not yet running.** `values-production.yaml` now runs both workloads (1 replica each), reads `[content, fb]`, has no daily cap and uses Claude Haiku only. It runs once the master pins this commit and gives `analysis-kafka` write access to `analysis.*` again. Never analysed real content so far. No new runs on the shared server (owner's D-026). |
+| Running | **Switched on (owner, 7 Nov); deploying.** The master pinned `b3d94d4` and gave `analysis-kafka` write access to `analysis.*` (platform PR #11, merged); it reports when it's synced. Production runs both workloads (1 replica each), reads `[content, fb]`, has no daily cap and uses Claude Haiku. Next in review: speech in videos with an own Whisper server. No new runs on the shared server (owner's D-026). |
 | Pilot server | **No new runs there** (owner's D-026, 6 Nov). The Compose deployment next to the fbs pilot (`deploy/analysis/compose.yml`) stays in the repository; it was never started. |
 | Quality | **Not measured.** The evaluation (`docs/analysis/evaluation.md`, about $3–5) is approved; it runs on the production cluster once fbs collects there (owner, 6 Nov). |
 | Contract | **Contract v1.2.0** (owner, 7 Nov; REQ-022 done on v1.0.0, `fe0dc52`). sb-analysis reads the contract's `content.post.v1`, `content.comment.v1`, `content.media.ready.v1` and `content.media.deleted.v1`, and publishes the contract's `analysis.*` and `content.media.processed.v1` (as `sb-analysis`). In CI, every kind it produces passes the contract's own conformance checks (production mode). It also reads fbs's `fb.*`, whose results stay in Postgres. Record: [`analysis-contract-adoption.md`](master/analysis-contract-adoption.md). |
@@ -41,9 +41,10 @@
 
 ## Open decisions (owner or master)
 
-1. **For the master: what do tks, yts and igs publish in production today?** The owner wants all four collectors read. If they publish the contract's `content.*` topics, `[content, fb]` already covers them. If some still publish topics of their own, they need adapters like fbs's, proposed first.
-2. **For the owner: the one-off quality check (fix 7).** It has Claude Opus label 1,200 real items once (about $3–5) to measure Haiku against. Does "Haiku only" cover this one-off check too, or only the running service?
-3. **sb-analysis's own text copy:** keep it, or slim it to working state once the platform's entity layer and the client app exist (the owner's decision 7, "keep both for now"; REQ-011, later).
+1. **For the owner: a $10 daily cap?** The master reports (7 Nov) that you set a cap of $10 a day with a hard stop: when it's reached, paid calls stop until the next day and an alert fires. You told this session "no need for the cap". Production has no cap until you confirm; the cap is one setting (`analysis.budget.daily_usd`), with `urgent_exempt: false` for a hard stop.
+2. **For the owner: the one-off quality check (fix 7).** It has Claude Opus label 1,200 real items once (about $3–5) to measure Haiku against. Does "Haiku only" cover this one-off check too?
+3. **fbs's move to the contract:** a cut-over at one time T, designed when fbs's version is near (master, 7 Nov). No adapters for tks, igs or yts.
+4. **sb-analysis's own text copy:** keep it, or slim it to working state once the platform's entity layer and the client app exist (the owner's decision 7, "keep both for now"; REQ-011, later).
 
 ## Changes since the last update
 
@@ -133,3 +134,10 @@
   - `values-production.yaml`: both workloads on (1 replica each), `inputs: [content, fb]`, no cap (`allow_unlimited: true`), escalation and audit off, curation on Haiku;
   - new `TestProductionConfig` guards those settings, and CI checks that production renders both workloads.
   - Nothing removed; no topic, field or schema changed. The headers now say `sb-contract: 1.2.0`.
+- **7 Nov:** the decisions merged (pull request #15, `b3d94d4`). The master pinned it and gave `analysis-kafka` write access to `analysis.*`. The master confirmed tks and igs publish the contract and yts will, and that fbs moves later, with a cut-over.
+- **7 Nov, speech in videos (in review):** the owner wants speech transcribed, with an out-of-the-box Whisper server; the plan was confirmed with the master.
+  - **The server:** the chart gains an optional `whisper` component, on in production. It runs Speaches with Whisper large-v3-turbo on CPU:
+    - the image pinned by digest, the model by revision, downloaded once to a 10 GiB volume;
+    - `Recreate` rollouts, internal Service only.
+  - **In sb-analysis:** captions first; Whisper takes one video at a time, the first 10 minutes at most. A video that finds it busy goes back to the queue.
+  - **New:** metrics (`media_pending`, `transcriptions_total`, `stt_deferred_total`), two alerts, and settings (`stt_concurrency`, `stt_wait`, `stt_retry_after`). Nothing removed.

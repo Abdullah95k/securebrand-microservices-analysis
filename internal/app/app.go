@@ -205,8 +205,28 @@ func (a *App) Components(roles []string) ([]func(context.Context) error, error) 
 			fns = append(fns, w.Run, func(ctx context.Context) error {
 				return Every(ctx, "media-ttl", time.Minute, func(ctx context.Context) error {
 					n, err := a.Store.TTLAtRisk(ctx, 6*time.Hour)
+					if err != nil {
+						return err
+					}
 					ametrics.MediaAtRisk.Set(float64(n))
-					return err
+					// The backlog by type: a growing video backlog means
+					// speech-to-text (or ffmpeg) can't keep up.
+					pending, err := a.Store.PendingMedia(ctx)
+					if err != nil {
+						return err
+					}
+					byType := map[string]float64{"image": 0, "video": 0}
+					for kind, n := range pending {
+						t := "image"
+						if (&core.MediaJob{Kind: kind}).IsVideo() {
+							t = "video"
+						}
+						byType[t] += float64(n)
+					}
+					for t, n := range byType {
+						ametrics.MediaPending.WithLabelValues(t).Set(n)
+					}
+					return nil
 				})
 			})
 		case "relay":

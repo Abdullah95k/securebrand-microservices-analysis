@@ -49,8 +49,11 @@ var (
 	AnalysisOpenBatches  = analysisGauge("open_batches", "Provider batches in progress.")
 
 	// Media.
-	AnalysisMedia       = analysisCounter("media_total", "Media jobs by kind and outcome (analyzed, skipped, failed_retry, failed_permanent).", "kind", "outcome")
-	AnalysisMediaAtRisk = analysisGauge("media_ttl_at_risk", "Pending media jobs within 6h of deletion.")
+	AnalysisMedia          = analysisCounter("media_total", "Media jobs by kind and outcome (analyzed, skipped, failed_retry, failed_permanent).", "kind", "outcome")
+	AnalysisMediaAtRisk    = analysisGauge("media_ttl_at_risk", "Pending media jobs within 6h of deletion.")
+	AnalysisMediaPending   = analysisGaugeVec("media_pending", "Media jobs waiting to be analysed, by type (image, video).", "type")
+	AnalysisTranscriptions = analysisCounter("transcriptions_total", "Speech-to-text calls by provider and outcome (ok, error).", "provider", "outcome")
+	AnalysisSTTDeferred    = analysisCounter("stt_deferred_total", "Videos put back for later because speech-to-text was busy (analysis.media.video.stt_concurrency).")
 
 	// Outbox, erasure, rollups.
 	AnalysisOutboxBacklog = analysisGauge("outbox_backlog", "Records waiting in the outbox.")

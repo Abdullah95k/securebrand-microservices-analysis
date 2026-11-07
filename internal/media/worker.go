@@ -78,6 +78,30 @@ type Worker struct {
 	Cfg     config.AnalysisMedia
 	kinds   map[string]bool
 	once    sync.Once
+	// stt holds a slot per transcription allowed at once
+	// (analysis.media.video.stt_concurrency).
+	stt     chan struct{}
+	sttOnce sync.Once
+}
+
+// errSTTBusy: every speech-to-text slot is taken; the video goes back to
+// the queue for analysis.media.video.stt_retry_after.
+var errSTTBusy = errors.New("media: speech-to-text busy")
+
+// sttSlot takes a transcription slot, waiting at most stt_wait. The
+// returned func gives it back.
+func (w *Worker) sttSlot(ctx context.Context) (func(), error) {
+	w.sttOnce.Do(func() { w.stt = make(chan struct{}, max(w.Cfg.Video.STTConcurrency, 1)) })
+	t := time.NewTimer(w.Cfg.Video.STTWait)
+	defer t.Stop()
+	select {
+	case w.stt <- struct{}{}:
+		return func() { <-w.stt }, nil
+	case <-t.C:
+		return nil, errSTTBusy
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // policySkip is the reason a job is acknowledged without analysis, or ""
@@ -197,6 +221,15 @@ func (w *Worker) process(ctx context.Context, j core.MediaJob) {
 			}
 			return
 		}
+		if errors.Is(err, errSTTBusy) {
+			// Not a failure either: speech-to-text is busy with another
+			// video; this one comes back later (the TTL still applies).
+			ametrics.STTDeferred.WithLabelValues().Inc()
+			if rerr := w.P.Store.ReleaseMedia(context.WithoutCancel(ctx), j.MediaID, w.Cfg.Video.STTRetryAfter); rerr != nil {
+				slog.Error("analysis: media job not released", "media", j.MediaID, "err", rerr)
+			}
+			return
+		}
 		permanent := errors.Is(err, ErrUndecodable) || errors.Is(err, ErrGone) || errors.Is(err, ErrTooLarge) ||
 			errors.Is(err, ErrNoFFmpeg)
 		outcome := "failed_retry"
@@ -255,6 +288,20 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	if !ok || !rc.On() {
 		return &store.MediaResult{Job: j, Consumer: w.Cfg.Consumer, SkipReason: "route_disabled:" + route}, nil
 	}
+	owner, err := w.P.Store.OwnerContext(ctx, j.OwnerContentID)
+	if err != nil {
+		return nil, err
+	}
+	// A video without the platform's captions needs speech-to-text: it
+	// takes a slot before the file is fetched, so a busy server sends it
+	// back to the queue before any work is done.
+	if j.IsVideo() && owner.Captions == "" && w.Cfg.Video.STTProvider != "" {
+		release, err := w.sttSlot(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
 	// The file: a video streams to a temporary file for ffmpeg, an image
 	// to a buffer bounded by image_max_bytes.
 	var videoPath string
@@ -272,10 +319,6 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 			return nil, err
 		}
 		imageData = buf.Bytes()
-	}
-	owner, err := w.P.Store.OwnerContext(ctx, j.OwnerContentID)
-	if err != nil {
-		return nil, err
 	}
 	ownerAt, postText, postTags := owner.CreatedAt, owner.Text, owner.Tags
 	if ownerAt.IsZero() {
@@ -332,8 +375,10 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 		start := time.Now()
 		text, err := stt.Transcribe(ctx, audio, "audio.mp3", w.Cfg.Video.STTLanguage)
 		if err != nil {
+			ametrics.Transcribed.WithLabelValues(w.Cfg.Video.STTProvider, "error").Inc()
 			return nil, fmt.Errorf("transcribe: %w", err)
 		}
+		ametrics.Transcribed.WithLabelValues(w.Cfg.Video.STTProvider, "ok").Inc()
 		transcript = textnorm.Truncate(text, 20000)
 		transcriptLang, transcriptSource = w.Cfg.Video.STTLanguage, sttModel
 		// Logged as a request of its own, so the day's spend (read back

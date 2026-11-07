@@ -586,3 +586,78 @@ func TestWorkerVideoUsesCaptions(t *testing.T) {
 		t.Fatalf("published %v %v", &ev, err)
 	}
 }
+
+// One transcription at a time: a video that needs speech-to-text while the
+// slot is taken goes back to the queue for stt_retry_after, without
+// counting a try, and comes back to be analysed with its transcript.
+func TestWorkerSpeechToTextOneAtATime(t *testing.T) {
+	video := testVideo(t)
+	b, err := os.ReadFile(video)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, w, fp, objs := setupWith(t, func(c *config.Analysis) {
+		c.Media.Video.STTConcurrency, c.Media.Video.STTWait, c.Media.Video.STTRetryAfter = 1, 20*time.Millisecond, time.Hour
+	})
+	ctx := context.Background()
+	objs["b/v1"], objs["b/v2"] = b, b
+	v1, v2 := job("v1", "video"), job("v2", "video")
+	v1.DeleteAfter, v2.DeleteAfter = time.Now().Add(time.Hour), time.Now().Add(2*time.Hour) // v1 is claimed first
+	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{v1, v2}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	inside, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	fp.Transcribing = func(ctx context.Context) error {
+		once.Do(func() { close(inside) })
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	done := make(chan error, 1)
+	go func() { _, err := w.Once(ctx); done <- err }() // v1, held in speech-to-text
+	select {
+	case <-inside:
+	case <-time.After(30 * time.Second):
+		t.Fatal("v1 never reached speech-to-text")
+	}
+	if _, err := w.Once(ctx); err != nil { // v2: the slot is taken
+		t.Fatal(err)
+	}
+	var state string
+	var tries int
+	var later bool
+	if err := st.DB.QueryRow(ctx, `SELECT state, tries, not_before > now() + interval '50 minutes' FROM analysis.media_jobs
+		WHERE media_id = 'v2'`).Scan(&state, &tries, &later); err != nil {
+		t.Fatal(err)
+	}
+	if state != "pending" || tries != 0 || !later {
+		t.Fatalf("v2 while speech-to-text was busy: state %s, tries %d, put back for later %v", state, tries, later)
+	}
+	if _, ok := acks(t, st)["v2"]; ok {
+		t.Fatal("a deferred video was acknowledged")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	var transcript string
+	if err := st.DB.QueryRow(ctx, `SELECT coalesce(transcript, '') FROM analysis.media_analyses WHERE media_id = 'v1'`).Scan(&transcript); err != nil ||
+		transcript == "" {
+		t.Fatalf("v1 transcript %q %v", transcript, err)
+	}
+	// Due again, v2 now gets the free slot.
+	if _, err := st.DB.Exec(ctx, `UPDATE analysis.media_jobs SET not_before = now() WHERE media_id = 'v2'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DB.QueryRow(ctx, `SELECT coalesce(transcript, '') FROM analysis.media_analyses WHERE media_id = 'v2'`).Scan(&transcript); err != nil ||
+		transcript == "" {
+		t.Fatalf("v2 transcript %q %v", transcript, err)
+	}
+}
