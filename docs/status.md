@@ -165,5 +165,5 @@
 - **7 Nov: `4e7a58e` live** (the master's check at 08:12 Iraq time). svc-analysis is Synced and Healthy, and the whisper pod is Running and Ready with no restarts.
   - **The shared PostgreSQL ran out of connections from 07:37 to 08:00 Iraq time.** sb-analysis restarted once and one migrate hook failed; both recovered without help.
   - **sb-analysis's share is small:** 2 pods × at most 4 connections, about 16 while a rolling update overlaps them, and 2 more during the migrate hook. No transaction stays open across an AI, Whisper or storage call.
-  - **Asked the master** which connections filled the slots: through the PgBouncer pools or direct to PostgreSQL, and by which database user.
+  - **The cause (the master):** tks, igs and fbs rolled out at the same time. PgBouncer keeps a server pool per database and user, and about 12 of them share the 50 slots. At 07:46 Iraq time: fbs 11 (10 idle; now capped at 4 per process), PgBouncer 9, tks 9, analysis 6, igs 4, DigitalOcean 4, schema registry 2, postgres 2. The master is putting the database's size to the owner. sb-analysis's limits stay as they are (the master agreed).
   - **Waiting for:** the model download's log, and the first Whisper transcription.
