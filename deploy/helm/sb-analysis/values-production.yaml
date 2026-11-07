@@ -23,6 +23,12 @@ whisper:
   enabled: true
   storage: {size: 10Gi, storageClassName: do-block-storage}
 
+# The registry's pull secret: DigitalOcean puts it ("securebrand") only on
+# the namespace's default ServiceAccount, and the chart's pods run as their
+# own.
+imagePullSecrets:
+  - name: securebrand
+
 # Credentials from the secret "platform-credentials" in the namespace:
 # POSTGRES_* (database "analysis", PostgreSQL 18), KAFKA_* (user
 # analysis-kafka: content.* and analysis.*; also consumes fb.* and

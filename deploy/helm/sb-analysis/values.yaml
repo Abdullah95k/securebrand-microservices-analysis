@@ -120,10 +120,11 @@ whisper:
   resources:
     requests: {cpu: "2", memory: 4Gi}
     limits: {cpu: "3", memory: 6Gi}
-  # The init container that downloads the model once.
+  # The init container that downloads the model once (streamed to the
+  # volume; the limit leaves room for the page cache of a 1.6 GB file).
   modelResources:
-    requests: {cpu: 100m, memory: 256Mi}
-    limits: {memory: 1Gi}
+    requests: {cpu: 100m, memory: 512Mi}
+    limits: {memory: 3Gi}
   # Startup checks every 10s; 60 allows 10 minutes to load the model.
   startupFailureThreshold: 60
 

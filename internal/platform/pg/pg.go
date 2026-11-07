@@ -3,11 +3,14 @@ package pg
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -37,7 +40,9 @@ func Config(dsn string, maxConns int32) (*pgxpool.Config, error) {
 	return cfg, nil
 }
 
-// Open creates a pool and verifies connectivity.
+// Open creates a pool and verifies connectivity. A server that is full or
+// starting up (several services starting at once share 50 connections)
+// is retried for about two minutes before Open gives up.
 func Open(ctx context.Context, dsn string, maxConns int32) (*pgxpool.Pool, error) {
 	cfg, err := Config(dsn, maxConns)
 	if err != nil {
@@ -47,9 +52,54 @@ func Open(ctx context.Context, dsn string, maxConns int32) (*pgxpool.Pool, error
 	if err != nil {
 		return nil, fmt.Errorf("pg: connect: %w", err)
 	}
-	if err := pool.Ping(ctx); err != nil {
+	if err := pingRetry(ctx, pool.Ping, startupDelays, sleep); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("pg: ping: %w", err)
 	}
 	return pool, nil
+}
+
+// startupDelays are the waits between attempts while the server is full
+// or starting up: about two minutes in all.
+var startupDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second,
+	15 * time.Second, 15 * time.Second, 15 * time.Second, 15 * time.Second, 15 * time.Second, 15 * time.Second}
+
+func sleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// pingRetry pings, waiting and trying again while the error is one that
+// passes: too many connections (53300) or the server starting up (57P03).
+func pingRetry(ctx context.Context, ping func(context.Context) error, delays []time.Duration,
+	wait func(context.Context, time.Duration) error) error {
+	err := ping(ctx)
+	for _, d := range delays {
+		if err == nil || !Transient(err) {
+			return err
+		}
+		slog.Warn("pg: server busy at start; retrying", "in", d, "err", err)
+		if werr := wait(ctx, d); werr != nil {
+			return err
+		}
+		err = ping(ctx)
+	}
+	return err
+}
+
+// Transient reports whether err says the server can't take the connection
+// now but will soon: too_many_connections (53300) or cannot_connect_now
+// (57P03).
+func Transient(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "53300" || pgErr.Code == "57P03"
+	}
+	return false
 }

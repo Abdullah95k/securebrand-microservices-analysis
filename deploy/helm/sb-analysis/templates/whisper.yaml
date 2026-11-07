@@ -56,6 +56,9 @@ spec:
         checksum/model: {{ printf "%s@%s" $w.model.id $w.model.revision | sha256sum }}
     spec:
       automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
       # The image's own user (ubuntu, 1000); the volume is made writable
       # for it.
       securityContext:
@@ -73,6 +76,10 @@ spec:
           env:
             - {name: HF_HOME, value: /data/huggingface}
             - {name: HF_HUB_DISABLE_TELEMETRY, value: "1"}
+            # Plain HTTP, streamed to the volume in small chunks: the Xet
+            # client (hf_xet) buffers the 1.6 GB model in memory and was
+            # OOM-killed at 1 GiB.
+            - {name: HF_HUB_DISABLE_XET, value: "1"}
             - {name: WHISPER_MODEL, value: {{ $w.model.id | quote }}}
             - {name: WHISPER_MODEL_REVISION, value: {{ $w.model.revision | quote }}}
           resources: {{- toYaml $w.modelResources | nindent 12 }}
@@ -92,6 +99,7 @@ spec:
             # revision the init container pinned.
             - {name: HF_HUB_OFFLINE, value: "1"}
             - {name: HF_HUB_DISABLE_TELEMETRY, value: "1"}
+            - {name: HF_HUB_DISABLE_XET, value: "1"}
             - {name: ENABLE_UI, value: "false"}
             - {name: LOG_LEVEL, value: info}
             - {name: WHISPER__INFERENCE_DEVICE, value: cpu}
