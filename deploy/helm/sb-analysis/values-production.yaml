@@ -62,17 +62,22 @@ config:
   # the secret's VALKEY_TLS.
   valkey:
     tls: {ca_file: /etc/sb-analysis-certs/valkey-ca.pem}
+  # PostgreSQL is reached through DigitalOcean's PgBouncer in transaction
+  # mode (50 connections for every service): sb-analysis keeps no prepared
+  # statements or session state (internal/platform/pg) and opens at most 4
+  # connections per process.
   postgres:
-    # The secret's parts (platformCredentials) are used; no DSN. With the
-    # CA, sslmode=require also verifies the server's certificate.
+    # The secret's parts (platformCredentials) are used; no DSN. The
+    # platform sets sslmode verify-full with the CA (Let's Encrypt's roots):
+    # the server's certificate and its host name are checked.
     dsn: ""
     sslrootcert: /etc/sb-analysis-certs/postgres-ca.pem
-    max_conns: 20
+    max_conns: 4
   analysis:
     consumer_group: sb-analysis
     postgres:
       dsn: ""            # "" = the parts above
-      max_conns: 10
+      max_conns: 4
     # Every collector (the owner, 7 November 2026): the contract's content.*
     # topics, which fbs, tks, yts and igs publish as each adopts the
     # contract, and fbs's own fb.* topics until fbs does (their results stay

@@ -74,4 +74,9 @@ func TestProductionConfig(t *testing.T) {
 	if a.Media.Lease < 30*time.Minute {
 		t.Errorf("media lease %v is shorter than a slow transcription", a.Media.Lease)
 	}
+	// PostgreSQL is shared through PgBouncer (50 connections for every
+	// service): at most 4 per process.
+	if a.Postgres.MaxConns < 1 || a.Postgres.MaxConns > 4 {
+		t.Errorf("analysis pool of %d connections, want 1 to 4", a.Postgres.MaxConns)
+	}
 }
