@@ -11,14 +11,23 @@ import (
 
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/ametrics"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/run"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/provider"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/store"
 )
 
 // RunRealtime runs the real-time lane until ctx ends: each worker claims a
-// route's due items, groups them by thread and analyses the groups.
+// route's due items, groups them by thread and analyses the groups. While
+// the lane is empty one worker polls, every realtime.poll at first and
+// then less often, up to realtime.idle_poll (run.Idle): the database is
+// shared, and an idle poll every second per worker kept its connections
+// busy.
 func (p *Pipeline) RunRealtime(ctx context.Context) error {
 	workers := max(p.Cfg.Realtime.Workers, 1)
+	idle := &run.Idle{Min: p.Cfg.Realtime.Poll, Max: p.Cfg.Realtime.IdlePoll}
+	if idle.Min <= 0 {
+		idle.Min = time.Second
+	}
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
@@ -29,9 +38,11 @@ func (p *Pipeline) RunRealtime(ctx context.Context) error {
 				if err != nil && ctx.Err() == nil {
 					slog.Warn("analysis: realtime lane", "err", err)
 				}
-				if n == 0 || err != nil {
-					sleep(ctx, p.Cfg.Realtime.Poll)
+				if n > 0 {
+					idle.Busy()
+					continue
 				}
+				idle.Wait(ctx)
 			}
 		}()
 	}
@@ -304,18 +315,6 @@ func (p *Pipeline) collectOne(ctx context.Context, r provider.BatchResult) error
 	ametrics.Requests.WithLabelValues(req.Provider, req.Model, core.LaneBatch, "ok").Inc()
 	s := sent{id: id, route: req.Route, lane: core.LaneBatch, provider: req.Provider, model: req.Model, fallback: req.Fallback}
 	return p.handle(ctx, s, items, req.InputHashes, r.Response)
-}
-
-func sleep(ctx context.Context, d time.Duration) {
-	if d <= 0 {
-		d = time.Second
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-	case <-t.C:
-	}
 }
 
 func (p *Pipeline) downSince(prov string) (time.Time, bool) {

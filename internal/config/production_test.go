@@ -79,4 +79,14 @@ func TestProductionConfig(t *testing.T) {
 	if a.Postgres.MaxConns < 1 || a.Postgres.MaxConns > 4 {
 		t.Errorf("analysis pool of %d connections, want 1 to 4", a.Postgres.MaxConns)
 	}
+	// An idle queue is polled by one worker, less and less often, up to at
+	// least 10 seconds apart (the master, 7 November 2026: idle polls every
+	// second kept the shared database's connections busy). A real-time item
+	// still goes within about a minute: its wait, then at most idle_poll.
+	if a.Realtime.IdlePoll < 10*time.Second || a.Media.IdlePoll < 10*time.Second {
+		t.Errorf("idle polls every %v (real time) and %v (media), want 10 s or more", a.Realtime.IdlePoll, a.Media.IdlePoll)
+	}
+	if a.Realtime.Wait+a.Realtime.IdlePoll > 45*time.Second {
+		t.Errorf("a real-time item waits up to %v before it is claimed, want 45 s at most", a.Realtime.Wait+a.Realtime.IdlePoll)
+	}
 }

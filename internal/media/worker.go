@@ -18,6 +18,7 @@ import (
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/config"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/pipeline"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/run"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/prompt"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/provider"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/store"
@@ -164,6 +165,12 @@ func (w *Worker) Run(ctx context.Context) error {
 		slog.Warn("analysis: fewer media workers than configured, to fit the container's memory limit",
 			"configured", w.Cfg.Workers, "running", n, "worker_memory_mib", w.Cfg.WorkerMemoryMiB)
 	}
+	// While the queue is empty one worker polls, less and less often up to
+	// media.idle_poll (run.Idle): the database is shared.
+	idle := &run.Idle{Min: w.Cfg.Poll, Max: w.Cfg.IdlePoll}
+	if idle.Min <= 0 {
+		idle.Min = time.Second
+	}
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func() {
@@ -173,14 +180,11 @@ func (w *Worker) Run(ctx context.Context) error {
 				if err != nil && ctx.Err() == nil {
 					slog.Warn("analysis: media", "err", err)
 				}
-				if n == 0 {
-					t := time.NewTimer(w.Cfg.Poll)
-					select {
-					case <-ctx.Done():
-					case <-t.C:
-					}
-					t.Stop()
+				if n > 0 {
+					idle.Busy()
+					continue
 				}
+				idle.Wait(ctx)
 			}
 		}()
 	}

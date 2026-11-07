@@ -23,9 +23,24 @@ type Ops struct {
 	addr   string
 	mu     sync.RWMutex
 	checks map[string]Check
+
+	// The readiness checks run at most once per CheckEvery; probes in
+	// between get the last answer. The kubelet probes every 10 seconds, and
+	// a database ping each time kept a server connection of the shared
+	// database busy.
+	CheckEvery time.Duration
+	now        func() time.Time
+	cache      sync.Mutex
+	checked    time.Time
+	result     error
 }
 
-func NewOps(addr string) *Ops { return &Ops{addr: addr, checks: map[string]Check{}} }
+// DefaultCheckEvery is how often the readiness checks run.
+const DefaultCheckEvery = time.Minute
+
+func NewOps(addr string) *Ops {
+	return &Ops{addr: addr, checks: map[string]Check{}, CheckEvery: DefaultCheckEvery, now: time.Now}
+}
 
 // AddCheck registers a readiness check.
 func (o *Ops) AddCheck(name string, c Check) {
@@ -39,19 +54,41 @@ func (o *Ops) Handler() http.Handler {
 	mux.Handle("/metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		defer cancel()
-		o.mu.RLock()
-		defer o.mu.RUnlock()
-		for name, c := range o.checks {
-			if err := c(ctx); err != nil {
-				http.Error(w, name+": "+err.Error(), http.StatusServiceUnavailable)
-				return
-			}
+		if err := o.ready(r.Context()); err != nil {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
 		}
 		w.WriteHeader(http.StatusOK)
 	})
 	return mux
+}
+
+// ready runs the checks, or returns their last result while it is fresher
+// than CheckEvery. A failure names the check, and is kept as long as a
+// success: a pod not ready for a minute is better than a database pinged
+// every 10 seconds while it is full.
+func (o *Ops) ready(ctx context.Context) error {
+	o.cache.Lock()
+	defer o.cache.Unlock()
+	now := o.now()
+	if !o.checked.IsZero() && now.Sub(o.checked) < o.CheckEvery {
+		return o.result
+	}
+	// Not the probe's own deadline: the answer is kept for a minute, so a
+	// probe that gave up early mustn't turn a slow success into a failure.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	o.mu.RLock()
+	var err error
+	for name, c := range o.checks {
+		if cerr := c(ctx); cerr != nil {
+			err = errors.New(name + ": " + cerr.Error())
+			break
+		}
+	}
+	o.mu.RUnlock()
+	o.checked, o.result = now, err
+	return err
 }
 
 // Run serves until ctx is done.

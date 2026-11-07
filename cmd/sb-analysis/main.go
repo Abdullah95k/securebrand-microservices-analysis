@@ -133,6 +133,12 @@ func analysisDSN(cfg *config.Config) string {
 	return cfg.Postgres.ConnString()
 }
 
+// migrateWait is how long the migrate hook waits for a free database
+// connection (the shared database full, PgBouncer's pool busy) before it
+// fails: a failed hook blocks the deployment, so it waits out a full
+// database rather than give up after two minutes.
+const migrateWait = 30 * time.Minute
+
 // migrateCmd applies the analysis migrations. It reads the config and opens
 // Postgres, nothing else: no Kafka, Valkey, S3 or AI provider setting is
 // used, so a problem with one of those can't block the database step (the
@@ -141,12 +147,17 @@ func migrateCmd(args []string) error {
 	cfg := config.MustLoadFromFlags(flag.NewFlagSet("migrate", flag.ExitOnError), args)
 	plog.Setup("sb-analysis", cfg.Log.Level, cfg.Log.Format)
 	ctx := context.Background()
-	db, err := pg.Open(ctx, analysisDSN(cfg), 2)
+	deadline := time.Now().Add(migrateWait)
+	db, err := pg.OpenPatient(ctx, analysisDSN(cfg), 2, migrateWait)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	if err := store.Migrate(ctx, db); err != nil {
+	// A query can still find the pool full (query_wait_timeout): each
+	// migration is its own transaction, so running them again is safe.
+	if err := pg.Retry(ctx, "migrate", time.Until(deadline), func(ctx context.Context) error {
+		return store.Migrate(ctx, db)
+	}); err != nil {
 		return err
 	}
 	fmt.Println("analysis migrations applied")
