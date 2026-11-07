@@ -6,7 +6,7 @@ DEV_COMPOSE = docker compose -f deploy/dev/compose.yml
 ANALYSIS_IMAGE ?= sb-analysis:dev
 MEDIA_IMAGE ?= sb-analysis-media:dev
 
-.PHONY: all build test vet lint infra-up infra-down test-integration docker docker-media docker-prebuilt \
+.PHONY: all build test vet lint infra-up infra-down test-integration test-pgbouncer docker docker-media docker-prebuilt \
 	analysis-image docker-analysis-media analysis-stats analysis-up analysis-down analysis-cmd analysis-status \
 	eval-sample eval-silver eval-label eval-agreement eval-run eval-report eval-cost clean
 
@@ -30,6 +30,7 @@ lint: vet
 ## project of its own (sb-analysis-dev), never an fbs stack.
 infra-up:
 	$(DEV_COMPOSE) up -d --wait postgres redpanda valkey
+	$(DEV_COMPOSE) up -d pgbouncer
 
 ## Stop them and delete their data (only sb-analysis-dev's).
 infra-down:
@@ -38,6 +39,13 @@ infra-down:
 ## Integration tests against real Postgres/Redpanda/Valkey (make infra-up first).
 test-integration:
 	$(TEST_ENV) $(GO) test -count=1 -timeout 25m ./...
+
+## The same tests through PgBouncer in transaction mode, as production's
+## PostgreSQL is reached. The agent-role test logs in as its own new roles,
+## which this PgBouncer's user file can't list; the direct run covers it.
+test-pgbouncer:
+	$(TEST_ENV) SB_TEST_PG_DSN="postgres://analysis:analysis@localhost:6432/analysis?sslmode=disable" \
+		$(GO) test -count=1 -timeout 25m -skip 'TestAgentRolesAreScopedAndReadOnly' ./...
 
 ## The images: sb-analysis (sb-analysis and sb-eval) and the media image (with ffmpeg).
 docker analysis-image:

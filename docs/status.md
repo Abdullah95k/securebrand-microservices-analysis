@@ -147,3 +147,10 @@
   - a new alert, `AnalysisBudgetReached`.
 - **7 Nov:** the $10 daily hard stop merged (pull request #17, `602fd60`); the master pinned it, with the chart's alerts and ServiceMonitor switched on in the platform's values.
 - **7 Nov, the migrate hook failed on the live cluster** (reported by the master; its log is on the way). With the owner's approval, the hook now opens only Postgres: before, it also read the Kafka and Valkey settings and certificates and built the whole app, so a problem there could block the database step. In review.
+- **7 Nov:** the migrate fix merged (pull request #18, `e911125`). The master found the hook's real cause on the platform side: `POSTGRES_CA_CERT` was empty. PostgreSQL's certificate is from Let's Encrypt; the platform now fills the CA with Let's Encrypt's roots and, on this session's advice, sets `sslmode=verify-full` for every service, so the host name is checked too.
+- **7 Nov, PostgreSQL behind PgBouncer (in review):** production's PostgreSQL is reached through DigitalOcean's PgBouncer in transaction mode, with 50 connections shared by every service.
+  - **Before:** reproduced locally through a PgBouncer set up the same way, sb-analysis failed with `prepared statement … does not exist / already exists`.
+  - **Now:**
+    - it describes statements instead of keeping them prepared (`cache_describe`), and closes idle connections after 30 s;
+    - production opens at most 4 connections per process;
+    - the whole suite runs through PgBouncer in CI and with `make test-pgbouncer`.

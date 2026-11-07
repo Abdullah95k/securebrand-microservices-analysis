@@ -15,7 +15,14 @@ All times in reports and budgets are Iraq time (Asia/Baghdad, UTC+3).
 - **relay:** the outbox to Kafka;
 - **rollup:** daily rollups, the daily topic curation and the daily bot scoring (each job takes a database lock, so replicas never overlap).
 
-The Helm chart (`deploy/helm/sb-analysis`) runs `analysis` (all roles but media) and `analysis-media` (media, on the ffmpeg image `sb-analysis-media`), and `sb-analysis migrate` as a pre-install and pre-upgrade hook. The hook needs only the config and Postgres (no Kafka, Valkey, S3 or AI key), and its error line says what failed: `pg: ping:` for the connection or login, `permission denied` for missing rights. Credentials come from the platform's secrets (`platform-credentials`, `ai-provider`); the chart creates no topics and registers no schemas. Scaling:
+The Helm chart (`deploy/helm/sb-analysis`) runs `analysis` (all roles but media) and `analysis-media` (media, on the ffmpeg image `sb-analysis-media`), and `sb-analysis migrate` as a pre-install and pre-upgrade hook. The hook needs only the config and Postgres (no Kafka, Valkey, S3 or AI key), and its error line says what failed: `pg: ping:` for the connection or login, `permission denied` for missing rights.
+
+**PostgreSQL in production** is reached through DigitalOcean's PgBouncer in transaction mode, with 50 connections for every service.
+- sb-analysis keeps no prepared statements: pgx describes each statement once and caches only the description (`cache_describe`, set in `internal/platform/pg`).
+- It keeps no session state: only transaction-level advisory locks, with no `SET`, temporary tables or `LISTEN`.
+- It opens at most 4 connections per process, and closes idle ones after 30 seconds.
+- `make test-pgbouncer` (and CI) run the tests through a PgBouncer set up the same way.
+- Errors like `prepared statement … does not exist` mean something bypasses `pg.Open`. Credentials come from the platform's secrets (`platform-credentials`, `ai-provider`); the chart creates no topics and registers no schemas. Scaling:
 - **Ingest:** scales on Kafka lag (KEDA).
 - **Pipeline:** I/O-bound; one replica handles ~10 items/s with batching. More replicas share the queue safely (`SKIP LOCKED`).
 - **Media:** scale on `sb_analysis_media_ttl_at_risk` and the pending `media_jobs`.

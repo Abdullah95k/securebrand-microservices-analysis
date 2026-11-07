@@ -1,4 +1,5 @@
-# Local test infrastructure for sb-analysis: Postgres, Redpanda and Valkey.
+# Local test infrastructure for sb-analysis: Postgres (and PgBouncer in
+# front of it, as in production), Redpanda and Valkey.
 #   make infra-up      start them (integration tests: make test-integration)
 #   make infra-down    stop them and delete their data
 # A Compose project of its own (sb-analysis-dev): it never touches an fbs
@@ -22,6 +23,16 @@ services:
       --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
     ports: ["127.0.0.1:19092:19092"]
     healthcheck: {test: ["CMD", "rpk", "cluster", "health", "--exit-when-healthy"], interval: 3s, retries: 30}
+
+  # Production's PostgreSQL is behind PgBouncer in transaction mode:
+  # make test-pgbouncer runs the tests through this one (port 6432).
+  pgbouncer:
+    image: edoburu/pgbouncer@sha256:8638aa563607256d3c7440437534195f1066a92b68015d89ae9d6b935b444a6d # PgBouncer 1.26.1
+    volumes:
+      - ./pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer-users.txt:/etc/pgbouncer/userlist.txt:ro
+    ports: ["127.0.0.1:6432:6432"]
+    depends_on: {postgres: {condition: service_healthy}}
 
   valkey:
     image: valkey/valkey:8-alpine
