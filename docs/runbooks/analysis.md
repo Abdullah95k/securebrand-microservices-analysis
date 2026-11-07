@@ -132,8 +132,13 @@ A 401 in the logs means the key is missing or revoked.
 
 `analysis.budget.daily_usd` caps spend per Iraq day; `analysis.routes.<route>.daily_usd` caps one route. Spend is measured from real token usage at list prices (`analysis.pricing`), plus speech-to-text minutes at the transcription model's `per_minute` price (logged as `video` requests of that model; an own Whisper server is priced 0).
 - **No cap only on purpose:** outside `service.env: dev`, a `daily_usd` of 0 (no cap) stops the service at start with an error, unless `analysis.budget.allow_unlimited: true` is set.
-- **Production has no cap** (the owner, 7 November 2026): `daily_usd: 0` with `allow_unlimited: true`. Cost is held down by model instead: Claude Haiku for everything, escalation and audit off, no speech-to-text. `TestProductionConfig` fails if production's settings drift from that. Watch `sb_analysis_cost_usd_total` and `sb_analysis_spent_today_usd`. The pilot kept $5 a day.
-- **At the cap:** batch and re-analysis work pause (items wait); urgent real-time items continue if `analysis.budget.urgent_exempt`.
+- **Production: $10 a day, a hard stop** (the owner, 7 November 2026; D-031): `daily_usd: 10`, `urgent_exempt: false`.
+  - **At the cap:** every paid call waits until 00:00 Iraq time: real-time and batch items, images and videos, and the topic and entity curation.
+  - **To see it:** `sb_analysis_budget_paused` is 1, and `AnalysisBudgetReached` fires.
+  - **Models:** Claude Haiku for everything, with escalation and audit off. The own Whisper server is free, so it isn't limited.
+  - `TestProductionConfig` fails if production's settings drift from that.
+  - The pilot kept $5 a day.
+- **At the cap:** paid work pauses (items wait); urgent real-time items continue only if `analysis.budget.urgent_exempt` (off in production). The topic and entity curation wait too.
 - **To look:** `sb_analysis_spent_today_usd`, `sb_analysis_cost_usd_total` by model and route, or `make analysis-status`.
 - **To change:** set the budget in the config and restart the analysis containers. A new day starts at 00:00 Iraq time.
 

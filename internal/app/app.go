@@ -137,7 +137,12 @@ func (a *App) RefreshTaxonomy(ctx context.Context) error {
 // Curator returns the topic curation job.
 func (a *App) Curator() *curate.Curator {
 	return &curate.Curator{Store: a.Store, Providers: a.Pipeline.Providers, Pricing: provider.Pricing(a.Cfg.Analysis.Pricing),
-		Cfg: a.Cfg.Analysis.Topics, Taxonomy: a.Pipeline.Taxonomy}
+		Cfg: a.Cfg.Analysis.Topics, Taxonomy: a.Pipeline.Taxonomy, Allow: a.budgetAllow}
+}
+
+// budgetAllow checks the daily budget for a call that isn't urgent.
+func (a *App) budgetAllow(ctx context.Context, route string, est float64) (bool, error) {
+	return a.Pipeline.Budget.Allow(ctx, route, est, false)
 }
 
 // EntityCurator returns the entity registry curation job.
@@ -145,7 +150,7 @@ func (a *App) EntityCurator() *curate.EntityCurator {
 	c := a.Cfg.Analysis
 	return &curate.EntityCurator{Store: a.Store, Providers: a.Pipeline.Providers, Pricing: provider.Pricing(c.Pricing),
 		Route: c.Topics.Curation, MinSeen: c.Entities.MinSeen, Registry: a.Pipeline.Entities, MaskPII: c.Privacy.MaskPII,
-		MaskTags: c.Privacy.MaskTaggedUsers}
+		MaskTags: c.Privacy.MaskTaggedUsers, Allow: a.budgetAllow}
 }
 
 // ScoreBots scores the authors active in the window.

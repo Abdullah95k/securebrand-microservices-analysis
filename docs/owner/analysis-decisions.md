@@ -52,7 +52,7 @@ Server and storage costs come on top: roughly 330 GB of database storage a year 
 | # | Question | Your answer | What the system does |
 |---|---|---|---|
 | 1 | Send comments to Anthropic? | Yes | Analysis uses Claude. Phone numbers, e-mails and author names never leave. Your lawyer should still check the data-processing terms. |
-| 2 | Daily spending limit | Set after the test; then, 7 Nov: no cap, use Haiku | Production has no daily cap (see 19). The pilot kept $5 a day. |
+| 2 | Daily spending limit | Set after the test; then, 7 Nov: $10 a day | Production stops spending at $10 a day (see 21). The pilot kept $5 a day. |
 | 3 | Everything within minutes? | No, within hours is fine | Bulk at half price; brand mentions within a minute. |
 | 4 | Topic list | Fine, if missing topics are added automatically | New topics are proposed by the AI, checked for duplicates, and approved by a second AI every 6 hours once 5 posts use them. You can step in at any time. |
 | 5 | Brand list | Fine, if missing ones are added automatically | New brands, organisations, public figures, positions and places found 5+ times are approved by the AI every 6 hours; spelling variants are merged into the known one. |
@@ -68,8 +68,9 @@ Server and storage costs come on top: roughly 330 GB of database storage a year 
 | 16 | Deleting data on an erasure request (6 Nov) | Never without your order | An erasure request from the collector is only recorded; nothing is deleted. A recorded request is deleted only when you order it, with `make analysis-cmd ARGS='erasures apply --request <id> --yes-delete'`. `make analysis-cmd ARGS='erasures list'` shows the requests received. |
 | 17 | Where production reads from (7 Nov) | fbs, tks, yts, igs, and the contract | Production reads the contract's topics (`content.*`), which every collector (fbs, tks, yts, igs) publishes as it adopts the contract, and fbs's own `fb.*` topics until fbs does. Results from `fb.*` stay in the analysis database; everything else is also published to the platform. |
 | 18 | Contract version (7 Nov) | v1.2.0 | Pinned. The test that runs in CI checks every kind of result with the contract's own checks. |
-| 19 | Daily cap (7 Nov) | No cap; use Haiku | No daily spending limit in production. Every AI call uses Claude Haiku: the text, image and video analysis, and the topic and brand list upkeep. The second opinion from a stronger model on unsure brand mentions, and the Opus quality sample, are switched off. Spending is still measured (`sb_analysis_cost_usd_total`). |
+| 19 | Which AI (7 Nov) | Use Haiku | Every AI call uses Claude Haiku: the text, image and video analysis, and the topic and brand list upkeep. The second opinion from a stronger model on unsure brand mentions, and the Opus quality sample, are switched off. Spending is still measured (`sb_analysis_cost_usd_total`). |
 | 20 | Speech in videos (7 Nov) | Yes, with our own Whisper server | Pictures in images and video frames are analysed by Haiku. Speech is transcribed by our own Whisper server inside the cluster (Whisper large-v3-turbo, on the existing machines, no graphics card), so the audio never leaves our systems and there is no per-minute fee. The platform's captions are used first; Whisper takes the videos without them, one at a time, the first 10 minutes at most. If it can't keep up, the options come to you with their costs. |
+| 21 | Daily cap (7 Nov, D-031) | $10 a day, a hard stop | Once a day's spending reaches $10 (Iraq time), every paid AI call waits until midnight: urgent items, images and videos, and the topic and brand list upkeep too. An alert fires when that happens. Our own Whisper server costs nothing per video, so it isn't limited. Waiting items are analysed the next day; a media file whose deadline passes first is lost for analysis. |
 
 **Why Google Gemini as the backup:**
 - its prices are confirmed on Google's official page (OpenAI's could not be checked);

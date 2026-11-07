@@ -45,7 +45,7 @@ var (
 	AnalysisQueueAge     = analysisGaugeVec("queue_oldest_seconds", "Age of the oldest queued item by lane and route.", "lane", "route")
 	AnalysisSpentToday   = analysisGauge("spent_today_usd", "Spend today (analysis.timezone), actual where known, estimated in flight.")
 	AnalysisBudgetUSD    = analysisGauge("budget_daily_usd", "Daily budget (0 = none).")
-	AnalysisBudgetPaused = analysisGauge("budget_paused", "1 while the budget holds non-urgent work back.")
+	AnalysisBudgetPaused = analysisGauge("budget_paused", "1 while the daily budget holds paid work back (urgent items too unless analysis.budget.urgent_exempt).")
 	AnalysisOpenBatches  = analysisGauge("open_batches", "Provider batches in progress.")
 
 	// Media.
