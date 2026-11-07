@@ -160,3 +160,4 @@
   - **In review:**
     - `values-production.yaml` now names that pull secret too;
     - a full database at start (53300, when several services start at once) is retried for about two minutes instead of restarting the pod.
+- **7 Nov, the whisper server's model download was OOM-killed** in production at its 1 GiB limit (the Xet client buffers the model in memory; found by the master). It now downloads by plain HTTP, streamed to the volume, with a 3 GiB limit. In review, with the start-up fixes above.

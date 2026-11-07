@@ -137,6 +137,9 @@ jobs:
           # the analysis pointed at its Service.
           grep -q 'image: "ghcr.io/speaches-ai/speaches@sha256:' /tmp/production.yaml
           grep -q 'type: Recreate' /tmp/production.yaml
+          # The model downloads by plain HTTP (the Xet client buffered it in
+          # memory and was OOM-killed in production).
+          grep -q 'HF_HUB_DISABLE_XET' /tmp/production.yaml
           grep -q 'base_url: http://sba-whisper:8000/v1' /tmp/production.yaml
           # Off by default.
           ! helm template sba $c | grep -q whisper

@@ -88,6 +88,7 @@ Videos are transcribed by a speech-to-text server inside the cluster: **Speaches
   - A failed call isn't retried at once; the media queue retries the video with its backoff.
 - **Pinned:** the image by digest and the model by revision (`whisper.image.digest`, `whisper.model.revision`).
   - The init container downloads that revision once onto the pod's 10 GiB volume, and later starts find it there.
+  - It downloads by plain HTTP, streamed to the volume (`HF_HUB_DISABLE_XET=1`), with a 3 GiB memory limit. The Xet client buffered the 1.6 GB model in memory and was OOM-killed at 1 GiB in production (7 Nov).
   - The server runs offline (`HF_HUB_OFFLINE=1`), so it never fetches anything else.
   - To change the model, change the revision: the init container downloads it, points the cache at it and removes the old one.
 - **Rollout:** `Recreate`, because the volume can be mounted by one pod at a time.
