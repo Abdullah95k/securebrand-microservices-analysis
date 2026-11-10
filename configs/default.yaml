@@ -77,9 +77,12 @@ analysis:
   batch:
     submit_every: 10m
     poll_every: 1m
-    max_requests: 5000     # requests per provider batch
-    max_items: 100000      # items claimed per submission
-    lease: 26h             # > the providers' 24h batch window
+    # Each request repeats the prompt and the output schema (about 23 KB):
+    # 1,000 requests make a batch body of about 25-35 MB, built in memory.
+    max_requests: 1000     # requests per provider batch
+    max_items: 10000       # items claimed per route and submission (60,000 an hour)
+    submit_lease: 15m      # claimed items are leased this long until their batch is sent...
+    lease: 26h             # ...then this long: > the providers' 24h batch window
     fallback_after: 12h
   realtime:
     workers: 4

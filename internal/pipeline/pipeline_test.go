@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/config"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/curate"
@@ -887,5 +889,127 @@ func TestHotAccountsGoRealtime(t *testing.T) {
 	_ = off.s.MonitorSource(ctx, "c1", "fb:page:1")
 	if pl := off.p.Plan(onPage("fb:page:1", "fb:comment:x")); pl.Lane != core.LaneBatch {
 		t.Fatalf("watchlists off, a watched account still went to %s", pl.Lane)
+	}
+}
+
+// A round that claimed batch work and stopped before sending it (a crash,
+// a restart, an error) left its items leased and its requests counting
+// against the budget. The next round gives them back and sends them; a
+// round still in progress elsewhere (its requests younger than
+// batch.submit_lease) is left alone. Sent items are leased for the
+// batch's lifetime only once their batch is recorded.
+func TestBatchWorkLeftByAStoppedRoundComesBack(t *testing.T) {
+	e := setup(t, nil)
+	ctx := context.Background()
+	e.ingest(t, post(), comment(1, "حلو"), comment(2, "سيء"), comment(3, "عادي"))
+
+	// The stopped round, as the old code left it: the post (short, so on
+	// the comment route) and the comments leased for 26 h, two of them in
+	// a request never sent, its estimate still counted.
+	claimed, err := e.s.Claim(ctx, core.LaneBatch, core.RouteComment, 10, 26*time.Hour, 0)
+	if err != nil || len(claimed) != 4 {
+		t.Fatalf("claimed %d, %v", len(claimed), err)
+	}
+	stranded := uuid.New()
+	if err := e.s.StartRequest(ctx, store.RequestRow{ID: stranded, Route: core.RouteComment, Lane: core.LaneBatch,
+		Provider: "primary", Model: "claude-haiku-5-5", ContentIDs: []string{"fb:comment:1", "fb:comment:2"}, InputHashes: [][]byte{{1}, {2}}, EstCostUSD: 5}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.DB.Exec(ctx, `UPDATE analysis.provider_requests SET created_at = now() - interval '20 minutes'`); err != nil {
+		t.Fatal(err)
+	}
+	// Spend since an hour ago, not since the day's start: the test may run
+	// just after midnight.
+	since := time.Now().Add(-time.Hour)
+	if spent, _ := e.s.SpentSince(ctx, since, ""); spent < 5 {
+		t.Fatalf("the stranded estimate isn't counted before the fix's sweep: %v", spent)
+	}
+
+	// A round in progress (its request just written) is not touched.
+	young := uuid.New()
+	e.ingest(t, comment(4, "تمام"))
+	if _, err := e.s.Claim(ctx, core.LaneBatch, core.RouteComment, 10, 15*time.Minute, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.s.StartRequest(ctx, store.RequestRow{ID: young, Route: core.RouteComment, Lane: core.LaneBatch,
+		Provider: "primary", Model: "claude-haiku-5-5", ContentIDs: []string{"fb:comment:4"}, InputHashes: [][]byte{{4}}, EstCostUSD: 0.001}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The next round: the stranded work comes back and is sent at once.
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_requests WHERE request_id = $1 AND status = 'failed' AND error LIKE 'never sent:%'`, stranded); n != 1 {
+		t.Fatal("the stranded request wasn't closed")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_requests WHERE request_id = $1 AND status = 'submitted'`, young); n != 1 {
+		t.Fatal("a request younger than batch.submit_lease was closed")
+	}
+	if spent, _ := e.s.SpentSince(ctx, since, ""); spent >= 5 {
+		t.Fatalf("the stranded estimate still counts against the budget: %v", spent)
+	}
+	// The post and comments 1-3 went out in a batch, leased for the
+	// batch's lifetime; comment 4 stays with the round in progress.
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue q JOIN analysis.provider_requests r USING (request_id)
+		WHERE r.batch_id IS NOT NULL AND q.lease_until > now() + interval '24 hours'`); n != 4 {
+		t.Fatalf("%d sent items leased for the batch, want 4", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE content_id = 'fb:comment:4' AND request_id = $1`, young); n != 1 {
+		t.Fatal("the round in progress lost its item")
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE is_current`); n != 4 {
+		t.Fatalf("analyses %d, want 4 (post + comments 1-3)", n)
+	}
+	// Their claim counted no attempt for the round that never sent them.
+	if n := e.count(t, `SELECT count(*) FROM analysis.dead_letters`); n != 0 {
+		t.Fatal("dead letters")
+	}
+}
+
+// A batch round claims its items only for batch.submit_lease: if the
+// process stops before sending, they come back within it, not after the
+// batch's 26 h.
+func TestBatchClaimIsShortUntilSent(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) { c.Batch.SubmitLease = 15 * time.Minute })
+	ctx := context.Background()
+	// A batch API that never answers: the round stops before sending.
+	block := make(chan struct{})
+	e.p.Providers.Add("primary", &stuckBatcher{Provider: e.primary, block: block}, true, 0)
+	e.ingest(t, comment(1, "حلو"))
+	rctx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- e.p.SubmitBatches(rctx) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for e.count(t, `SELECT count(*) FROM analysis.provider_requests WHERE status = 'submitted'`) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the round never reached the batch API")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue
+		WHERE lease_until BETWEEN now() + interval '10 minutes' AND now() + interval '16 minutes'`); n != 1 {
+		t.Fatal("while sending, the item isn't leased for batch.submit_lease")
+	}
+	cancel()
+	close(block)
+	<-done
+}
+
+// stuckBatcher's SubmitBatch waits until block closes or its context ends.
+type stuckBatcher struct {
+	*fake.Provider
+	block chan struct{}
+}
+
+func (s *stuckBatcher) SubmitBatch(ctx context.Context, _ []provider.Request) (string, error) {
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-s.block:
+		return "", errOverloaded
 	}
 }

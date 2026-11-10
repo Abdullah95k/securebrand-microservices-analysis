@@ -175,17 +175,66 @@ func (s *Store) StartRequest(ctx context.Context, r RequestRow) error {
 	})
 }
 
-// SetBatchID records the provider batch of submitted requests.
-func (s *Store) SetBatchID(ctx context.Context, batchID, providerName, model, route string, ids []uuid.UUID) error {
+// SetBatchID records the provider batch of submitted requests, and leases
+// their queue entries for lease (the batch's lifetime): until then they
+// were leased only for the submission (batch.submit_lease).
+func (s *Store) SetBatchID(ctx context.Context, batchID, providerName, model, route string, ids []uuid.UUID, lease time.Duration) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `INSERT INTO analysis.provider_batches (batch_id, provider, model, route, status, requests)
 			VALUES ($1, $2, $3, $4, 'in_progress', $5) ON CONFLICT (batch_id) DO NOTHING`,
 			batchID, providerName, model, route, len(ids)); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `UPDATE analysis.provider_requests SET batch_id = $1 WHERE request_id = ANY($2)`, batchID, ids)
+		if _, err := tx.Exec(ctx, `UPDATE analysis.provider_requests SET batch_id = $1 WHERE request_id = ANY($2)`, batchID, ids); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE analysis.analysis_queue SET lease_until = now() + make_interval(secs => $2)
+			WHERE request_id = ANY($1)`, ids, lease.Seconds())
 		return err
 	})
+}
+
+// ReleaseStrandedBatch gives back batch-lane work that a process claimed
+// but never sent: it stopped (a crash, a restart) or failed between the
+// claim and the provider's answer. It finds
+//   - requests recorded for a batch but never given one (no batch_id),
+//     older than olderThan: marked failed, so their estimated cost no longer
+//     counts against the day's budget, and their items released;
+//   - items leased for longer than olderThan from now whose request isn't
+//     in a sent batch (a long lease is only given with the batch): released.
+//
+// Released items lose the attempt their claim counted. It returns the
+// requests closed and the items released.
+func (s *Store) ReleaseStrandedBatch(ctx context.Context, olderThan time.Duration) (requests, items int64, err error) {
+	err = pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		var released int64
+		if err := tx.QueryRow(ctx, `WITH r AS (
+				UPDATE analysis.provider_requests SET status = 'failed', completed_at = now(),
+					error = 'never sent: the process stopped or failed before its batch was submitted'
+				WHERE lane = 'batch' AND status = 'submitted' AND batch_id IS NULL
+				  AND created_at < now() - make_interval(secs => $1)
+				RETURNING request_id),
+			q AS (
+				UPDATE analysis.analysis_queue q SET lease_until = NULL, request_id = NULL, attempts = greatest(q.attempts - 1, 0)
+				FROM r WHERE q.request_id = r.request_id
+				RETURNING 1)
+			SELECT (SELECT count(*) FROM r), (SELECT count(*) FROM q)`, olderThan.Seconds()).Scan(&requests, &released); err != nil {
+			return err
+		}
+		items += released
+		tag, err := tx.Exec(ctx, `UPDATE analysis.analysis_queue q SET lease_until = NULL, request_id = NULL,
+				attempts = greatest(q.attempts - 1, 0)
+			WHERE q.lane = 'batch' AND q.lease_until > now() + make_interval(secs => $1)
+			  AND NOT EXISTS (SELECT 1 FROM analysis.provider_requests r
+			                  WHERE r.request_id = q.request_id AND r.batch_id IS NOT NULL AND r.status = 'submitted')`,
+			olderThan.Seconds())
+		if err != nil {
+			return err
+		}
+		items += tag.RowsAffected()
+		return nil
+	})
+	return requests, items, err
 }
 
 // FailRequest marks a request failed and releases its queue entries with a

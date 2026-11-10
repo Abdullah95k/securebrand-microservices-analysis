@@ -101,7 +101,14 @@ func (p *Pipeline) RunBatch(ctx context.Context) error {
 
 // SubmitBatches claims batch-lane items per route and sends them through
 // the provider's batch API; a provider without one gets them in real time.
+// First, work an earlier round claimed but never sent (the process stopped
+// or failed in between) is given back.
 func (p *Pipeline) SubmitBatches(ctx context.Context) error {
+	if reqs, items, err := p.Store.ReleaseStrandedBatch(ctx, p.submitLease()); err != nil {
+		slog.Warn("analysis: releasing stranded batch work", "err", err)
+	} else if reqs > 0 || items > 0 {
+		slog.Warn("analysis: released batch work that was claimed but never sent", "requests", reqs, "items", items)
+	}
 	var errs []error
 	for _, route := range routeOrder {
 		rc, ok := p.Cfg.Routes[route]
@@ -115,9 +122,19 @@ func (p *Pipeline) SubmitBatches(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
+// submitLease is how long claimed batch items stay leased until their
+// batch is sent (batch.submit_lease); SetBatchID then leases them for the
+// batch's lifetime (batch.lease).
+func (p *Pipeline) submitLease() time.Duration {
+	if d := p.Cfg.Batch.SubmitLease; d > 0 {
+		return d
+	}
+	return 15 * time.Minute
+}
+
 func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) error {
 	batcher, hasBatch := p.Providers.Batcher(prov)
-	claimed, err := p.Store.Claim(ctx, core.LaneBatch, route, p.Cfg.Batch.MaxItems, p.Cfg.Batch.Lease, 0)
+	claimed, err := p.Store.Claim(ctx, core.LaneBatch, route, p.Cfg.Batch.MaxItems, p.submitLease(), 0)
 	if err != nil || len(claimed) == 0 {
 		return err
 	}
@@ -156,21 +173,52 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 		g   group
 	}
 	var reqs []pending
+	// handled are the claimed items already started as a request or
+	// released (over budget). giveBack, on an error before anything was
+	// sent, closes the requests started and releases the other claimed
+	// items, so nothing waits for its lease to run out and no estimate
+	// keeps counting against the budget.
+	handled := map[string]bool{}
+	giveBack := func(cause error) error {
+		bg := context.WithoutCancel(ctx)
+		var started []uuid.UUID
+		for _, r := range reqs {
+			started = append(started, r.row.ID)
+		}
+		var rest []string
+		for _, c := range claimed {
+			if !handled[c.Item.ContentID] {
+				rest = append(rest, c.Item.ContentID)
+			}
+		}
+		reason := "batch round failed: " + cause.Error()
+		errs := []error{cause}
+		if len(started) > 0 {
+			errs = append(errs, p.Store.AbortRequests(bg, started, reason, 5*time.Minute))
+		}
+		if len(rest) > 0 {
+			errs = append(errs, p.Store.ReleaseUnsent(bg, rest, route, 5*time.Minute))
+		}
+		return errors.Join(errs...)
+	}
 	for _, g := range groups {
 		b, err := p.build(ctx, g, model)
 		if err != nil {
-			return err
+			return giveBack(err)
 		}
 		id := uuid.New()
 		b.req.ID = id.String()
 		est := p.estimate(b, true)
 		ok, err := p.Budget.Allow(ctx, route, est, false)
 		if err != nil {
-			return err
+			return giveBack(err)
 		}
 		if !ok {
 			if err := p.Store.ReleaseUnsent(ctx, ids(g.items), route, 10*time.Minute); err != nil {
-				return err
+				return giveBack(err)
+			}
+			for _, it := range g.items {
+				handled[it.ContentID] = true
 			}
 			continue
 		}
@@ -178,7 +226,10 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 		row := store.RequestRow{ID: id, Route: route, Lane: core.LaneBatch, Provider: prov, Model: model,
 			ContentIDs: ids(b.items), InputHashes: b.hashes, EstCostUSD: est}
 		if err := p.Store.StartRequest(ctx, row); err != nil {
-			return err
+			return giveBack(err)
+		}
+		for _, cid := range row.ContentIDs {
+			handled[cid] = true
 		}
 		reqs = append(reqs, pending{row: row, req: b.req, g: g})
 	}
@@ -221,7 +272,19 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 			return errors.Join(errs...)
 		}
 		p.markUp(prov)
-		if err := p.Store.SetBatchID(ctx, id, prov, model, route, reqIDs); err != nil {
+		if err := p.Store.SetBatchID(ctx, id, prov, model, route, reqIDs, p.Cfg.Batch.Lease); err != nil {
+			// This chunk was sent but can't be followed: ReleaseStrandedBatch
+			// closes its requests after batch.submit_lease, and its items are
+			// sent again. The later chunks were never sent: close them now.
+			var unsent []uuid.UUID
+			for _, r := range reqs[start+len(chunk):] {
+				unsent = append(unsent, r.row.ID)
+			}
+			if len(unsent) > 0 {
+				if aerr := p.Store.AbortRequests(context.WithoutCancel(ctx), unsent, "batch submit: "+err.Error(), 5*time.Minute); aerr != nil {
+					return errors.Join(err, aerr)
+				}
+			}
 			return err
 		}
 		ametrics.Requests.WithLabelValues(prov, model, core.LaneBatch, "submitted").Add(float64(len(chunk)))

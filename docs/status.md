@@ -178,3 +178,14 @@
   - About 7 minutes after the new pods started, sb-analysis held 5 server connections (1 active, 4 idle), down from 6. The platform now closes idle server connections after 10 s, and PgBouncer replaces older ones within an hour.
 - **7 Nov, 14:32 Iraq time: PostgreSQL's limit is 200 connections, up from 50** (the master; platform pull request #38). Right after, 64 were in use across every service. sb-analysis's pods came through PostgreSQL's restart without restarting. Nothing pending from sb-analysis.
 - **7 Nov: the quality check stays Haiku-only** (the owner: "just Haiku for now"). The one-off Opus labelling of 1,200 items (fix 7) doesn't run, so Haiku's quality stays unmeasured. A person can still label the sample at no AI cost. Decision 22.
+- **10 Nov, 23:58 Iraq time: too little analysis (the master).** In 24 h, the platform wrote 559 results, 8 topic updates, no media analyses and no author flags. The same day the collectors brought about 44,000 tt posts and comments (plus 100,716 media events). analysis-analysis had restarted 8 times.
+  - **Not by design:** every post and comment is queued; nothing samples or filters. Items mentioning a tracked entity go real time, the rest through Anthropic's batch API.
+  - **A defect in the batch lane fits it** (counts asked of the master to confirm):
+    - a round claimed up to 100,000 items, leased them for 26 h before sending, then sent batches of 5,000 requests (over 100 MB each in memory, in a 1 GiB pod);
+    - a crash or an error before sending held those items for 26 h, and their estimates kept counting against the $10.
+  - **In review, the fix:**
+    - items are leased for 15 minutes until their batch is sent, and only then for 26 h;
+    - rounds take 10,000 items per route, in batches of 1,000 requests;
+    - a failed round gives everything back at once;
+    - each round first releases work a stopped round left behind and closes its requests, so their estimates stop counting.
+  - **Media and author flags:** waiting for the master's counts (media acks by status and reason; authors by score).

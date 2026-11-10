@@ -86,6 +86,17 @@ func TestProductionConfig(t *testing.T) {
 	if a.Realtime.IdlePoll < 10*time.Second || a.Media.IdlePoll < 10*time.Second {
 		t.Errorf("idle polls every %v (real time) and %v (media), want 10 s or more", a.Realtime.IdlePoll, a.Media.IdlePoll)
 	}
+	// The batch lane (the master, 10 November 2026: 559 results a day for
+	// about 44,000 items, 8 restarts): a round's items are leased only for
+	// minutes until their batch is sent, and a submission stays small (each
+	// request repeats a ~23 KB prompt and schema; the pod has 1 GiB).
+	b := a.Batch
+	if b.SubmitLease <= 0 || b.SubmitLease > 30*time.Minute || b.Lease < 25*time.Hour {
+		t.Errorf("batch leases %v until sent, %v after: want at most 30m, then 25h or more", b.SubmitLease, b.Lease)
+	}
+	if b.MaxRequests > 1000 || b.MaxItems > 20000 {
+		t.Errorf("batch rounds of %d items in batches of %d requests: want at most 20,000 and 1,000", b.MaxItems, b.MaxRequests)
+	}
 	if a.Realtime.Wait+a.Realtime.IdlePoll > 45*time.Second {
 		t.Errorf("a real-time item waits up to %v before it is claimed, want 45 s at most", a.Realtime.Wait+a.Realtime.IdlePoll)
 	}
