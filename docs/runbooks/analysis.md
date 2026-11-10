@@ -179,6 +179,10 @@ Keep the price table in `configs/default.yaml` current when providers change pri
 
 Results (`analysis.result.v1`, `analysis.media.v1`) and media acks (`fb.media.processed.v1`, `content.media.processed.v1`) leave through `analysis.outbox`, published by the relay role.
 - A growing `sb_analysis_outbox_backlog` means the relay is down or cannot produce.
+- **A record Kafka refuses** (its topic not writable by the Kafka user, for example) waits and is tried again: after 5 s, then twice as long each time, at most every 10 minutes. The records behind it keep flowing, and nothing is dropped.
+  - `sb_analysis_publish_failed_total{topic}` and `sb_analysis_outbox_held` show it, the `AnalysisPublishRefused` alert fires after 30 minutes, and the relay logs `analysis: outbox relay` with the counts by topic.
+  - Since 11 Nov. Before, the relay sent the oldest 500 records all or nothing, so one refused record held back everything behind it.
+  - sb-analysis writes `analysis.*` and `content.media.processed.v1` (the media acks, as consumer `sb-analysis`): its Kafka user needs write on both.
 - Acks wait in the outbox too, so a long outage can push media past its TTL.
 - Records are delivered at least once: consumers deduplicate on `event_id`.
 

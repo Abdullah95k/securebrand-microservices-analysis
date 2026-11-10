@@ -188,4 +188,15 @@
     - rounds take 10,000 items per route, in batches of 1,000 requests;
     - a failed round gives everything back at once;
     - each round first releases work a stopped round left behind and closes its requests, so their estimates stop counting.
-  - **Media and author flags:** waiting for the master's counts (media acks by status and reason; authors by score).
+- **10 Nov, the master's counts** (00:16 Iraq time):
+  - **the pod:** OOMKilled at 94% of 1 GiB (the last restart at 05:21 Iraq time);
+  - **spend:** $0.84 and $0.88 for the day, so the budget isn't the limit;
+  - **the queue:** 203k items, oldest 3 days, with ingest paused;
+  - **the batch lane:** 10,983 batch requests sent in 24 h, 1,116 back;
+  - **media:** about 900 images analysed ($0.20), but nothing reached Kafka: no media analyses, no acks, and none of the 4 flagged authors.
+  - **The batch fix merged** (pull request #28, `4099fa1`), sent to the master to pin. As a stopgap the master raises the analysis pod to 2 GiB.
+  - **Publishing is not blocked** (the master's metrics, 00:17 Iraq time, correcting my first guess): outbox backlog 0, no produce errors, and `analysis-kafka` may write `content.*`. In 24 h we published 2,354 results (`analysis.result.v1`) and 1,487 media acks on `fb.media.processed.v1`.
+  - **The image analyses are fbs's own media** (`fb.media.ready.v1`). By owner decision 17, fbs's results stay in Postgres until fbs moves to the contract, so `analysis.media.v1` stays empty by design until media arrives through the contract.
+  - **No TikTok media reached our media queue** (pending: 228 images, all fbs; no videos). The 100,716 "media" are likely `content.media.v1` metadata, not downloaded files announced on `content.media.ready.v1`. Asked the master whether tks's media hand-off is on.
+  - **In review, as hardening** (not the cause): the relay no longer lets one refused record hold back the rest (pull request #29).
+  - **Next:** a read-only `sb-analysis batches` command for the open batches' provider status, and a metric for media announcements skipped without a bucket or key.

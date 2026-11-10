@@ -127,6 +127,32 @@ func (p *Producer) ProduceSync(ctx context.Context, recs ...*kgo.Record) error {
 	return res.FirstErr()
 }
 
+// ProduceEach produces records synchronously and returns one error per
+// record, in the order given (nil when it went out): a refused record
+// doesn't hide which others went out.
+func (p *Producer) ProduceEach(ctx context.Context, recs ...*kgo.Record) []error {
+	errs := make([]error, len(recs))
+	if len(recs) == 0 {
+		return errs
+	}
+	at := make(map[*kgo.Record]int, len(recs))
+	for i, r := range recs {
+		at[r] = i
+	}
+	// franz-go returns the results in the order they complete.
+	for _, r := range p.cl.ProduceSync(ctx, recs...) {
+		outcome := "ok"
+		if r.Err != nil {
+			outcome = "error"
+		}
+		metrics.KafkaProduce.WithLabelValues(r.Record.Topic, outcome).Inc()
+		if i, ok := at[r.Record]; ok {
+			errs[i] = r.Err
+		}
+	}
+	return errs
+}
+
 // Batch collects asynchronous produces so a caller can wait for all of them
 // at a checkpoint boundary (for example after one page of results).
 type Batch struct {

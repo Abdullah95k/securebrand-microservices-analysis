@@ -98,6 +98,14 @@ groups:
           summary: Analysis results and media acks are not reaching Kafka
           description: The relay role is down or cannot produce; media acks wait too, so files may hit their TTL.
           runbook_url: https://github.com/abdullah95k/securebrand-microservices-analysis/blob/main/docs/runbooks/analysis.md#outbox
+      - alert: AnalysisPublishRefused
+        expr: max(sb_analysis_outbox_held) > 0
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: Kafka keeps refusing some analysis records
+          description: Records wait in the outbox and are tried again; sb_analysis_publish_failed_total shows the topic. Usually the Kafka user may not write that topic. The other records keep flowing.
+          runbook_url: https://github.com/abdullah95k/securebrand-microservices-analysis/blob/main/docs/runbooks/analysis.md#outbox
       - alert: AnalysisRateLimitNotShared
         expr: sum by (provider) (rate(sb_analysis_rate_limit_fallback_total[10m])) > 0
         for: 10m

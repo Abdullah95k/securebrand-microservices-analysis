@@ -34,6 +34,8 @@ var (
 	STTDeferred   = metrics.AnalysisSTTDeferred
 	OutboxBacklog = metrics.AnalysisOutboxBacklog
 	Published     = metrics.AnalysisPublished
+	PublishFailed = metrics.AnalysisPublishFailed
+	OutboxHeld    = metrics.AnalysisOutboxHeld
 	Erasures      = metrics.AnalysisErasures
 	RollupDays    = metrics.AnalysisRollupDays
 )
