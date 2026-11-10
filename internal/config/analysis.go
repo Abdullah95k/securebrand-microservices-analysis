@@ -113,8 +113,12 @@ type BatchLane struct {
 	MaxRequests int           `koanf:"max_requests"`
 	// MaxItems caps the items claimed per submission.
 	MaxItems int `koanf:"max_items"`
-	// Lease is how long submitted items stay claimed (longer than the
-	// provider's 24h window, so a crash only delays them).
+	// SubmitLease is how long claimed items stay leased while their
+	// batch is built and sent: a process that dies or fails before sending
+	// gives them back within it.
+	SubmitLease time.Duration `koanf:"submit_lease"`
+	// Lease is how long items stay claimed once their batch is sent
+	// (longer than the provider's 24h window).
 	Lease time.Duration `koanf:"lease"`
 	// FallbackAfter: when the primary has been unavailable this long, batch
 	// items go through the route's fallback in real time.

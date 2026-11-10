@@ -52,6 +52,16 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
 
   A failed read keeps the last list. Media (images, videos) stays real time: its files are deleted at their deadline.
 - **To look:** `sb_analysis_queue_depth{lane="realtime"}` against `{lane="batch"}`. Each real-time item costs about twice a batch one, so every hot account adds to the daily spend, which the budget caps.
+- **How a batch round works** (every `batch.submit_every`, 10 minutes):
+  - it claims up to `batch.max_items` (10,000) due items per route, leased for `batch.submit_lease` (15 minutes) only;
+  - it builds the requests and sends them in batches of `batch.max_requests` (1,000). Each request repeats the prompt and output schema (about 23 KB), so a batch body is about 25–35 MB in memory;
+  - once a batch is recorded, its items are leased for `batch.lease` (26 h, longer than the provider's 24 h);
+  - on an error before sending, the round closes the requests it recorded and releases the rest.
+- **Work a stopped round left behind** (a crash or restart between claim and send) comes back at the start of the next round, with `analysis: released batch work that was claimed but never sent` in the log:
+  - requests recorded but never given a batch, older than `batch.submit_lease`, are marked failed, so their estimates stop counting against the day's budget;
+  - items leased long but not in a sent batch are released.
+  - Before 11 Nov a round leased its items for 26 h before sending, and claimed up to 100,000 items into batches of 5,000 requests (over 100 MB each). A crash then held them for 26 h, with their estimates counted against the budget.
+- **A provider without a batch API, or the fallback after `batch.fallback_after`,** analyses a round's items in real time under the same claim. With more than one replica, a round that takes longer than `batch.submit_lease` can be claimed again by another.
 
 ## Queue backlog
 
