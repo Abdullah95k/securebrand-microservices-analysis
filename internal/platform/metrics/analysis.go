@@ -58,6 +58,8 @@ var (
 	// Outbox, erasure, rollups.
 	AnalysisOutboxBacklog = analysisGauge("outbox_backlog", "Records waiting in the outbox.")
 	AnalysisPublished     = analysisCounter("published_total", "Records published from the outbox, by topic.", "topic")
+	AnalysisPublishFailed = analysisCounter("publish_failed_total", "Outbox records Kafka refused or didn't take, by topic; each waits and is tried again.", "topic")
+	AnalysisOutboxHeld    = analysisGauge("outbox_held", "Outbox records waiting to be tried again after a failed publish.")
 	AnalysisErasures      = analysisCounter("erasures_total", "Erasure requests processed by subject.", "subject")
 	AnalysisRollupDays    = analysisCounter("rollup_days_total", "Rollup days recomputed.")
 )

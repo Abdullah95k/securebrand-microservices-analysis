@@ -188,4 +188,12 @@
     - rounds take 10,000 items per route, in batches of 1,000 requests;
     - a failed round gives everything back at once;
     - each round first releases work a stopped round left behind and closes its requests, so their estimates stop counting.
-  - **Media and author flags:** waiting for the master's counts (media acks by status and reason; authors by score).
+- **10 Nov, the master's counts** (00:16 Iraq time):
+  - **the pod:** OOMKilled at 94% of 1 GiB (the last restart at 05:21 Iraq time);
+  - **spend:** $0.84 and $0.88 for the day, so the budget isn't the limit;
+  - **the queue:** 203k items, oldest 3 days, with ingest paused;
+  - **the batch lane:** 10,983 batch requests sent in 24 h, 1,116 back;
+  - **media:** about 900 images analysed ($0.20), but nothing reached Kafka: no media analyses, no acks, and none of the 4 flagged authors.
+  - **The batch fix merged** (pull request #28, `4099fa1`), sent to the master to pin. As a stopgap the master raises the analysis pod to 2 GiB.
+  - **A second defect, in publishing:** the relay sent the oldest 500 outbox records all or nothing. The media acks (`content.media.processed.v1`) are likely refused if the Kafka user may write only `analysis.*`. One refused record then holds back everything behind it. Asked the master for the produce metrics and the user's write rights.
+  - **In review, the relay fix:** a refused record waits with a backoff and the rest flows; nothing is dropped. New alert `AnalysisPublishRefused`.

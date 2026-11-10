@@ -26,7 +26,7 @@ func registered(t *testing.T) map[string]bool {
 		AnalysisRefusals, AnalysisFollowUps, AnalysisDeduplicated, AnalysisDeadLetters, AnalysisQueueDepth, AnalysisQueueAge,
 		AnalysisSpentToday, AnalysisBudgetUSD, AnalysisBudgetPaused, AnalysisOpenBatches, AnalysisMedia, AnalysisMediaAtRisk,
 		AnalysisMediaPending, AnalysisTranscriptions, AnalysisSTTDeferred,
-		AnalysisOutboxBacklog, AnalysisPublished, AnalysisErasures, AnalysisRollupDays, AnalysisRateFallback,
+		AnalysisOutboxBacklog, AnalysisPublished, AnalysisPublishFailed, AnalysisOutboxHeld, AnalysisErasures, AnalysisRollupDays, AnalysisRateFallback,
 		KafkaProduce, KafkaCommitted, KafkaHandlerPanics} {
 		ch := make(chan *prometheus.Desc, 4)
 		c.Describe(ch)

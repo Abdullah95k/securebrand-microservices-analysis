@@ -5,7 +5,9 @@ package relay
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,10 +21,16 @@ import (
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/store"
 )
 
+// Publisher produces records one by one: *kafka.Producer.
+type Publisher interface {
+	Topic(base string) string
+	ProduceEach(ctx context.Context, recs ...*kgo.Record) []error
+}
+
 // Relay drains the outbox.
 type Relay struct {
 	Store    *store.Store
-	Producer *kafka.Producer
+	Producer Publisher
 	Batch    int
 	// Idle is the wait after a poll that found the outbox empty (500 ms by
 	// default); while it stays empty the wait doubles up to IdleMax (10 s
@@ -71,29 +79,60 @@ func (r *Relay) Run(ctx context.Context) error {
 // after a drain that published something it is refreshed at once.
 const backlogEvery = time.Minute
 
-// Once publishes up to batch records.
+// Once publishes up to batch records that are due. A record Kafka refuses
+// or doesn't take (its topic not writable, for example) waits and is tried
+// again later (store.DrainOutbox); the others go out. It returns how many
+// went out, and an error naming the topics that refused records.
 func (r *Relay) Once(ctx context.Context, batch int) (int, error) {
-	n, err := r.Store.DrainOutbox(ctx, batch, func(ctx context.Context, recs []store.OutboxRecord) error {
+	refused := map[string]int{}
+	var first error
+	n, failed, err := r.Store.DrainOutbox(ctx, batch, func(ctx context.Context, recs []store.OutboxRecord) []error {
 		out := make([]*kgo.Record, len(recs))
 		for i, rec := range recs {
 			out[i] = &kgo.Record{Topic: r.Producer.Topic(rec.Topic), Key: []byte(rec.Key), Value: rec.Payload,
 				Headers: Headers(rec.Type)}
 		}
-		if err := r.Producer.ProduceSync(ctx, out...); err != nil {
-			return err
-		}
-		for _, rec := range recs {
+		errs := r.Producer.ProduceEach(ctx, out...)
+		for i, rec := range recs {
+			if errs[i] != nil {
+				ametrics.PublishFailed.WithLabelValues(rec.Topic).Inc()
+				refused[rec.Topic]++
+				if first == nil {
+					first = errs[i]
+				}
+				continue
+			}
 			ametrics.Published.WithLabelValues(rec.Topic).Inc()
 		}
-		return nil
+		return errs
 	})
-	if n > 0 || err != nil || time.Since(r.backlogAt) >= backlogEvery {
+	if err == nil && failed > 0 {
+		err = fmt.Errorf("%d records not published, tried again later (%s): %w", failed, topicCounts(refused), first)
+	}
+	if n > 0 || failed > 0 || err != nil || time.Since(r.backlogAt) >= backlogEvery {
 		if backlog, berr := r.Store.OutboxBacklog(ctx); berr == nil {
 			ametrics.OutboxBacklog.Set(float64(backlog))
 			r.backlogAt = time.Now()
 		}
+		if held, herr := r.Store.OutboxHeld(ctx); herr == nil {
+			ametrics.OutboxHeld.Set(float64(held))
+		}
 	}
 	return n, err
+}
+
+// topicCounts formats refusals by topic, in topic order: "a=2, b=1".
+func topicCounts(m map[string]int) string {
+	names := make([]string, 0, len(m))
+	for t := range m {
+		names = append(names, t)
+	}
+	sort.Strings(names)
+	parts := make([]string, len(names))
+	for i, t := range names {
+		parts[i] = fmt.Sprintf("%s=%d", t, m[t])
+	}
+	return strings.Join(parts, ", ")
 }
 
 // Headers are a record's headers by its message type: the contract's
