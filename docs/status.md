@@ -199,4 +199,9 @@
   - **The image analyses are fbs's own media** (`fb.media.ready.v1`). By owner decision 17, fbs's results stay in Postgres until fbs moves to the contract, so `analysis.media.v1` stays empty by design until media arrives through the contract.
   - **No collector hands media off yet** (the master, 00:30): no record on `content.media.ready.v1` in 24 h, and nothing undecodable. tks's media hand-off is off, like yts's, until the owner decides. The 100,716 "media" are `content.media.v1` metadata. Media analysis of tt and yt waits on that decision, by design.
   - **Merged, as hardening** (not the cause): the relay no longer lets one refused record hold back the rest (pull request #29, `76261b0`).
-  - **In review:** a read-only `sb-analysis batches` command for the open batches' provider status, and a count of media announcements skipped without a bucket or key (`sb_analysis_media_total{outcome="no_location"}`).
+  - **Merged:** a read-only `sb-analysis batches` command for the open batches' provider status, and a count of media announcements skipped without a bucket or key (`sb_analysis_media_total{outcome="no_location"}`) (pull request #30, `912ea05`).
+- **11 Nov, 01:25 Iraq time: `912ea05` live** (the master; with #28, #29 and #30; migration 00007 applied; analysis pod at 2 GiB):
+  - **with 4099fa1 (00:47):** the stranded batches completed, 14,098 requests back in 30 minutes; the post queue fell from 6,690 to 336;
+  - **since the new pod:** 19,919 batch requests sent in 15 minutes, 10 batches open, no restarts;
+  - **the comment queue** is back at 200k: the released claims returned, and ingest stays paused until the queue is under 150k. It should drain as the batches complete;
+  - **next:** the master's morning report, and `sb-analysis batches` once the platform has an ops action for it.
