@@ -69,6 +69,8 @@ func main() {
 		err = kafkaTopicsCmd(args)
 	case "erasures":
 		err = erasuresCmd(args)
+	case "batches":
+		err = batchesCmd(args)
 	case "help", "-h", "--help":
 		fmt.Println(usage)
 		return
@@ -81,7 +83,7 @@ func main() {
 	}
 }
 
-const usage = `usage: sb-analysis [run|migrate|entities|sources|reanalyze|replay-failed|agent-role|rollups|topics|authors|kafka-topics|erasures] [flags]
+const usage = `usage: sb-analysis [run|migrate|entities|sources|reanalyze|replay-failed|agent-role|rollups|topics|authors|kafka-topics|erasures|batches] [flags]
   run            run the service (--roles ingest,pipeline,media,relay,rollup; default all)
   migrate        apply the analysis migrations
   entities       import [--file f] | review [--min-seen n] | resolve --norm n --type t --action accept|merge|reject [--entity-id id] [--name n]
@@ -97,7 +99,8 @@ const usage = `usage: sb-analysis [run|migrate|entities|sources|reanalyze|replay
   authors        list [--all] [--limit n] | mark --key hex --as bot|human|none --by name [--note why] [--platform facebook]
                  | log [--key hex] | score
   kafka-topics   create the analysis's own Kafka topics (content.*, analysis.*), never fbs's [--partitions-cap n] [--replicas n]
-  erasures       list | apply --request id --yes-delete (deletes only on this explicit order; see analysis.erasure.mode)`
+  erasures       list | apply --request id --yes-delete (deletes only on this explicit order; see analysis.erasure.mode)
+  batches        [--since 24h] the open and recent provider batches, with the provider's status and counts (read-only)`
 
 // withApp loads the config (flags parsed into fs first), opens the
 // analysis database and runs fn.

@@ -198,5 +198,5 @@
   - **Publishing is not blocked** (the master's metrics, 00:17 Iraq time, correcting my first guess): outbox backlog 0, no produce errors, and `analysis-kafka` may write `content.*`. In 24 h we published 2,354 results (`analysis.result.v1`) and 1,487 media acks on `fb.media.processed.v1`.
   - **The image analyses are fbs's own media** (`fb.media.ready.v1`). By owner decision 17, fbs's results stay in Postgres until fbs moves to the contract, so `analysis.media.v1` stays empty by design until media arrives through the contract.
   - **No TikTok media reached our media queue** (pending: 228 images, all fbs; no videos). The 100,716 "media" are likely `content.media.v1` metadata, not downloaded files announced on `content.media.ready.v1`. Asked the master whether tks's media hand-off is on.
-  - **In review, as hardening** (not the cause): the relay no longer lets one refused record hold back the rest (pull request #29).
-  - **Next:** a read-only `sb-analysis batches` command for the open batches' provider status, and a metric for media announcements skipped without a bucket or key.
+  - **Merged, as hardening** (not the cause): the relay no longer lets one refused record hold back the rest (pull request #29, `76261b0`).
+  - **In review:** a read-only `sb-analysis batches` command for the open batches' provider status, and a count of media announcements skipped without a bucket or key (`sb_analysis_media_total{outcome="no_location"}`).

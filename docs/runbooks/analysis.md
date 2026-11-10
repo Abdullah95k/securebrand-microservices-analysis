@@ -61,6 +61,7 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
   - requests recorded but never given a batch, older than `batch.submit_lease`, are marked failed, so their estimates stop counting against the day's budget;
   - items leased long but not in a sent batch are released.
   - Before 11 Nov a round leased its items for 26 h before sending, and claimed up to 100,000 items into batches of 5,000 requests (over 100 MB each). A crash then held them for 26 h, with their estimates counted against the budget.
+- **To see the open batches:** `sb-analysis batches [--since 24h]`, run in the analysis pod. It prints each open or recent batch with its requests here (submitted, done, failed) and the provider's status and counts (processing, succeeded, errored, canceled, expired), with when it was sent and when it expires. It is read-only and prints no content.
 - **A provider without a batch API, or the fallback after `batch.fallback_after`,** analyses a round's items in real time under the same claim. With more than one replica, a round that takes longer than `batch.submit_lease` can be claimed again by another.
 
 ## Queue backlog
@@ -93,6 +94,9 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
   - skips and failures carry a short `reason` (`policy:sticker/attachment`, `too_large`, `undecodable`, `gone`, `no_ffmpeg`, `route_disabled:image`, `refused:<model>`, `erased_subject`), with the details in `error`.
 - **Identical files:** a contract file whose SHA-256 was analysed before, under another media ID, reuses that analysis. No download and no provider call; `media_analyses.reused_from` names the source.
 - **Files deleted first** (`content.media.deleted.v1`): a job still waiting is closed (`media_jobs.state = 'gone'`) and not acknowledged.
+- **Where media comes from:** only files a collector downloaded and announced on `content.media.ready.v1` (or fbs's `fb.media.ready.v1`). The media metadata on `content.media.v1` (URLs, sizes) is not a hand-off and isn't read.
+  - An announcement without a bucket or key can't be fetched and isn't queued. It counts in `sb_analysis_media_total{outcome="no_location"}`, with `ingest: media announcements without a file location skipped` in the log.
+  - fbs's own media (`fb.media.ready.v1`) is analysed and acknowledged on `fb.media.processed.v1`, but its results stay in Postgres until fbs moves to the contract (owner decision 17), so it isn't published on `analysis.media.v1`.
 - **Transcripts:** a video of a contract post with captions uses the captions (the uploader's first, then the platform's speech-to-text; never a machine translation) and buys no speech-to-text. `transcript_source` says which: `platform_captions` or the speech-to-text model.
 - **Memory and disk:** a video streams to a temporary file (`/tmp`, up to `analysis.media.max_bytes`, 500 MiB) and never passes through memory. An image is read into memory up to `image_max_bytes` (32 MiB) and `image_max_pixels` (40 megapixels, judged from its header before decoding); larger files fail permanently and are acknowledged. At start, `workers` is lowered to fit the container's memory limit (`worker_memory_mib` each, after 256 MiB), with a warning in the log. The chart gives `analysis-media` 2 GiB of memory and a 3 GiB `/tmp`.
 

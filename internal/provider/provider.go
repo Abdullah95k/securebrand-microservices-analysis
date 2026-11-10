@@ -86,6 +86,19 @@ type Batcher interface {
 	BatchResults(ctx context.Context, batchID string) ([]BatchResult, error)
 }
 
+// BatchStatus is a provider batch's state as the provider reports it: no
+// content, only counts and times.
+type BatchStatus struct {
+	Status                                            string
+	Processing, Succeeded, Errored, Canceled, Expired int64
+	CreatedAt, EndedAt, ExpiresAt                     time.Time
+}
+
+// BatchStatuser reports a batch's state (sb-analysis batches).
+type BatchStatuser interface {
+	BatchStatus(ctx context.Context, batchID string) (BatchStatus, error)
+}
+
 // Transcriber turns speech into text.
 type Transcriber interface {
 	Transcribe(ctx context.Context, audio []byte, filename, language string) (string, error)
