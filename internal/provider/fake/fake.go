@@ -272,6 +272,17 @@ func (p *Provider) BatchDone(_ context.Context, id string) (bool, error) {
 	return true, nil
 }
 
+// BatchStatus reports a known batch as ended, every request succeeded.
+func (p *Provider) BatchStatus(_ context.Context, id string) (provider.BatchStatus, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	reqs, ok := p.batches[id]
+	if !ok {
+		return provider.BatchStatus{}, fmt.Errorf("fake: unknown batch %s", id)
+	}
+	return provider.BatchStatus{Status: "ended", Succeeded: int64(len(reqs))}, nil
+}
+
 // BatchResults answers every request of the batch.
 func (p *Provider) BatchResults(ctx context.Context, id string) ([]provider.BatchResult, error) {
 	p.mu.Lock()

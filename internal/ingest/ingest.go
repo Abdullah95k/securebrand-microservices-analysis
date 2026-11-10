@@ -216,6 +216,19 @@ func (c *Consumer) Flush(ctx context.Context, recs []*kgo.Record) error {
 		}
 	}
 	if len(media) > 0 {
+		// An announcement without a media ID, bucket or key can't be
+		// fetched: InsertMediaJobs skips it. Count it, so a collector that
+		// leaves the location out is seen, not silently dropped.
+		unlocated := 0
+		for _, j := range media {
+			if j.MediaID == "" || j.Bucket == "" || j.Key == "" {
+				unlocated++
+				ametrics.Media.WithLabelValues(j.Kind, "no_location").Inc()
+			}
+		}
+		if unlocated > 0 {
+			slog.Warn("ingest: media announcements without a file location skipped", "count", unlocated, "of", len(media))
+		}
 		if _, err := c.store.InsertMediaJobs(ctx, media, c.consumer); err != nil {
 			return fmt.Errorf("media: %w", err)
 		}

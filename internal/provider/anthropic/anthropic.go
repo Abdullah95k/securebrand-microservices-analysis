@@ -188,6 +188,18 @@ func (p *Provider) SubmitBatch(ctx context.Context, reqs []provider.Request) (st
 	return batch.ID, nil
 }
 
+// BatchStatus reports the batch's processing status and request counts.
+func (p *Provider) BatchStatus(ctx context.Context, id string) (provider.BatchStatus, error) {
+	b, err := p.client.Messages.Batches.Get(ctx, id, sdk.MessageBatchGetParams{})
+	if err != nil {
+		return provider.BatchStatus{}, classify(err)
+	}
+	c := b.RequestCounts
+	return provider.BatchStatus{Status: string(b.ProcessingStatus), Processing: c.Processing, Succeeded: c.Succeeded,
+		Errored: c.Errored, Canceled: c.Canceled, Expired: c.Expired,
+		CreatedAt: b.CreatedAt, EndedAt: b.EndedAt, ExpiresAt: b.ExpiresAt}, nil
+}
+
 // BatchDone reports whether the batch ended.
 func (p *Provider) BatchDone(ctx context.Context, id string) (bool, error) {
 	b, err := p.client.Messages.Batches.Get(ctx, id, sdk.MessageBatchGetParams{})

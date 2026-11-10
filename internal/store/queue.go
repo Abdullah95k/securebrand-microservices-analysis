@@ -374,6 +374,43 @@ func (s *Store) ClaimOpenBatches(ctx context.Context, limit int, lease time.Dura
 	return out, rows.Err()
 }
 
+// BatchInfo is a provider batch and the states of its requests here.
+type BatchInfo struct {
+	ID, Provider, Model, Route, Status string
+	Requests                           int
+	SubmittedAt                        time.Time
+	EndedAt                            *time.Time
+	// The batch's provider_requests by status.
+	Submitted, Done, Failed int
+}
+
+// RecentBatches lists the batches still open and those submitted since t,
+// oldest first.
+func (s *Store) RecentBatches(ctx context.Context, since time.Time) ([]BatchInfo, error) {
+	rows, err := s.DB.Query(ctx, `
+		SELECT b.batch_id, b.provider, b.model, b.route, b.status, b.requests, b.submitted_at, b.ended_at,
+			count(r.request_id) FILTER (WHERE r.status = 'submitted'),
+			count(r.request_id) FILTER (WHERE r.status = 'done'),
+			count(r.request_id) FILTER (WHERE r.status = 'failed')
+		FROM analysis.provider_batches b LEFT JOIN analysis.provider_requests r ON r.batch_id = b.batch_id
+		WHERE b.status = 'in_progress' OR b.submitted_at >= $1
+		GROUP BY b.batch_id ORDER BY b.submitted_at`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BatchInfo
+	for rows.Next() {
+		var b BatchInfo
+		if err := rows.Scan(&b.ID, &b.Provider, &b.Model, &b.Route, &b.Status, &b.Requests, &b.SubmittedAt, &b.EndedAt,
+			&b.Submitted, &b.Done, &b.Failed); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 // ReleaseBatch drops the poll lease of a batch still running.
 func (s *Store) ReleaseBatch(ctx context.Context, id string) error {
 	_, err := s.DB.Exec(ctx, `UPDATE analysis.provider_batches SET lease_until = NULL WHERE batch_id = $1`, id)
