@@ -25,6 +25,10 @@ type PlatformStats struct {
 	// with counts.
 	MediaRetrying    int64
 	MediaFailReasons map[string]int64
+	// The files pending now, by time to their deadline (the collector
+	// deletes the file then): past it, under 12 h, 12-24 h, 24-48 h, later
+	// or none; and how many wait for their post (not stored yet).
+	PendingPast, Pending12h, Pending24h, Pending48h, PendingLater, PendingForPost int64
 }
 
 // PlatformReport is the per-platform counts and the outbox's state.
@@ -153,6 +157,35 @@ func (s *Store) PlatformCounts(ctx context.Context, since time.Time, name func(c
 			m.MediaRetrying += n
 		}
 		m.MediaFailReasons[kind+": "+reason] += n
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return PlatformReport{}, err
+	}
+
+	// The files pending now, by time to their deadline, and those whose
+	// post isn't stored (they wait for it: analysis.media.owner_wait).
+	rows, err = s.DB.Query(ctx, `SELECT m.platform,
+			count(*) FILTER (WHERE m.delete_after < now()),
+			count(*) FILTER (WHERE m.delete_after >= now() AND m.delete_after < now() + interval '12 hours'),
+			count(*) FILTER (WHERE m.delete_after >= now() + interval '12 hours' AND m.delete_after < now() + interval '24 hours'),
+			count(*) FILTER (WHERE m.delete_after >= now() + interval '24 hours' AND m.delete_after < now() + interval '48 hours'),
+			count(*) FILTER (WHERE m.delete_after IS NULL OR m.delete_after >= now() + interval '48 hours'),
+			count(*) FILTER (WHERE m.owner_content_id IS NOT NULL AND i.content_id IS NULL)
+		FROM analysis.media_jobs m LEFT JOIN analysis.content_index i ON i.content_id = m.owner_content_id
+		WHERE m.state = 'pending' AND $1::timestamptz IS NOT NULL GROUP BY 1`, since)
+	if err != nil {
+		return PlatformReport{}, err
+	}
+	for rows.Next() {
+		var p string
+		var n [6]int64
+		if err := rows.Scan(&p, &n[0], &n[1], &n[2], &n[3], &n[4], &n[5]); err != nil {
+			rows.Close()
+			return PlatformReport{}, err
+		}
+		m := get(p)
+		m.PendingPast, m.Pending12h, m.Pending24h, m.Pending48h, m.PendingLater, m.PendingForPost = n[0], n[1], n[2], n[3], n[4], n[5]
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {

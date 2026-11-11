@@ -65,6 +65,7 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
 - **Per platform:** `sb-analysis stats [--since 24h]`, run in the analysis pod, prints for each platform:
   - items ingested, analysed (refused among them), waiting in the queue now, and in the dead letters;
   - media files announced, analysed, and their states now (pending, done, skipped, failed, gone), with how many were acknowledged to their collector (done, skipped and failed are; gone ones aren't owed an ack) and why files were skipped (`policy:image/thumbnail` and so on);
+  - the files pending now by time to their deadline (past it, within 12 h, 12-24 h, 24-48 h, later or none), and how many of them wait for their post (since 11 Nov);
   - files waiting to be tried again after a failure (now), and why files are retrying or failed (failed in the window), by kind, largest first. A reason is the error's first 100 characters with digits shown as `#`, so the same failure on different addresses counts together. Errors name a file at most, never its content (since 11 Nov);
   - the outbox waiting to be published, by topic.
 
@@ -84,8 +85,11 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
 3. **Batches not collected** (`sb_analysis_open_batches` grows): check that a pipeline replica runs and can reach the provider. Batches finish within 24h; results stay downloadable for 29 days, so a restart collects them.
 4. **Real-time lane slow** at a burst: raise `analysis.realtime.workers`, or set `analysis.urgent.tracked_entities: false` to send fewer items there.
 
-**The queue's cap (backpressure):** at `analysis.backpressure.max_queue` items (200,000), ingest stops taking new posts and comments: `sb_analysis_ingest_paused` is 1, and they wait in Kafka. Media announcements and erasures keep flowing. Ingest resumes once the queue is down to `resume_queue` (150,000); the queue can pass the cap by at most one ingest batch.
-- **Kafka keeps 7 days.** Content paused longer than that is gone from Kafka, and comes back only through a backfill from the permanent store. `AnalysisIngestPaused` warns after an hour paused.
+**The queue's cap (backpressure):** at `analysis.backpressure.max_queue` items (200,000), ingest stops taking new comments: `sb_analysis_ingest_paused` is 1, and they wait in Kafka.
+- **Posts keep flowing** (since 11 Nov). They are few, and a post's media files wait for it (`analysis.media.owner_wait`), its captions included. Before, the pause held posts too, and tks's covers and videos waited behind them.
+- Media announcements and erasures keep flowing too.
+- Ingest of comments resumes once the queue is down to `resume_queue` (150,000). The queue can pass the cap by one ingest batch, plus the posts.
+- **Kafka keeps 7 days.** Comments paused longer than that are gone from Kafka, and comes back only through a backfill from the permanent store. `AnalysisIngestPaused` warns after an hour paused.
 - **To clear it,** fix the cause above. Raise `max_queue` only if Postgres has room: each queued item is a row.
 
 ## Media

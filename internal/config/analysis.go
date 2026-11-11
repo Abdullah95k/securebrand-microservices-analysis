@@ -42,8 +42,8 @@ type Analysis struct {
 	Budget    AnalysisBudget        `koanf:"budget"`
 	RateLimit AnalysisRateLimit     `koanf:"rate_limit"`
 	// Backpressure caps the analysis queue: at MaxQueue items ingest stops
-	// taking new content (it waits in Kafka) until the queue is down to
-	// ResumeQueue.
+	// taking new comments (they wait in Kafka) until the queue is down to
+	// ResumeQueue. Posts, media and erasures keep flowing.
 	Backpressure AnalysisBackpressure `koanf:"backpressure"`
 	Media        AnalysisMedia        `koanf:"media"`
 	Privacy      AnalysisPrivacy      `koanf:"privacy"`

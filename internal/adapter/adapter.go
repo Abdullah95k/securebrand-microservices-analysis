@@ -73,6 +73,20 @@ func (d Decoder) ContentTopics() []string {
 	return ts
 }
 
+// CommentTopics are the topics of comments and replies: the many items.
+// While the analysis queue is full only these wait in Kafka; posts are few,
+// and their media and captions wait for them.
+func (d Decoder) CommentTopics() []string {
+	var ts []string
+	if d.FB {
+		ts = append(ts, topics.Comment)
+	}
+	if d.Content {
+		ts = append(ts, topics.ContentComment)
+	}
+	return ts
+}
+
 // MediaTopics are the topics announcing media files to analyse, and the
 // contract's announcements of deleted files.
 func (d Decoder) MediaTopics() []string {
