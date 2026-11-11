@@ -202,12 +202,14 @@ func (c *Consumer) Flush(ctx context.Context, recs []*kgo.Record) error {
 			}
 		}
 	}
-	if len(items) > 0 {
-		st, err := c.store.Ingest(ctx, items, c.plan)
+	// One store call per platform, so items_ingested_total counts each
+	// item under its own platform (a batch can mix collectors).
+	for _, group := range byPlatform(items) {
+		st, err := c.store.Ingest(ctx, group, c.plan)
 		if err != nil {
 			return fmt.Errorf("items: %w", err)
 		}
-		platform := items[0].Platform
+		platform := group[0].Platform
 		for k, v := range map[string]int{"new": st.New, "edited": st.Edited, "unchanged": st.Unchanged, "skipped": st.Skipped,
 			"deleted": st.Deleted, "redacted": st.Redacted, "suppressed": st.Suppressed} {
 			if v > 0 {
@@ -253,4 +255,23 @@ func (c *Consumer) Flush(ctx context.Context, recs []*kgo.Record) error {
 		slog.Info("analysis: erasure event", "request", e.RequestID, "subject", e.Subject, "stats", stats)
 	}
 	return nil
+}
+
+// byPlatform splits items by platform, in the order each platform first
+// appears, keeping each platform's items in their order. Items of
+// different platforms never share a thread.
+func byPlatform(items []*core.Item) [][]*core.Item {
+	var order []string
+	groups := map[string][]*core.Item{}
+	for _, it := range items {
+		if _, ok := groups[it.Platform]; !ok {
+			order = append(order, it.Platform)
+		}
+		groups[it.Platform] = append(groups[it.Platform], it)
+	}
+	out := make([][]*core.Item, len(order))
+	for i, p := range order {
+		out[i] = groups[p]
+	}
+	return out
 }
