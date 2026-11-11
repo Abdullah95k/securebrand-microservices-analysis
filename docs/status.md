@@ -205,3 +205,8 @@
   - **since the new pod:** 19,919 batch requests sent in 15 minutes, 10 batches open, no restarts;
   - **the comment queue** is back at 200k: the released claims returned, and ingest stays paused until the queue is under 150k. It should drain as the batches complete;
   - **next:** the master's morning report, and `sb-analysis batches` once the platform has an ops action for it.
+- **11 Nov, 09:16 Iraq time: is yt analysed, saved and acknowledged?** (the platform, for the owner). Answered from the code:
+  - yt posts and comments are read like every collector's; while ingest is paused (queue over 200k, until 150k) they wait in Kafka;
+  - yt media keeps flowing. Thumbnails, avatars and banners aren't analysed by policy: each is acknowledged SKIPPED with its reason, so yts can delete it;
+  - results are stored in Postgres and published to `analysis.result.v1` and `analysis.media.v1` for the writer.
+  - **In review:** a read-only `sb-analysis stats` command with these counts per platform. Also a fix: `items_ingested_total` counted a mixed batch under its first item's platform.

@@ -61,6 +61,12 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
   - requests recorded but never given a batch, older than `batch.submit_lease`, are marked failed, so their estimates stop counting against the day's budget;
   - items leased long but not in a sent batch are released.
   - Before 11 Nov a round leased its items for 26 h before sending, and claimed up to 100,000 items into batches of 5,000 requests (over 100 MB each). A crash then held them for 26 h, with their estimates counted against the budget.
+- **Per platform:** `sb-analysis stats [--since 24h]`, run in the analysis pod, prints for each platform:
+  - items ingested, analysed (refused among them), waiting in the queue now, and in the dead letters;
+  - media files announced, analysed, and their states now (pending, done, skipped, failed, gone), with how many were acknowledged to their collector (done, skipped and failed are; gone ones aren't owed an ack) and why files were skipped (`policy:image/thumbnail` and so on);
+  - the outbox waiting to be published, by topic.
+
+  It is read-only and prints counts only. `sb_analysis_items_ingested_total{platform}` counts each item under its own platform; before 11 Nov a batch mixing collectors counted under its first item's platform.
 - **To see the open batches:** `sb-analysis batches [--since 24h]`, run in the analysis pod. It prints each open or recent batch with its requests here (submitted, done, failed) and the provider's status and counts (processing, succeeded, errored, canceled, expired), with when it was sent and when it expires. It is read-only and prints no content.
 - **A provider without a batch API, or the fallback after `batch.fallback_after`,** analyses a round's items in real time under the same claim. With more than one replica, a round that takes longer than `batch.submit_lease` can be claimed again by another.
 
