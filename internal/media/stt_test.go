@@ -2,6 +2,7 @@ package media_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -58,5 +59,37 @@ func TestWorkerNoSpeechServerLosesNoTry(t *testing.T) {
 	if err := st.DB.QueryRow(ctx, `SELECT coalesce(transcript, '') FROM analysis.media_analyses WHERE media_id = 'v'`).Scan(&transcript); err != nil ||
 		transcript == "" {
 		t.Fatalf("transcript %q %v once a server answers", transcript, err)
+	}
+}
+
+// TestWorkerShutdownLosesNoTry: a job cut by the worker's shutdown (its
+// context ends mid-job) goes back to the queue at once, without losing a
+// try and without an acknowledgement.
+func TestWorkerShutdownLosesNoTry(t *testing.T) {
+	video := testVideo(t)
+	b, err := os.ReadFile(video)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, w, fp, objs := setupWith(t, nil)
+	objs["b/v"] = b
+	if _, err := st.InsertMediaJobs(context.Background(), []*core.MediaJob{job("v", "video")}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	fp.Transcribing = func(c context.Context) error {
+		cancel() // the pod is stopping
+		<-c.Done()
+		return c.Err()
+	}
+	if _, err := w.Once(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	state, tries, in := due(t, st, "v")
+	if state != "pending" || tries != 0 || in > time.Second {
+		t.Fatalf("cut by a shutdown: %s, %d tries, due in %v; want pending, no try, due now", state, tries, in)
+	}
+	if _, ok := acks(t, st)["v"]; ok {
+		t.Fatal("a job cut by a shutdown was acknowledged")
 	}
 }

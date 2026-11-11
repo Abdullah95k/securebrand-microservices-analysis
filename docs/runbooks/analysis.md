@@ -65,7 +65,7 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
 - **Per platform:** `sb-analysis stats [--since 24h]`, run in the analysis pod, prints for each platform:
   - items ingested, analysed (refused among them), waiting in the queue now, and in the dead letters;
   - media files announced, analysed, and their states now (pending, done, skipped, failed, gone), with how many were acknowledged to their collector (done, skipped and failed are; gone ones aren't owed an ack) and why files were skipped (`policy:image/thumbnail` and so on);
-  - files waiting to be tried again after a failure (now), and why files are retrying or failed (failed in the window), by kind, largest first. A reason is the error's first 60 characters with digits shown as `#`, so the same failure on different addresses counts together. Errors name a file at most, never its content (since 11 Nov);
+  - files waiting to be tried again after a failure (now), and why files are retrying or failed (failed in the window), by kind, largest first. A reason is the error's first 100 characters with digits shown as `#`, so the same failure on different addresses counts together. Errors name a file at most, never its content (since 11 Nov);
   - the outbox waiting to be published, by topic.
 
   It is read-only and prints counts only. `sb_analysis_items_ingested_total{platform}` counts each item under its own platform; before 11 Nov a batch mixing collectors counted under its first item's platform.
@@ -128,6 +128,8 @@ Videos are transcribed by a speech-to-text server inside the cluster: **Speaches
   - **A server that can't be reached** (down, or a new replica not ready yet) leaves the pool, with `analysis: speech-to-text server unreachable` in the log. It is tried every 10 s and rejoins as soon as it accepts connections (`... answers again, back in the pool`).
     - A video waits up to 1 minute for a reachable server. If none comes, it goes back to the queue for `stt_retry_after` without losing a try, as when Whisper is busy. This also covers a single server during a restart.
     - It counts in `sb_analysis_transcriptions_total{outcome="unavailable"}` and `sb_analysis_stt_deferred_total`.
+  - **An error from a server of the pool names it** (`server sba-whisper-1: provider: status 500 ...`). An HTTP error is Speaches' own, so the server's log says why.
+- **A media job cut by a shutdown** (a deploy or restart) goes back to the queue at once without losing a try (since 11 Nov; before, it counted as a failure).
     - Before 11 Nov (pull request #37 alone), a video sent to a server that wasn't Ready yet failed at once and lost a try.
 - **Limits:**
   - one transcription at a time per media process and server (`analysis.media.video.stt_concurrency`, raised by the chart to the number of servers);

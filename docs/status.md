@@ -243,4 +243,9 @@
 - **11 Nov, 15:15 Iraq time: fbs's cut-over to the contract (REQ-018, from 13 Nov).** fbs asked whether items analysis already has from `fb.*` would be analysed and paid for again.
   - **Answer:** matching is by ID and a hash. Posts would often differ (link titles, media IDs) and be paid again. Matching items would never reach `analysis.result.v1`, since `fb.*` results stayed in Postgres.
   - **In review, "adoption at cut-over"** (the master agreed): the first contract version of an item already analysed from `fb.*` is adopted with no AI call, and its stored analysis is published on `analysis.result.v1`. Edits and new items are analysed as usual.
+  - **Merged** (pull request #40, `84ceb71`).
   - **Asked of fbs** (via the owner): the same IDs, a reply as a comment with its parent, the link title in description, and `media_id` plus `sha256` on `content.media.ready.v1`.
+- **11 Nov, 15:22 Iraq time: after `8d6455d`** (the master): the batch lane sent 21,113 requests in 25 minutes and 10 batches are open; spend $30.14 (estimates in flight).
+  - **Media failure reasons** (from `sb-analysis stats`): TikTok 84 retrying, 83 of them Whisper answering HTTP 500. Waiting for the whisper pods' logs. Also 1 ffmpeg killed (timeout or memory) and 3 jobs cut by the restart.
+  - **In review:** a pool server's errors name it; jobs cut by a shutdown go back without losing a try.
+  - **Proposed** (needs a yes): a video whose speech-to-text keeps failing with a server error gets its frames analysed without a transcript on its last try, instead of failing whole.

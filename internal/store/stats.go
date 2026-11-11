@@ -21,7 +21,8 @@ type PlatformStats struct {
 	MediaReasons map[string]int64
 	// Files waiting to be tried again after a failure (now, whenever they
 	// were announced), and why files are retrying or failed (failed since):
-	// "kind: reason", the error's start with digits as #, with counts.
+	// "kind: reason", the error's first 100 characters with digits as #,
+	// with counts.
 	MediaRetrying    int64
 	MediaFailReasons map[string]int64
 }
@@ -126,7 +127,7 @@ func (s *Store) PlatformCounts(ctx context.Context, since time.Time, name func(c
 	// sizes, codes) as #, so like failures count together. An error message
 	// names a file at most, never its content.
 	rows, err = s.DB.Query(ctx, `SELECT platform, kind, state = 'pending',
-			regexp_replace(left(coalesce(last_error, ''), 80), '[0-9]+', '#', 'g'), count(*)
+			regexp_replace(left(coalesce(last_error, ''), 120), '[0-9]+', '#', 'g'), count(*)
 		FROM analysis.media_jobs
 		WHERE (state = 'pending' AND tries > 0 AND last_error IS NOT NULL) OR (state = 'failed' AND done_at >= $1)
 		GROUP BY 1, 2, 3, 4`, since)
@@ -141,8 +142,8 @@ func (s *Store) PlatformCounts(ctx context.Context, since time.Time, name func(c
 			rows.Close()
 			return PlatformReport{}, err
 		}
-		if len(reason) > 60 {
-			reason = reason[:60]
+		if r := []rune(reason); len(r) > 100 {
+			reason = string(r[:100])
 		}
 		if reason == "" {
 			reason = "(none)"

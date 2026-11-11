@@ -255,6 +255,14 @@ func (w *Worker) process(ctx context.Context, j core.MediaJob) {
 		res, err = w.analyse(ctx, j)
 	}
 	if err != nil {
+		if ctx.Err() != nil {
+			// Shutting down: the job was cut, not failed. It comes back
+			// without losing a try (the TTL still applies).
+			if rerr := w.P.Store.ReleaseMedia(context.WithoutCancel(ctx), j.MediaID, 0); rerr != nil {
+				slog.Error("analysis: media job not released", "media", j.MediaID, "err", rerr)
+			}
+			return
+		}
 		if wait := (*ownerWait)(nil); errors.As(err, &wait) {
 			// Not a failure: its post isn't stored yet (ingest paused, or
 			// the post comes later). Storing the post wakes it.
