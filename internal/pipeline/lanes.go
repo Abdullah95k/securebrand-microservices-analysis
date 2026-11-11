@@ -234,7 +234,9 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 		slog.Info("analysis: batch round skipped: the budget is spent for today", "route", route)
 		return nil
 	}
-	claimed, err := p.Store.Claim(ctx, core.LaneBatch, route, p.Cfg.Batch.MaxItems, p.submitLease(), 0)
+	// Shared across the platforms waiting, so a new collector's items
+	// aren't held behind an older backlog (store.ClaimShared).
+	claimed, err := p.Store.ClaimShared(ctx, core.LaneBatch, route, p.Cfg.Batch.MaxItems, p.submitLease())
 	if err != nil {
 		return err
 	}

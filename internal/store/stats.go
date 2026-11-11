@@ -12,6 +12,9 @@ type PlatformStats struct {
 	// Items: first seen since, analyses written since (refused among
 	// them), waiting in the queue now, and in the dead letters since.
 	Ingested, Analysed, Refused, Waiting, DeadLetters int64
+	// OldestWaiting is how long the platform's oldest queue entry has
+	// waited (0 with none).
+	OldestWaiting time.Duration
 	// Media files announced since, by state now; analyses written since.
 	// Each done, skipped or failed file has been acknowledged to its
 	// collector (gone ones are not: their file was deleted first).
@@ -87,8 +90,11 @@ func (s *Store) PlatformCounts(ctx context.Context, since time.Time, name func(c
 		{`SELECT platform, count(*) FROM analysis.content_items WHERE first_seen_at >= $1 GROUP BY 1`, func(p string, n []int64) { get(p).Ingested = n[0] }, false, 1},
 		{`SELECT platform, count(*), count(*) FILTER (WHERE refused) FROM analysis.analyses WHERE analyzed_at >= $1 GROUP BY 1`,
 			func(p string, n []int64) { get(p).Analysed, get(p).Refused = n[0], n[1] }, false, 2},
-		{`SELECT split_part(content_id, ':', 1), count(*) FROM analysis.analysis_queue WHERE $1::timestamptz IS NOT NULL GROUP BY 1`,
-			func(p string, n []int64) { get(p).Waiting = n[0] }, true, 1},
+		{`SELECT split_part(content_id, ':', 1), count(*), greatest(extract(epoch FROM now() - min(enqueued_at)), 0)::bigint
+			FROM analysis.analysis_queue WHERE $1::timestamptz IS NOT NULL GROUP BY 1`,
+			func(p string, n []int64) {
+				get(p).Waiting, get(p).OldestWaiting = n[0], time.Duration(n[1])*time.Second
+			}, true, 2},
 		{`SELECT split_part(content_id, ':', 1), count(*) FROM analysis.dead_letters WHERE failed_at >= $1 GROUP BY 1`,
 			func(p string, n []int64) { get(p).DeadLetters = n[0] }, true, 1},
 		{`SELECT platform, count(*),

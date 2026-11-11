@@ -74,8 +74,12 @@ func printStats(w io.Writer, r store.PlatformReport, since time.Duration) error 
 	}
 	for _, p := range r.Platforms {
 		fmt.Fprintf(&b, "%s\n", p.Platform)
-		fmt.Fprintf(&b, "  items: %d ingested, %d analysed (%d refused), %d waiting, %d in dead letters\n",
-			p.Ingested, p.Analysed, p.Refused, p.Waiting, p.DeadLetters)
+		oldest := ""
+		if p.Waiting > 0 {
+			oldest = fmt.Sprintf(" (the oldest for %s)", waited(p.OldestWaiting))
+		}
+		fmt.Fprintf(&b, "  items: %d ingested, %d analysed (%d refused), %d waiting%s, %d in dead letters\n",
+			p.Ingested, p.Analysed, p.Refused, p.Waiting, oldest, p.DeadLetters)
 		acked := p.MediaDone + p.MediaSkipped + p.MediaFailed
 		fmt.Fprintf(&b, "  media: %d announced, %d analysed; now %d pending, %d done, %d skipped, %d failed, %d gone; %d acknowledged\n",
 			p.MediaAnnounced, p.MediaAnalysed, p.MediaPending, p.MediaDone, p.MediaSkipped, p.MediaFailed, p.MediaGone, acked)
@@ -227,6 +231,14 @@ func printRequests(b *strings.Builder, r store.PlatformReport) {
 		fmt.Fprintf(b, "comments, %s (by Iraq day, since the window's first): %d received, %d in the %.4g%% sample (%.1f%%), %d kept outside it for the real-time lane; the rest counted, not stored%s\n",
 			c.Platform, c.Received, c.Sampled, 100*c.Share, pct, c.Urgent, scale)
 	}
+}
+
+// waited is a wait in minutes under an hour, else in hours.
+func waited(d time.Duration) string {
+	if d < time.Hour {
+		return fmt.Sprintf("%d min", int(d.Minutes()))
+	}
+	return fmt.Sprintf("%.1f h", d.Hours())
 }
 
 // top keeps the n largest counts (ties by name).

@@ -74,7 +74,7 @@ func TestStatsCountsPerPlatform(t *testing.T) {
 	}
 	text := out.String()
 	for _, want := range []string{
-		"youtube\n  items: 1 ingested, 0 analysed (0 refused), 1 waiting, 0 in dead letters",
+		"youtube\n  items: 1 ingested, 0 analysed (0 refused), 1 waiting (the oldest for 0 min), 0 in dead letters",
 		"media: 1 announced, 0 analysed; now 0 pending, 0 done, 1 skipped, 0 failed, 0 gone; 1 acknowledged",
 		"skipped because: policy:image/thumbnail 1",
 		"tiktok\n  items: 1 ingested",
@@ -222,5 +222,13 @@ func TestStatsRequestsAndUrgentSetup(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "watchlists not counted (urgent.watchlists off)") {
 		t.Errorf("watchlists off not said:\n%s", out.String())
+	}
+}
+
+func TestWaited(t *testing.T) {
+	for d, want := range map[time.Duration]string{0: "0 min", 59 * time.Minute: "59 min", 90 * time.Minute: "1.5 h", 30 * time.Hour: "30.0 h"} {
+		if got := waited(d); got != want {
+			t.Errorf("waited(%v) = %q, want %q", d, got, want)
+		}
 	}
 }

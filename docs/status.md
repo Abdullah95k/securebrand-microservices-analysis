@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 12 November 2026, 00:35 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 12 November 2026, 01:40 (Iraq time).*
 
 ## Where it stands
 
@@ -401,3 +401,9 @@
   - **Long posts cut off:** 9,344 posts (and 80 comments) came back "truncated": requests of 13–14 long posts need over 16,000 output tokens. Each goes alone now (a single post's answer fits), and an item goes to the dead letters after `limits.max_attempts` (5).
   - **In review:** a request carries no more items than 60% of its route's `max_tokens` holds at the route's measured output per item: about 8 long posts a request.
   - **Pinned:** `a5bc8ff` (older readings ignored), before fbs's production backfill (about 2.03M events at 500 a second).
+- **12 Nov, 01:40 Iraq time: Instagram never analysed; the claim shared across platforms.**
+  - **Pinned:** `6b102da` (groups fit their answer: about 8 long posts a request). fbs's production backfill is running (about 887,600 comments and 64,300 posts at 500 a second).
+  - **The finding** (the master, 22:15Z): no Instagram result in ClickHouse in 7 days, though 71k ig items wait and the 10% sample holds; fb only 3,733.
+    - **ig: queue order.** A round claimed the oldest items of all platforms, and ig's (from 11 Nov) sat behind about a million older ones. Nothing is switched off; no code treats ig differently.
+    - **fb: by design.** Results of items read from fbs's own topics stay in Postgres (decision 17); only contract items are published, since 21:45. The production backfill publishes every adopted item's stored analysis once.
+  - **In review:** each round gives every platform waiting an equal share of its oldest live items, then the rest oldest first (live before backfill). Migration 00012 adds an index on the content ID's platform code, built concurrently. `stats` shows each platform's oldest waiting item.

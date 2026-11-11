@@ -67,6 +67,11 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
   - requests recorded but never given a batch, older than `batch.submit_lease`, are marked failed, so their estimates stop counting against the day's budget;
   - items leased long but not in a sent batch are released.
   - Before 11 Nov a round leased its items for 26 h before sending, and claimed up to 100,000 items into batches of 5,000 requests (over 100 MB each). A crash then held them for 26 h, with their estimates counted against the budget.
+- **A round shares its claim across platforms** (since 12 Nov): each platform waiting gets an equal share of `batch.max_items` of its oldest **live** items (priority normal or urgent), then whatever is left goes oldest first across all of them, live before backfill.
+  - **Why:** a round took only the oldest items of all platforms. Instagram's items, arriving from 11 Nov, waited behind about a million older ones of TikTok, YouTube and Facebook: none analysed in a day.
+  - **What it changes:** only the order within a round; the budget and the round's size are as before. A platform with less than its share leaves the rest to the others. Backfill items never take a live platform's share.
+  - **The lookup:** `analysis_queue_platform_idx` (migration 00012) on (lane, route, the content ID's platform code, priority, enqueued_at), built concurrently. The queue has no platform column, so nothing needed a backfill.
+  - **To see it:** `sb-analysis stats` gives each platform's waiting items with the oldest one's age (`… 70933 waiting (the oldest for 31.0 h) …`).
 - **A round fills its threads** (since 11 Nov; the platform agreed): after claiming the oldest `batch.max_items` items, a round also claims each claimed thread's other waiting comments, up to `grouping.max_items` (40) a thread and `batch.top_up_items` (10,000) in all.
   - **Why:** a claim of the oldest items held one or two comments of most threads, so most requests carried one or two comments. The cached prompt and schema (most of a comment's cost) were read once for each.
   - **What it changes:** only how full requests are. The prompt, the grouping by thread and its limits are as before. Comments retried after a fault of their own answer aren't taken; they still go alone.
