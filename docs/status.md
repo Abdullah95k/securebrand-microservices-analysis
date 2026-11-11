@@ -248,4 +248,10 @@
 - **11 Nov, 15:22 Iraq time: after `8d6455d`** (the master): the batch lane sent 21,113 requests in 25 minutes and 10 batches are open; spend $30.14 (estimates in flight).
   - **Media failure reasons** (from `sb-analysis stats`): TikTok 84 retrying, 83 of them Whisper answering HTTP 500. Waiting for the whisper pods' logs. Also 1 ffmpeg killed (timeout or memory) and 3 jobs cut by the restart.
   - **In review:** a pool server's errors name it; jobs cut by a shutdown go back without losing a try.
-  - **Proposed** (needs a yes): a video whose speech-to-text keeps failing with a server error gets its frames analysed without a transcript on its last try, instead of failing whole.
+- **11 Nov, 15:28 Iraq time: found, the first whisper server had never transcribed.** The master: since 7 Nov sba-whisper answered every transcription with 500 ("Cannot load the target vocabulary from the model directory"). Its /health was fine, so it stayed Ready. sba-whisper-1 works.
+  - Over 3 h: 1,522 transcriptions failed and 117 succeeded, all on sba-whisper-1 since 14:27.
+  - **In review (one PR with the two fixes above):**
+    - the init container checks the model's files against the Hub (size and checksum), sets a faulty copy aside and downloads again;
+    - the server starts only once it transcribes a second of silence;
+    - on a video's last try, a server error means its frames are analysed without a transcript (the master agreed);
+    - `sb-analysis media-retry` puts back the videos that failed this way while their files last.

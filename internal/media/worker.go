@@ -95,6 +95,13 @@ type ownerWait struct{ Until time.Time }
 
 func (e *ownerWait) Error() string { return "media: waiting for its post" }
 
+// serverError: the speech-to-text server answered with an HTTP 5xx (it was
+// reached, but couldn't transcribe).
+func serverError(err error) bool {
+	var perr *provider.Error
+	return errors.As(err, &perr) && perr.Status >= 500
+}
+
 // ownerRecheck caps one wait for a post: a job whose wake was missed (a
 // failed wake, or a race with the ingest that stored the post) looks again
 // this often rather than only at the end of its wait.
@@ -455,25 +462,36 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 		}
 		return nil, err
 	}
+	noSpeech := false
 	if stt != nil {
 		start := time.Now()
 		text, err := stt.Transcribe(ctx, audio, "audio.mp3", w.Cfg.Video.STTLanguage)
-		if err != nil {
-			outcome := "error"
-			if errors.Is(err, provider.ErrUnavailable) {
-				outcome = "unavailable"
-			}
-			ametrics.Transcribed.WithLabelValues(w.Cfg.Video.STTProvider, outcome).Inc()
+		switch {
+		case err == nil:
+			ametrics.Transcribed.WithLabelValues(w.Cfg.Video.STTProvider, "ok").Inc()
+			transcript = textnorm.Truncate(text, 20000)
+			transcriptLang, transcriptSource = w.Cfg.Video.STTLanguage, sttModel
+			// Logged as a request of its own, so the day's spend (read back
+			// from the request log) includes it.
+			w.P.Budget.Add(route, speechCost)
+			w.record(ctx, uuid.NewString(), route, w.Cfg.Video.STTProvider, sttModel, false, j.MediaID,
+				&provider.Response{Latency: time.Since(start)}, speechCost)
+		case errors.Is(err, provider.ErrUnavailable):
+			ametrics.Transcribed.WithLabelValues(w.Cfg.Video.STTProvider, "unavailable").Inc()
+			return nil, fmt.Errorf("transcribe: %w", err)
+		case serverError(err) && j.Tries >= w.Cfg.MaxTries:
+			// The video's last try, and the speech-to-text server still
+			// answers with an error: its frames are analysed without a
+			// transcript rather than the whole video failing (the master,
+			// 11 Nov). Its transcript_source reads "none".
+			ametrics.Transcribed.WithLabelValues(w.Cfg.Video.STTProvider, "error").Inc()
+			slog.Warn("analysis: speech-to-text failed on the video's last try; analysing its frames without a transcript",
+				"media", j.MediaID, "err", err)
+			noSpeech, speechCost = true, 0
+		default:
+			ametrics.Transcribed.WithLabelValues(w.Cfg.Video.STTProvider, "error").Inc()
 			return nil, fmt.Errorf("transcribe: %w", err)
 		}
-		ametrics.Transcribed.WithLabelValues(w.Cfg.Video.STTProvider, "ok").Inc()
-		transcript = textnorm.Truncate(text, 20000)
-		transcriptLang, transcriptSource = w.Cfg.Video.STTLanguage, sttModel
-		// Logged as a request of its own, so the day's spend (read back
-		// from the request log) includes it.
-		w.P.Budget.Add(route, speechCost)
-		w.record(ctx, uuid.NewString(), route, w.Cfg.Video.STTProvider, sttModel, false, j.MediaID,
-			&provider.Response{Latency: time.Since(start)}, speechCost)
 	}
 	mask := func(s string) string {
 		if w.P.Cfg.Privacy.MaskPII {
@@ -522,6 +540,8 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 		// The contract wants both with every transcript: "und"
 		// (undetermined) when the language isn't known.
 		mr.TranscriptLang, mr.TranscriptSource = orDefault(transcriptLang, "und"), orDefault(transcriptSource, w.Cfg.Video.STTProvider)
+	} else if noSpeech {
+		mr.TranscriptSource = "none"
 	}
 	mr.Topics = pipelineTopics(mr.Topics, mr.Entities)
 	return &store.MediaResult{Job: j, Result: mr, OwnerTime: ownerAt, Consumer: w.Cfg.Consumer, CostUSD: cost + speechCost,

@@ -130,8 +130,9 @@ whisper:
   modelResources:
     requests: {cpu: 100m, memory: 512Mi}
     limits: {memory: 3Gi}
-  # Startup checks every 10s; 60 allows 10 minutes to load the model.
-  startupFailureThreshold: 60
+  # Startup checks (a transcription of a second of silence) every 20s; 45
+  # allows 15 minutes to start and load the model.
+  startupFailureThreshold: 45
 
 podSecurityContext:
   runAsNonRoot: true

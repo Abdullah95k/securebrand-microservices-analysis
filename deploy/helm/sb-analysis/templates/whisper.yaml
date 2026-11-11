@@ -17,6 +17,8 @@ metadata:
 data:
   whisper-model.py: |
     {{- .Files.Get "files/whisper-model.py" | nindent 4 }}
+  whisper-ready.py: |
+    {{- .Files.Get "files/whisper-ready.py" | nindent 4 }}
 {{- /*
 One server per replica (whisper.replicas), each with its own Deployment,
 volume and Service: the model's volume is ReadWriteOnce, and the analysis
@@ -65,6 +67,7 @@ spec:
       labels: {{- include "sba.selector" (dict "root" $ "name" $component) | nindent 8 }}
       annotations:
         checksum/model: {{ printf "%s@%s" $w.model.id $w.model.revision | sha256sum }}
+        checksum/scripts: {{ printf "%s%s" ($.Files.Get "files/whisper-model.py") ($.Files.Get "files/whisper-ready.py") | sha256sum }}
     spec:
       automountServiceAccountToken: false
       {{- with $.Values.imagePullSecrets }}
@@ -121,9 +124,14 @@ spec:
             - {name: WHISPER__TTL, value: "-1"}
           ports:
             - {name: http, containerPort: 8000}
+          # Started only once it transcribes (a second of silence, which
+          # loads the model): /health answers even when the model can't
+          # load, as on the first server from 7 to 11 Nov 2026.
           startupProbe:
-            httpGet: {path: /health, port: http}
-            periodSeconds: 10
+            exec:
+              command: ["python", "/scripts/whisper-ready.py", {{ $w.model.id | quote }}]
+            periodSeconds: 20
+            timeoutSeconds: 180
             failureThreshold: {{ $w.startupFailureThreshold }}
           readinessProbe:
             httpGet: {path: /health, port: http}
@@ -142,6 +150,7 @@ spec:
           volumeMounts:
             - {name: data, mountPath: /data}
             - {name: tmp, mountPath: /tmp}
+            - {name: scripts, mountPath: /scripts, readOnly: true}
       volumes:
         - name: data
           persistentVolumeClaim: {claimName: {{ $name }}}
