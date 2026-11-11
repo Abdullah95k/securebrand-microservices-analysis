@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"testing"
 
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/config"
@@ -78,7 +79,7 @@ func TestGroupsCollapseDuplicates(t *testing.T) {
 		retry(claim(item("c8", "p1", "p1", core.KindComment, "تم"), 2, core.PriorityNormal)), // its own answer failed: alone
 		claim(item("c9", "p2", "p2", core.KindComment, "تم"), 0, core.PriorityNormal),        // another thread
 	}
-	gs := p.Groups(core.RouteComment, cs)
+	gs := p.Groups(context.Background(), core.RouteComment, cs)
 	got := map[string]string{}
 	for i, g := range gs {
 		for _, it := range g.items {
@@ -101,7 +102,7 @@ func TestGroupsCollapseDuplicates(t *testing.T) {
 		claim(item("p2", "", "", core.KindPost, "خبر"), 0, core.PriorityNormal),
 		claim(item("p3", "", "", core.KindPost, "خبر"), 0, core.PriorityNormal),
 	}
-	if gs := p.Groups(core.RoutePost, posts); len(gs) != 2 || len(gs[0].items) != 2 {
+	if gs := p.Groups(context.Background(), core.RoutePost, posts); len(gs) != 2 || len(gs[0].items) != 2 {
 		t.Fatalf("posts: %d groups", len(gs))
 	}
 }

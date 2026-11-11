@@ -66,7 +66,7 @@ func (p *Pipeline) RealtimeOnce(ctx context.Context) (int, error) {
 			errs = append(errs, err)
 			continue
 		}
-		for _, g := range p.Groups(route, claimed) {
+		for _, g := range p.Groups(ctx, route, claimed) {
 			if err := p.RunGroup(ctx, g, core.LaneRealtime); err != nil {
 				errs = append(errs, err)
 			}
@@ -254,7 +254,7 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 		// What was claimed goes back now rather than waiting for its lease.
 		return errors.Join(err, p.Store.ReleaseUnsent(context.WithoutCancel(ctx), ids(claimedItems(claimed)), route, 0))
 	}
-	groups := p.Groups(route, claimed)
+	groups := p.Groups(ctx, route, claimed)
 	realtime := func() error {
 		var errs []error
 		for _, g := range groups {

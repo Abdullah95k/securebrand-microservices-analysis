@@ -192,8 +192,12 @@ type group struct {
 // went out one item a request. An item identical to
 // one already packed for its thread joins that request as a follower
 // (dedup.go) and counts toward neither limit.
-func (p *Pipeline) Groups(route string, cs []store.Claimed) []group {
-	maxItems, maxChars := p.Cfg.Grouping.MaxItems, p.Cfg.Grouping.MaxChars
+//
+// A request also carries no more items than its expected output fits:
+// outputShare of the route's max_tokens at the route's measured output per
+// item (outputCap).
+func (p *Pipeline) Groups(ctx context.Context, route string, cs []store.Claimed) []group {
+	maxItems, maxChars := min(p.Cfg.Grouping.MaxItems, p.outputCap(ctx, route)), p.Cfg.Grouping.MaxChars
 	byThread := map[string][]store.Claimed{}
 	var order []string
 	var out []group
@@ -262,6 +266,26 @@ func (p *Pipeline) Groups(route string, cs []store.Claimed) []group {
 		}
 	}
 	return out
+}
+
+// outputShare is the share of a route's max_tokens a request's expected
+// output may fill: answers vary in length, and an answer cut off at
+// max_tokens fails every item in it. On 11 Nov long posts went 13–14 a
+// request (grouping.max_chars), needing over 1,100 output tokens each, and
+// 9,344 were cut off at 16,000.
+const outputShare = 0.6
+
+// outputCap is the most items a request of the route can carry for its
+// expected output, at the route's measured output tokens per item
+// (Budget.Measure; DefaultOutPerItem without a measure), to fit outputShare
+// of its max_tokens. At least 1.
+func (p *Pipeline) outputCap(ctx context.Context, route string) int {
+	limit := p.Cfg.Routes[route].MaxTokens
+	per := p.Budget.Measure(ctx, route).OutPerItem
+	if limit <= 0 || per <= 0 {
+		return math.MaxInt
+	}
+	return max(1, int(outputShare*float64(limit)/per))
 }
 
 // soloRetry: the claimed item failed before because of its own answer, so

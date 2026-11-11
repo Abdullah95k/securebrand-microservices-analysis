@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -380,5 +381,53 @@ func TestBackfillGoesBehindLive(t *testing.T) {
 	}
 	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE content_id = 'fb:comment:old' AND request_id IS NULL AND priority = 2`); n != 1 {
 		t.Fatal("the backfill comment was claimed before the live one, or not queued at background priority")
+	}
+}
+
+// TestGroupsFitTheirOutput: a request carries no more items than its
+// expected output fits: outputShare of the route's max_tokens at the
+// route's measured output per item. On 11 Nov long posts went 13–14 a
+// request and 9,344 were cut off at max_tokens.
+func TestGroupsFitTheirOutput(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) {
+		rc := c.Routes[core.RoutePost]
+		rc.MaxTokens = 1000
+		c.Routes[core.RoutePost] = rc
+	})
+	ctx := context.Background()
+	// The post route answers with 250 output tokens a post: 0.6 × 1000 /
+	// 250 = 2 posts a request.
+	if _, err := e.s.DB.Exec(ctx, `INSERT INTO analysis.provider_requests (request_id, route, lane, provider, model, items, status, output_tokens, cost_usd)
+		SELECT gen_random_uuid(), 'post', 'batch', 'primary', 'claude-haiku-5-5', 1, 'done', 250, 0 FROM generate_series(1, 100)`); err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("منشور طويل عن خدمات الشبكة والعروض الجديدة ", 10)
+	var items []*core.Item
+	for i := range 5 {
+		items = append(items, &core.Item{ContentID: fmt.Sprintf("fb:post:%d", 100+i), Platform: "facebook", Kind: core.KindPost,
+			SourceID: "fb:page:1", CreatedAt: at, ObservedAt: at, Text: fmt.Sprintf("%s %d", long, i), Status: core.StatusVisible, Version: 1})
+	}
+	e.ingest(t, items...)
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE route = 'post'`); n != 5 {
+		t.Fatalf("%d long posts on the post route, want 5", n)
+	}
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := e.s.DB.Query(ctx, `SELECT items FROM analysis.provider_requests WHERE status = 'submitted' ORDER BY items DESC`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []int
+	for rows.Next() {
+		var n int
+		if err := rows.Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, n)
+	}
+	rows.Close()
+	if fmt.Sprint(got) != "[2 2 1]" {
+		t.Fatalf("requests of %v posts, want [2 2 1]", got)
 	}
 }
