@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -192,28 +193,55 @@ func TestTranscribePoolOneVideoPerServer(t *testing.T) {
 }
 
 // TestTranscribePoolPassesOverADeadServer: a server that refuses
-// connections is passed over for the next one, so a dead replica doesn't
-// fail the videos sent its way; with every server dead, the error returns.
+// connections (down, or no ready pod behind its Service) leaves the pool, so
+// every video goes to the live one and none fails; it rejoins once it
+// accepts connections again.
 func TestTranscribePoolPassesOverADeadServer(t *testing.T) {
-	alive := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, `{"text":"ok"}`)
-	}))
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, `{"text":"ok"}`) })
+	alive := httptest.NewServer(ok)
 	defer alive.Close()
-	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	deadURL := dead.URL
+	dead := httptest.NewServer(ok)
+	deadAddr := dead.Listener.Addr().String()
 	dead.Close() // refuses connections from now on
-	p := New(Config{BaseURLs: []string{deadURL, alive.URL}, TranscribeModel: "whisper-1"})
+	p := New(Config{BaseURLs: []string{"http://" + deadAddr, alive.URL}, TranscribeModel: "whisper-1", ProbeEvery: 20 * time.Millisecond})
 	for range 4 {
 		if got, err := p.Transcribe(context.Background(), []byte("AUDIO"), "a.mp3", "ar"); err != nil || got != "ok" {
 			t.Fatalf("with one server dead: %q %v", got, err)
 		}
 	}
-	if len(p.servers) != 2 {
-		t.Fatalf("%d servers back in the pool, want both", len(p.servers))
+	if len(p.servers) != 1 {
+		t.Fatalf("%d servers in the pool, want only the live one", len(p.servers))
 	}
-	// Every server dead: the error returns at once, and two callers at
-	// once don't hold each other's server.
-	all := New(Config{BaseURLs: []string{deadURL, deadURL}, TranscribeModel: "whisper-1"})
+	// The dead server comes back on its address: it rejoins the pool.
+	l, err := net.Listen("tcp", deadAddr)
+	if err != nil {
+		t.Skipf("address not free again: %v", err)
+	}
+	back := &httptest.Server{Listener: l, Config: &http.Server{Handler: ok, ReadHeaderTimeout: time.Second}}
+	back.Start()
+	defer back.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(p.servers) != 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(p.servers) != 2 {
+		t.Fatalf("%d servers in the pool after the dead one came back, want 2", len(p.servers))
+	}
+}
+
+// TestTranscribeUnreachableIsUnavailable: with no server reachable, a
+// transcription ends with ErrUnavailable (the caller tries again later
+// without counting it against the file): after ServerWait for a pool, at
+// once for a single server; two callers at once both return.
+func TestTranscribeUnreachableIsUnavailable(t *testing.T) {
+	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+	if _, err := New(Config{BaseURL: deadURL, TranscribeModel: "whisper-1"}).
+		Transcribe(context.Background(), []byte("AUDIO"), "a.mp3", "ar"); !errors.Is(err, provider.ErrUnavailable) || !unreachable(err) {
+		t.Fatalf("single server dead: %v, want ErrUnavailable with the connection error", err)
+	}
+	all := New(Config{BaseURLs: []string{deadURL, deadURL}, TranscribeModel: "whisper-1", ServerWait: 100 * time.Millisecond})
 	errs := make(chan error, 2)
 	for range 2 {
 		go func() {
@@ -224,14 +252,18 @@ func TestTranscribePoolPassesOverADeadServer(t *testing.T) {
 	for range 2 {
 		select {
 		case err := <-errs:
-			if err == nil || !unreachable(err) {
-				t.Fatalf("every server dead: %v, want the connection error", err)
+			if !errors.Is(err, provider.ErrUnavailable) {
+				t.Fatalf("every server dead: %v, want ErrUnavailable", err)
 			}
 		case <-time.After(5 * time.Second):
 			t.Fatal("callers stuck with every server dead")
 		}
 	}
-	if len(all.servers) != 2 {
-		t.Fatalf("%d servers back in the pool, want both", len(all.servers))
+	// An HTTP error from a reachable server is not "unavailable".
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "bad", http.StatusBadRequest) }))
+	defer bad.Close()
+	if _, err := New(Config{BaseURLs: []string{bad.URL}, TranscribeModel: "whisper-1"}).
+		Transcribe(context.Background(), []byte("AUDIO"), "a.mp3", "ar"); err == nil || errors.Is(err, provider.ErrUnavailable) {
+		t.Fatalf("a server's 400: %v, want an error that isn't ErrUnavailable", err)
 	}
 }

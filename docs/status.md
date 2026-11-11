@@ -232,3 +232,11 @@
 - **11 Nov: a second Whisper server** (the owner's video choice, D-052). The platform asked what it takes.
   - It needed a chart and code change: one volume per server (ReadWriteOnce), and one video per server at a time (a Service balances connections).
   - **Merged:** `whisper.replicas`; the first server stays as it is; the analysis sends each server one video at a time (pull request #37, `b18f5e8`). The master pins it with `whisper.replicas: 2`; the autoscaler adds a 7th node for the CPU (2 CPU and 4Gi per server).
+- **11 Nov, 14:29 Iraq time: first readings after `b7d6e67` and `3a739b6`** (the master):
+  - **No items analysed in 90 min:** the $10 cap held everything until 13:57, and since then the first batches were in flight. The 200k pause holds only ingest, not the analysis of queued items. The master checks the open batches and the spend.
+  - **Media:** in 30 min, 235 analysed, 6,234 waiting for their post, 470 failed with a retry. sba-whisper-1 was Pending; the autoscaler added 2 nodes.
+  - **Found, my bug from #37:** while sba-whisper-1 wasn't Ready, a video sent to it (with sba-whisper busy) failed at once and lost a try.
+  - **In review, the fix:** an unreachable server leaves the pool and is tried every 10 s. A video waits up to 1 minute for a reachable one, else goes back to the queue without losing a try. The master is checking the 470's reasons, in case there is more than this.
+- **11 Nov, 14:42 Iraq time: still no batch sent since the cap went to $60.** The master: no open batches, budget not paused, no batch log lines. But spend rose $2.70 in 10 minutes.
+  - **Cause:** a round claims 10k comment items and builds every request (about 10 a second) before sending any. The 14:07 round was cut by the restart at 14:20; the 14:30 round was still building. The spend is the requests' estimates, counted as they are built.
+  - **In review** (the master agreed): each batch goes out as soon as its 1,000 requests are built, and the first round runs at start. Also, `sb-analysis stats` shows why media files are retrying or failed (counts and reasons, for the platform's analysis-stats action; no ad-hoc SQL on production).

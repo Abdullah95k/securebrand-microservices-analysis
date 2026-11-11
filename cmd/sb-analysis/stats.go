@@ -57,6 +57,10 @@ func printStats(w io.Writer, r store.PlatformReport, since time.Duration) error 
 			}
 			fmt.Fprintf(&b, "  skipped because: %s\n", strings.Join(parts, ", "))
 		}
+		if len(p.MediaFailReasons) > 0 {
+			fmt.Fprintf(&b, "  %d waiting to be tried again after a failure; failed or retrying because: %s\n",
+				p.MediaRetrying, countsByCount(p.MediaFailReasons))
+		}
 	}
 	topics := make([]string, 0, len(r.Outbox))
 	for t := range r.Outbox {
@@ -73,4 +77,23 @@ func printStats(w io.Writer, r store.PlatformReport, since time.Duration) error 
 	fmt.Fprintf(&b, "outbox (waiting to be published): %s; %d held after a failed publish\n", strings.Join(parts, ", "), r.OutboxHeld)
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// countsByCount formats counts largest first (then by name): "a 9, b 2".
+func countsByCount(m map[string]int64) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if m[keys[i]] != m[keys[j]] {
+			return m[keys[i]] > m[keys[j]]
+		}
+		return keys[i] < keys[j]
+	})
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = fmt.Sprintf("%s %d", k, m[k])
+	}
+	return strings.Join(parts, ", ")
 }

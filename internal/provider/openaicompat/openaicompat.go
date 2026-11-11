@@ -13,9 +13,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -30,9 +32,12 @@ type Provider struct {
 	http            *http.Client
 	maxRetries      int
 	transcribeModel string
-	// servers holds the free speech-to-text servers of a pool (BaseURLs),
-	// nil without one.
-	servers chan string
+	// servers holds the free, reachable speech-to-text servers of a pool
+	// (BaseURLs), nil without one. A server that can't be reached is out
+	// of it until it accepts connections again.
+	servers    chan string
+	serverWait time.Duration
+	probeEvery time.Duration
 }
 
 // Config configures the provider.
@@ -43,7 +48,12 @@ type Config struct {
 	// (self-hosted Whisper replicas): each takes one transcription at a
 	// time, and a transcription waits for a free one. Chat completions use
 	// BaseURL, or the first of them.
-	BaseURLs        []string
+	BaseURLs []string
+	// ServerWait is how long a transcription waits for a free, reachable
+	// server of the pool (1 minute by default); ProbeEvery, how often a
+	// server that couldn't be reached is tried again (10 s by default).
+	ServerWait      time.Duration
+	ProbeEvery      time.Duration
 	APIKey          string
 	Timeout         time.Duration
 	MaxRetries      int
@@ -63,6 +73,13 @@ func New(cfg Config) *Provider {
 	}
 	p := &Provider{name: cfg.Name, baseURL: strings.TrimRight(cfg.BaseURL, "/"), apiKey: cfg.APIKey, http: hc,
 		maxRetries: cfg.MaxRetries, transcribeModel: cfg.TranscribeModel}
+	p.serverWait, p.probeEvery = cfg.ServerWait, cfg.ProbeEvery
+	if p.serverWait <= 0 {
+		p.serverWait = time.Minute
+	}
+	if p.probeEvery <= 0 {
+		p.probeEvery = 10 * time.Second
+	}
 	if len(cfg.BaseURLs) > 0 {
 		p.servers = make(chan string, len(cfg.BaseURLs))
 		for _, u := range cfg.BaseURLs {
@@ -213,6 +230,9 @@ func (p *Provider) Transcribe(ctx context.Context, audio []byte, filename, langu
 	}
 	if p.servers == nil {
 		if err := send(p.baseURL); err != nil {
+			if unreachable(err) {
+				return "", fmt.Errorf("%w: %w", provider.ErrUnavailable, err)
+			}
 			return "", err
 		}
 		return out.Text, nil
@@ -220,37 +240,78 @@ func (p *Provider) Transcribe(ctx context.Context, audio []byte, filename, langu
 	// A pool: wait for a free server, so each transcribes one video at a
 	// time (a Service balances connections, not requests, and connections
 	// are reused, so two videos could otherwise land on one server). A
-	// server that can't be reached (down, or not ready) is passed over for
-	// the next free one, so a dead server doesn't fail half the videos.
-	// It only moves to a server that is free right now: waiting while
-	// holding a dead one could leave two callers each holding one.
-	var base string
+	// server that can't be reached (down, or not ready yet) leaves the pool
+	// until it accepts connections again, and the video waits for another:
+	// at most serverWait in all, then ErrUnavailable, so the caller tries
+	// again later without counting it against the file.
+	deadline := time.Now().Add(p.serverWait)
+	for {
+		base, err := p.take(ctx, deadline)
+		if err != nil {
+			return "", err
+		}
+		err = send(base)
+		if err != nil && unreachable(err) {
+			p.sideline(base, err)
+			continue
+		}
+		p.servers <- base
+		if err != nil {
+			return "", err
+		}
+		return out.Text, nil
+	}
+}
+
+// take waits for a free, reachable server of the pool until deadline.
+func (p *Provider) take(ctx context.Context, deadline time.Time) (string, error) {
+	t := time.NewTimer(time.Until(deadline))
+	defer t.Stop()
 	select {
-	case base = <-p.servers:
+	case b := <-p.servers:
+		return b, nil
 	case <-ctx.Done():
 		return "", ctx.Err()
+	case <-t.C:
+		return "", fmt.Errorf("%w: no speech-to-text server free and reachable within %v", provider.ErrUnavailable, p.serverWait)
 	}
-	var down []string
-	defer func() {
-		for _, b := range append(down, base) {
-			p.servers <- b
+}
+
+// sideline takes a server that couldn't be reached out of the pool and
+// tries it every probeEvery; it rejoins once it accepts a connection.
+func (p *Provider) sideline(base string, cause error) {
+	slog.Warn("analysis: speech-to-text server unreachable, out of the pool until it answers", "provider", p.name, "server", base, "err", cause)
+	addr := hostPort(base)
+	go func() {
+		t := time.NewTicker(p.probeEvery)
+		defer t.Stop()
+		d := net.Dialer{Timeout: 2 * time.Second}
+		for range t.C {
+			c, err := d.DialContext(context.Background(), "tcp", addr)
+			if err != nil {
+				continue
+			}
+			_ = c.Close()
+			slog.Info("analysis: speech-to-text server answers again, back in the pool", "provider", p.name, "server", base)
+			p.servers <- base
+			return
 		}
 	}()
-	for {
-		err := send(base)
-		if err == nil {
-			return out.Text, nil
-		}
-		if !unreachable(err) {
-			return "", err
-		}
-		select {
-		case next := <-p.servers:
-			down, base = append(down, base), next
-		default:
-			return "", err
-		}
+}
+
+// hostPort is a base URL's host:port, the scheme's port when none is given.
+func hostPort(base string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return base
 	}
+	if u.Port() != "" {
+		return u.Host
+	}
+	if u.Scheme == "https" {
+		return net.JoinHostPort(u.Hostname(), "443")
+	}
+	return net.JoinHostPort(u.Hostname(), "80")
 }
 
 // unreachable: the request never reached the server (refused, no route,

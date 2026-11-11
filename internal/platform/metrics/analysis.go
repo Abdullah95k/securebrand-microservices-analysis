@@ -52,8 +52,8 @@ var (
 	AnalysisMedia          = analysisCounter("media_total", "Media jobs by kind and outcome (analyzed, reused, skipped, failed_retry, failed_permanent; waiting_for_post: put back until its post is stored; no_location: an announcement without a bucket or key, not queued).", "kind", "outcome")
 	AnalysisMediaAtRisk    = analysisGauge("media_ttl_at_risk", "Pending media jobs within 6h of deletion.")
 	AnalysisMediaPending   = analysisGaugeVec("media_pending", "Media jobs waiting to be analysed, by type (image, video).", "type")
-	AnalysisTranscriptions = analysisCounter("transcriptions_total", "Speech-to-text calls by provider and outcome (ok, error).", "provider", "outcome")
-	AnalysisSTTDeferred    = analysisCounter("stt_deferred_total", "Videos put back for later because speech-to-text was busy (analysis.media.video.stt_concurrency).")
+	AnalysisTranscriptions = analysisCounter("transcriptions_total", "Speech-to-text calls by provider and outcome (ok, error; unavailable: no server reachable, the video comes back later without losing a try).", "provider", "outcome")
+	AnalysisSTTDeferred    = analysisCounter("stt_deferred_total", "Videos put back for later because speech-to-text was busy (analysis.media.video.stt_concurrency) or no server could be reached.")
 
 	// Outbox, erasure, rollups.
 	AnalysisOutboxBacklog = analysisGauge("outbox_backlog", "Records waiting in the outbox.")

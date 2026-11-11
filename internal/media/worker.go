@@ -275,9 +275,10 @@ func (w *Worker) process(ctx context.Context, j core.MediaJob) {
 			}
 			return
 		}
-		if errors.Is(err, errSTTBusy) {
+		if errors.Is(err, errSTTBusy) || errors.Is(err, provider.ErrUnavailable) {
 			// Not a failure either: speech-to-text is busy with another
-			// video; this one comes back later (the TTL still applies).
+			// video, or no server can be reached (down, or not ready yet);
+			// this one comes back later (the TTL still applies).
 			ametrics.STTDeferred.WithLabelValues().Inc()
 			if rerr := w.P.Store.ReleaseMedia(context.WithoutCancel(ctx), j.MediaID, w.Cfg.Video.STTRetryAfter); rerr != nil {
 				slog.Error("analysis: media job not released", "media", j.MediaID, "err", rerr)
@@ -450,7 +451,11 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 		start := time.Now()
 		text, err := stt.Transcribe(ctx, audio, "audio.mp3", w.Cfg.Video.STTLanguage)
 		if err != nil {
-			ametrics.Transcribed.WithLabelValues(w.Cfg.Video.STTProvider, "error").Inc()
+			outcome := "error"
+			if errors.Is(err, provider.ErrUnavailable) {
+				outcome = "unavailable"
+			}
+			ametrics.Transcribed.WithLabelValues(w.Cfg.Video.STTProvider, outcome).Inc()
 			return nil, fmt.Errorf("transcribe: %w", err)
 		}
 		ametrics.Transcribed.WithLabelValues(w.Cfg.Video.STTProvider, "ok").Inc()
