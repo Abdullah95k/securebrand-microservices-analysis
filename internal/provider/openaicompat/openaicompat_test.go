@@ -259,11 +259,17 @@ func TestTranscribeUnreachableIsUnavailable(t *testing.T) {
 			t.Fatal("callers stuck with every server dead")
 		}
 	}
-	// An HTTP error from a reachable server is not "unavailable".
-	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "bad", http.StatusBadRequest) }))
+	// An HTTP error from a reachable server is not "unavailable", and it
+	// names the server that answered so (the pool's servers are separate
+	// pods).
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}))
 	defer bad.Close()
-	if _, err := New(Config{BaseURLs: []string{bad.URL}, TranscribeModel: "whisper-1"}).
-		Transcribe(context.Background(), []byte("AUDIO"), "a.mp3", "ar"); err == nil || errors.Is(err, provider.ErrUnavailable) {
-		t.Fatalf("a server's 400: %v, want an error that isn't ErrUnavailable", err)
+	_, err := New(Config{BaseURLs: []string{bad.URL}, TranscribeModel: "whisper-1"}).Transcribe(context.Background(), []byte("AUDIO"), "a.mp3", "ar")
+	var perr *provider.Error
+	if err == nil || errors.Is(err, provider.ErrUnavailable) || !strings.Contains(err.Error(), "server 127.0.0.1: ") ||
+		!errors.As(err, &perr) || perr.Status != http.StatusInternalServerError {
+		t.Fatalf("a server's 500: %v, want an error naming the server, with its status, that isn't ErrUnavailable", err)
 	}
 }

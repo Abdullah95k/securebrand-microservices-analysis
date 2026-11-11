@@ -257,7 +257,8 @@ func (p *Provider) Transcribe(ctx context.Context, audio []byte, filename, langu
 		}
 		p.servers <- base
 		if err != nil {
-			return "", err
+			// Which server answered so: the pool's servers are separate pods.
+			return "", fmt.Errorf("server %s: %w", hostName(base), err)
 		}
 		return out.Text, nil
 	}
@@ -297,6 +298,14 @@ func (p *Provider) sideline(base string, cause error) {
 			return
 		}
 	}()
+}
+
+// hostName is a base URL's host name ("sba-whisper-1").
+func hostName(base string) string {
+	if u, err := url.Parse(base); err == nil && u.Hostname() != "" {
+		return u.Hostname()
+	}
+	return base
 }
 
 // hostPort is a base URL's host:port, the scheme's port when none is given.

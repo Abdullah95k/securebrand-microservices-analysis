@@ -65,7 +65,7 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
 - **Per platform:** `sb-analysis stats [--since 24h]`, run in the analysis pod, prints for each platform:
   - items ingested, analysed (refused among them), waiting in the queue now, and in the dead letters;
   - media files announced, analysed, and their states now (pending, done, skipped, failed, gone), with how many were acknowledged to their collector (done, skipped and failed are; gone ones aren't owed an ack) and why files were skipped (`policy:image/thumbnail` and so on);
-  - files waiting to be tried again after a failure (now), and why files are retrying or failed (failed in the window), by kind, largest first. A reason is the error's first 60 characters with digits shown as `#`, so the same failure on different addresses counts together. Errors name a file at most, never its content (since 11 Nov);
+  - files waiting to be tried again after a failure (now), and why files are retrying or failed (failed in the window), by kind, largest first. A reason is the error's first 100 characters with digits shown as `#`, so the same failure on different addresses counts together. Errors name a file at most, never its content (since 11 Nov);
   - the outbox waiting to be published, by topic.
 
   It is read-only and prints counts only. `sb_analysis_items_ingested_total{platform}` counts each item under its own platform; before 11 Nov a batch mixing collectors counted under its first item's platform.
@@ -129,6 +129,14 @@ Videos are transcribed by a speech-to-text server inside the cluster: **Speaches
     - A video waits up to 1 minute for a reachable server. If none comes, it goes back to the queue for `stt_retry_after` without losing a try, as when Whisper is busy. This also covers a single server during a restart.
     - It counts in `sb_analysis_transcriptions_total{outcome="unavailable"}` and `sb_analysis_stt_deferred_total`.
     - Before 11 Nov (pull request #37 alone), a video sent to a server that wasn't Ready yet failed at once and lost a try.
+  - **An error from a server of the pool names it** (`server sba-whisper-1: provider: status 500 ...`). An HTTP error is Speaches' own, so the server's log says why.
+- **The model on each server's volume is checked at every start** (the init container, `files/whisper-model.py`). Each file must be present, of the Hub's size and with the Hub's checksum (SHA-256 for `model.bin`, the git blob hash for the others); without the Hub, present and not empty.
+  - A faulty copy is set aside in `/data/huggingface/faulty-models/` (once; a later one is removed), and the revision is downloaded again.
+  - From 7 to 11 Nov the first server's copy couldn't be loaded ("Cannot load the target vocabulary from the model directory"): every transcription it got answered 500. The old check skipped `vocabulary.*`.
+- **A server counts as started only once it transcribes:** its startup probe (`files/whisper-ready.py`) sends a second of silence to `/v1/audio/transcriptions`, which loads the model. Until that succeeds, the pod isn't Ready, its Service has no endpoint, and the analysis passes over it. `/health` alone answers even when the model can't load. The probe runs every 20 s, for up to 15 minutes, then the container restarts.
+- **Speech-to-text failing on a video's last try:** if the server still answers with an error (HTTP 5xx) on the video's last allowed try (`analysis.media.max_tries`), its frames are analysed without a transcript instead of the whole video failing (the master, 11 Nov). Its `transcript_source` reads `none`. Earlier tries fail and are tried again as usual.
+- **Trying failed videos again:** `sb-analysis media-retry --reason transcribe [--platform tiktok] [--since 120h] [--min-left 6h]` counts the media files that failed with that text in their error, and how many still have `--min-left` before their deadline. Add `--apply` to put those back from their first try. It prints counts only.
+- **A media job cut by a shutdown** (a deploy or restart) goes back to the queue at once without losing a try (since 11 Nov; before, it counted as a failure).
 - **Limits:**
   - one transcription at a time per media process and server (`analysis.media.video.stt_concurrency`, raised by the chart to the number of servers);
   - the first 10 minutes of a video at most (`max_seconds`).

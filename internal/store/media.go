@@ -84,11 +84,10 @@ func (s *Store) ClaimMediaJobs(ctx context.Context, limit int, lease time.Durati
 	var out []core.MediaJob
 	for rows.Next() {
 		var j core.MediaJob
-		var tries int
 		// No deadline: NULL (pgx can't scan 'infinity' into a time.Time).
 		var del *time.Time
 		if err := rows.Scan(&j.MediaID, &j.OwnerContentID, &j.Platform, &j.SourceID, &j.Kind, &j.Bucket, &j.Key, &j.Size,
-			&j.ContentType, &j.DurationMS, &j.AltText, &del, &j.AckFormat, &tries, &j.Role, &j.Sha256, &j.Attempt, &j.ReceivedAt); err != nil {
+			&j.ContentType, &j.DurationMS, &j.AltText, &del, &j.AckFormat, &j.Tries, &j.Role, &j.Sha256, &j.Attempt, &j.ReceivedAt); err != nil {
 			return nil, err
 		}
 		if del != nil {
@@ -480,4 +479,42 @@ func (s *Store) WakeMediaOf(ctx context.Context, ownerIDs []string) (int64, erro
 	tag, err := s.DB.Exec(ctx, `UPDATE analysis.media_jobs SET not_before = now()
 		WHERE owner_content_id = ANY($1) AND state = 'pending' AND not_before > now() AND lease_until IS NULL`, ownerIDs)
 	return tag.RowsAffected(), err
+}
+
+// MediaRetryFilter selects failed media files to try again.
+type MediaRetryFilter struct {
+	// Reason is text the failure's error contains ("transcribe").
+	Reason, Platform string
+	FailedSince      time.Time
+	// MinLeft: only files whose deadline is at least this far away (or that
+	// have none), so they are tried before the collector deletes them.
+	MinLeft time.Duration
+}
+
+// MediaRetry counts what RetryFailedMedia found and did.
+type MediaRetry struct {
+	Matched, InTime, Retried int64
+}
+
+// RetryFailedMedia puts failed media files back in the queue, from their
+// first try, when apply is set; otherwise it only counts them. The last
+// error is kept for the record until a new try replaces it.
+func (s *Store) RetryFailedMedia(ctx context.Context, f MediaRetryFilter, apply bool) (MediaRetry, error) {
+	var r MediaRetry
+	where := `state = 'failed' AND done_at >= $1 AND strpos(coalesce(last_error, ''), $2) > 0 AND ($3 = '' OR platform = $3)`
+	inTime := `(delete_after IS NULL OR delete_after > now() + make_interval(secs => $4))`
+	if err := s.DB.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE `+inTime+`) FROM analysis.media_jobs WHERE `+where,
+		f.FailedSince, f.Reason, f.Platform, f.MinLeft.Seconds()).Scan(&r.Matched, &r.InTime); err != nil {
+		return r, err
+	}
+	if !apply {
+		return r, nil
+	}
+	tag, err := s.DB.Exec(ctx, `UPDATE analysis.media_jobs SET state = 'pending', tries = 0, not_before = now(), lease_until = NULL,
+		done_at = NULL WHERE `+where+` AND `+inTime, f.FailedSince, f.Reason, f.Platform, f.MinLeft.Seconds())
+	if err != nil {
+		return r, err
+	}
+	r.Retried = tag.RowsAffected()
+	return r, nil
 }

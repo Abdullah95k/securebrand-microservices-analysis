@@ -73,6 +73,8 @@ func main() {
 		err = batchesCmd(args)
 	case "stats":
 		err = statsCmd(args)
+	case "media-retry":
+		err = mediaRetryCmd(args)
 	case "help", "-h", "--help":
 		fmt.Println(usage)
 		return
@@ -103,7 +105,8 @@ const usage = `usage: sb-analysis [run|migrate|entities|sources|reanalyze|replay
   kafka-topics   create the analysis's own Kafka topics (content.*, analysis.*), never fbs's [--partitions-cap n] [--replicas n]
   erasures       list | apply --request id --yes-delete (deletes only on this explicit order; see analysis.erasure.mode)
   batches        [--since 24h] the open and recent provider batches, with the provider's status and counts (read-only)
-  stats          [--since 24h] per platform: items ingested, analysed, waiting, failed; media announced, analysed, skipped, acknowledged (read-only)`
+  stats          [--since 24h] per platform: items ingested, analysed, waiting, failed; media announced, analysed, skipped, acknowledged (read-only)
+  media-retry    --reason TEXT [--platform P] [--since 120h] [--min-left 6h] [--apply] media files failed for a reason, put back to be tried again while their files last (counts only without --apply)`
 
 // withApp loads the config (flags parsed into fs first), opens the
 // analysis database and runs fn.

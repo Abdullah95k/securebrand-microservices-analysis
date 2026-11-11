@@ -77,7 +77,7 @@ func TestStatsCountsPerPlatform(t *testing.T) {
 		"skipped because: policy:image/thumbnail 1",
 		"tiktok\n  items: 1 ingested",
 		"2 waiting to be tried again after a failure; failed or retrying because: " +
-			"video: transcribe: provider: no server reachable: dial tcp #.#.#.#: 2, image: media: undecodable image 1",
+			"video: transcribe: provider: no server reachable: dial tcp #.#.#.#:# 2, image: media: undecodable image 1",
 		"outbox (waiting to be published): empty; 0 held",
 	} {
 		if !strings.Contains(text, want) {
