@@ -155,6 +155,9 @@ func setupWith(t *testing.T, edit func(*config.Analysis)) (*store.Store, *media.
 	}
 	cfg.Media.Video.STTProvider = "fake"
 	cfg.Media.Video.MaxFrames = 3
+	// Most tests announce files without storing their post; waiting for
+	// the post (owner_wait) has its own tests, which set it back.
+	cfg.Media.OwnerWait = 0
 	if edit != nil {
 		edit(&cfg)
 	}

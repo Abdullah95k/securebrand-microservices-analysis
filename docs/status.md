@@ -218,3 +218,9 @@
   - **For the owner:** A (about $60 a day for 3 days, then about $45), B ($10 with caps that keep room for images), or C (narrower media scope). Put by the master.
   - **Merged and live:** media jobs check the budget before fetching their file, so a paused budget costs no downloads (pull request #33, `3367e51`; live 10:31 Iraq time, analysis and analysis-media, 0 restarts).
   - **Still with the owner:** the budget (A, B or C), yt thumbnails (about $7 a day), and Whisper's capacity (a second replica, a 120 s limit, or frames only while it is behind).
+- **11 Nov, 13:35 Iraq time: the platform's questions for the owner's budget briefing**, answered from the code and the measured costs:
+  - **tks's 29k downloads in 3 h vs our 58,100 announced in 24 h:** different windows (ours ended at 09:53, tks's started at 10:15). A file reaches us only once announced on `content.media.ready.v1`; each media ID counts once.
+  - **At tks's current (catch-up) rate:** images (141k a day, 80% covers) about $31 a day at the measured $0.22 per 1,000; videos (90k a day) about $36 a day at an estimated $0.40 per 1,000 (8 frames and the transcript). Media about $67 a day, text about $30.
+  - **Found:** while ingest is paused, posts wait in Kafka but their media keeps arriving, so a video would go to Whisper and be analysed without its post's text and captions.
+  - **Going to the owner** (via the platform): the budget, and whether covers stay analysed (dropping `image/cover` saves about $25 a day at this rate, for every collector).
+- **In review: a file waits for its post** (the platform agreed, 13:32 Iraq time). It goes back to the queue, without losing a try, until its post is stored (ingest wakes it), or 12 h before its deadline, or 7 days after it arrived. Also fixed: claiming a file with no deadline failed (pgx can't read `infinity` into a time).

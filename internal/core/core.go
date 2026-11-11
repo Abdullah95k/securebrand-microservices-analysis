@@ -129,6 +129,8 @@ type MediaJob struct {
 	Role    string
 	Sha256  string
 	Attempt int
+	// ReceivedAt is when the file was first announced (set when claimed).
+	ReceivedAt time.Time
 }
 
 // Media acknowledgement formats.

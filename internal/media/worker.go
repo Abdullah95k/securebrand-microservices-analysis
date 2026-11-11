@@ -89,6 +89,40 @@ type Worker struct {
 // the queue for analysis.media.video.stt_retry_after.
 var errSTTBusy = errors.New("media: speech-to-text busy")
 
+// ownerWait: the file's post (or comment) isn't stored yet; the job waits
+// for it in the queue (analysis.media.owner_wait), at most until Until.
+type ownerWait struct{ Until time.Time }
+
+func (e *ownerWait) Error() string { return "media: waiting for its post" }
+
+// ownerRecheck caps one wait for a post: a job whose wake was missed (a
+// failed wake, or a race with the ingest that stored the post) looks again
+// this often rather than only at the end of its wait.
+const ownerRecheck = 6 * time.Hour
+
+// waitForOwner returns the wait when the job's owner item isn't stored and
+// the job may still wait for it: until owner_wait after it arrived or
+// owner_margin before its deadline, whichever is first. Nil: it goes ahead.
+func (w *Worker) waitForOwner(j core.MediaJob, owner store.Owner) error {
+	if owner.Stored || j.OwnerContentID == "" || w.Cfg.OwnerWait <= 0 {
+		return nil
+	}
+	arrived := j.ReceivedAt
+	if arrived.IsZero() {
+		arrived = time.Now()
+	}
+	until := arrived.Add(w.Cfg.OwnerWait)
+	if !j.DeleteAfter.IsZero() {
+		if d := j.DeleteAfter.Add(-w.Cfg.OwnerMargin); d.Before(until) {
+			until = d
+		}
+	}
+	if !time.Now().Before(until) {
+		return nil
+	}
+	return &ownerWait{Until: until}
+}
+
 // sttSlot takes a transcription slot, waiting at most stt_wait. The
 // returned func gives it back.
 func (w *Worker) sttSlot(ctx context.Context) (func(), error) {
@@ -212,12 +246,28 @@ func (w *Worker) process(ctx context.Context, j core.MediaJob) {
 	}
 	// The same file (SHA-256) analysed before, under another media ID: its
 	// result is reused, without fetching the file or calling a provider.
-	if res, ok := w.reuse(ctx, j); ok {
+	res, reused, err := w.reuse(ctx, j)
+	if err == nil && reused {
 		w.finish(ctx, *res, "reused")
 		return
 	}
-	res, err := w.analyse(ctx, j)
+	if err == nil {
+		res, err = w.analyse(ctx, j)
+	}
 	if err != nil {
+		if wait := (*ownerWait)(nil); errors.As(err, &wait) {
+			// Not a failure: its post isn't stored yet (ingest paused, or
+			// the post comes later). Storing the post wakes it.
+			ametrics.Media.WithLabelValues(j.Kind, "waiting_for_post").Inc()
+			until := wait.Until
+			if r := time.Now().Add(ownerRecheck); r.Before(until) {
+				until = r
+			}
+			if rerr := w.P.Store.HoldMediaForOwner(context.WithoutCancel(ctx), j.MediaID, j.OwnerContentID, until); rerr != nil {
+				slog.Error("analysis: media job not released", "media", j.MediaID, "err", rerr)
+			}
+			return
+		}
 		if errors.Is(err, errBudget) {
 			// Not a failure: wait for budget (the TTL still applies).
 			if rerr := w.P.Store.ReleaseMedia(context.WithoutCancel(ctx), j.MediaID, 10*time.Minute); rerr != nil {
@@ -250,17 +300,24 @@ func (w *Worker) process(ctx context.Context, j core.MediaJob) {
 	w.finish(ctx, *res, "analyzed")
 }
 
-// reuse returns the stored analysis of an identical file, for this job.
-func (w *Worker) reuse(ctx context.Context, j core.MediaJob) (*store.MediaResult, bool) {
+// reuse returns the stored analysis of an identical file, for this job; an
+// ownerWait error while its post isn't stored, so the reused result is
+// dated by its own post.
+func (w *Worker) reuse(ctx context.Context, j core.MediaJob) (*store.MediaResult, bool, error) {
 	from, res, prov, ok, err := w.P.Store.MediaBySHA(ctx, j.Sha256, j.MediaID)
 	if err != nil {
 		slog.Warn("analysis: identical media not looked up; analysing", "media", j.MediaID, "err", err)
-		return nil, false
+		return nil, false, nil
 	}
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 	owner, err := w.P.Store.OwnerContext(ctx, j.OwnerContentID)
+	if err == nil {
+		if werr := w.waitForOwner(j, owner); werr != nil {
+			return nil, false, werr
+		}
+	}
 	ownerAt := owner.CreatedAt
 	if err != nil || ownerAt.IsZero() {
 		ownerAt = time.Now().UTC()
@@ -270,7 +327,7 @@ func (w *Worker) reuse(ctx context.Context, j core.MediaJob) (*store.MediaResult
 		prov.Route = core.RouteVideo
 	}
 	prov.SchemaVersion = prompt.SchemaVersion
-	return &store.MediaResult{Job: j, Result: res, Prov: prov, OwnerTime: ownerAt, Consumer: w.Cfg.Consumer, ReusedFrom: from}, true
+	return &store.MediaResult{Job: j, Result: res, Prov: prov, OwnerTime: ownerAt, Consumer: w.Cfg.Consumer, ReusedFrom: from}, true, nil
 }
 
 func (w *Worker) finish(ctx context.Context, r store.MediaResult, outcome string) {
@@ -303,6 +360,11 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	}
 	owner, err := w.P.Store.OwnerContext(ctx, j.OwnerContentID)
 	if err != nil {
+		return nil, err
+	}
+	// Its post isn't stored yet: the file waits for it, so the post's text
+	// and captions go with it, before anything is fetched.
+	if err := w.waitForOwner(j, owner); err != nil {
 		return nil, err
 	}
 	// A video without the platform's captions needs speech-to-text: it
