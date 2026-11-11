@@ -292,6 +292,15 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	if !ok || !rc.On() {
 		return &store.MediaResult{Job: j, Consumer: w.Cfg.Consumer, SkipReason: "route_disabled:" + route}, nil
 	}
+	// The day's (or the route's) budget already spent: back to the queue
+	// before the file is fetched or decoded, so a paused budget costs no
+	// download and no CPU. The exact check, with the request's estimate,
+	// still comes before the paid call.
+	if spent, err := w.P.Budget.Exhausted(ctx, route); err != nil {
+		return nil, err
+	} else if spent {
+		return nil, errBudget
+	}
 	owner, err := w.P.Store.OwnerContext(ctx, j.OwnerContentID)
 	if err != nil {
 		return nil, err

@@ -661,3 +661,48 @@ func TestWorkerSpeechToTextOneAtATime(t *testing.T) {
 		t.Fatalf("v2 transcript %q %v", transcript, err)
 	}
 }
+
+// counting is an object store that counts fetches.
+type counting struct {
+	objects
+	fetches int
+}
+
+func (c *counting) Fetch(ctx context.Context, bucket, key string, max int64, dst io.Writer) (int64, error) {
+	c.fetches++
+	return c.objects.Fetch(ctx, bucket, key, max, dst)
+}
+
+// With the day's budget already spent, a media job goes back to the queue
+// before its file is fetched: no download, no decoding, no try counted,
+// and its deadline keeps its place.
+func TestWorkerBudgetSpentFetchesNothing(t *testing.T) {
+	st, w, fp, objs := setupWith(t, func(c *config.Analysis) { c.Budget.DailyUSD = 1 })
+	ctx := context.Background()
+	objs["b/img"] = pngBytes(t, 100, 100)
+	cnt := &counting{objects: objs}
+	w.Objects = cnt
+	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{job("img", "photo")}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	// Today's spend is already over the $1 cap.
+	if _, err := st.DB.Exec(ctx, `INSERT INTO analysis.provider_requests (request_id, route, lane, provider, model, items, status, cost_usd)
+		VALUES (gen_random_uuid(), 'comment', 'batch', 'fake', 'm', 1, 'done', 2)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if cnt.fetches != 0 || fp.Calls() != 0 {
+		t.Fatalf("budget spent: %d fetches, %d calls, want none", cnt.fetches, fp.Calls())
+	}
+	var state string
+	var tries int
+	var later bool
+	if err := st.DB.QueryRow(ctx, `SELECT state, tries, not_before > now() FROM analysis.media_jobs WHERE media_id = 'img'`).Scan(&state, &tries, &later); err != nil {
+		t.Fatal(err)
+	}
+	if state != "pending" || tries != 0 || !later {
+		t.Fatalf("job %s, %d tries, later %v: want pending, no try, back later", state, tries, later)
+	}
+}

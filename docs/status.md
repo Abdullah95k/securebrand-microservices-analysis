@@ -209,4 +209,11 @@
   - yt posts and comments are read like every collector's; while ingest is paused (queue over 200k, until 150k) they wait in Kafka;
   - yt media keeps flowing. Thumbnails, avatars and banners aren't analysed by policy: each is acknowledged SKIPPED with its reason, so yts can delete it;
   - results are stored in Postgres and published to `analysis.result.v1` and `analysis.media.v1` for the writer.
-  - **In review:** a read-only `sb-analysis stats` command with these counts per platform. Also a fix: `items_ingested_total` counted a mixed batch under its first item's platform.
+  - **Merged and live:** `sb-analysis stats` (pull request #32, `5932d27`, live 09:53 Iraq time). Also fixed: `items_ingested_total` had counted a mixed batch under its first item's platform.
+- **11 Nov, 09:53 Iraq time: the first per-platform counts** (24 h):
+  - **YouTube:** 79,781 analysed, 28,195 waiting; 348 files, all thumbnails, avatars or banners, skipped and acknowledged.
+  - **TikTok:** 17,170 analysed, 132,653 waiting; **57,000 media files pending**. tks deletes them 72 h after announcing them, the first about 04:00 Iraq time on 14 Nov.
+  - **Facebook:** 349 analysed, 33,195 waiting; 6,035 files analysed.
+  - **The budget:** $12.84 spent against $10, so paused. Text needs about $30 a day at the measured $0.13 per 1,000, plus a backlog; tt images about $13 a day at $0.22 per 1,000. Whisper takes about 1,000–2,000 tt videos a day without captions.
+  - **For the owner:** A (about $60 a day for 3 days, then about $45), B ($10 with caps that keep room for images), or C (narrower media scope). Put by the master.
+  - **In review:** media jobs check the budget before fetching their file, so a paused budget costs no downloads.
