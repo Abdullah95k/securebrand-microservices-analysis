@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 11 November 2026, 23:55 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 12 November 2026, 00:35 (Iraq time).*
 
 ## Where it stands
 
@@ -393,3 +393,11 @@
     - the cost per comment is the same as live.
   - **In review: older readings ignored** (fbs confirmed `envelope.version` only rises per item). A contract copy at or below the stored version changes nothing; without it, a pilot copy of a comment production also read would be paid for again and replace the newer text. The production backfill should run first.
   - **The queue's cap** counts the whole queue (1.5M, resuming at 1.4M), so the master paces the pilot backfill on the total depth.
+- **12 Nov, 00:35 Iraq time: sending works again; fuller and cheaper comment requests; long posts cut off.**
+  - **The reading** (the master, `stats 1h` at 21:11Z, on `7f61d47`):
+    - comment route: 6,069 requests for 60,780 items, **10.01 items a request** (18% one-item); per answered request 624 input, 13,810 cache read and 864 output tokens; **$0.055 per 1,000 comments** (was $0.113; 161 answered so far);
+    - post route: 10,863 requests for 30,000 items, 2.76 items a request (86% one-item: the cut-off posts below, retried alone);
+    - open batches 3, no restarts; the day so far $1.66 of $60 ($5.10 at worst).
+  - **Long posts cut off:** 9,344 posts (and 80 comments) came back "truncated": requests of 13–14 long posts need over 16,000 output tokens. Each goes alone now (a single post's answer fits), and an item goes to the dead letters after `limits.max_attempts` (5).
+  - **In review:** a request carries no more items than 60% of its route's `max_tokens` holds at the route's measured output per item: about 8 long posts a request.
+  - **Pinned:** `a5bc8ff` (older readings ignored), before fbs's production backfill (about 2.03M events at 500 a second).
