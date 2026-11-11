@@ -408,13 +408,73 @@ func (s *Store) Stats(ctx context.Context) ([]QueueStats, error) {
 	return out, rows.Err()
 }
 
-// SpentSince is the spend recorded since t: actual cost where known, the
-// estimate for requests still in flight.
+// SpentSince is the spend recorded since t, as the budget counts it (see
+// SpendByRoute), for one route or all ("").
 func (s *Store) SpentSince(ctx context.Context, t time.Time, route string) (float64, error) {
+	rs, err := s.SpendByRoute(ctx, t)
+	if err != nil {
+		return 0, err
+	}
 	var v float64
-	err := s.DB.QueryRow(ctx, `SELECT coalesce(sum(coalesce(cost_usd, est_cost_usd, 0)), 0)::float8
-		FROM analysis.provider_requests WHERE created_at >= $1 AND ($2 = '' OR route = $2) AND status <> 'failed'`, t, route).Scan(&v)
-	return v, err
+	for _, r := range rs {
+		if route == "" || r.Route == route {
+			v += r.Counted
+		}
+	}
+	return v, nil
+}
+
+// RouteSpend is a route's spend since a time, as the budget counts it.
+type RouteSpend struct {
+	Route string
+	// Done is the actual cost of answered requests; InFlight the estimate
+	// of those still in flight.
+	Done, InFlight float64
+	// Ratio is actual ÷ estimate over the route's answered requests of the
+	// last day, between MinSpendRatio and 1 (1 with fewer than 100 of
+	// them). Counted is Done + InFlight × Ratio.
+	Ratio, Counted float64
+}
+
+// MinSpendRatio is the least share of its estimate an in-flight request
+// counts for. Batch estimates price the cached prompt as plain input, so
+// on 11 Nov a one-item comment request was estimated at $0.00041 and cost
+// $0.000113: 26,000 in flight counted for about $10.7 of the comment
+// route's $30 while they would cost about $3, and the route stopped
+// sending for hours. Counting them at the measured ratio frees that room;
+// the floor and the cap at 1 keep an estimate from counting for less than
+// a quarter of itself or more than itself.
+const MinSpendRatio = 0.25
+
+// SpendByRoute is the spend since t by route: actual cost where known,
+// and requests still in flight at their estimate times the route's
+// measured actual-to-estimate ratio. Failed requests (no answer) cost
+// nothing.
+func (s *Store) SpendByRoute(ctx context.Context, t time.Time) ([]RouteSpend, error) {
+	rows, err := s.DB.Query(ctx, `WITH ratio AS (
+			SELECT route, least(1, greatest($2::float8, sum(cost_usd) / nullif(sum(est_cost_usd), 0)))::float8 AS r
+			FROM analysis.provider_requests
+			WHERE created_at >= $1::timestamptz - interval '1 day' AND status = 'done' AND cost_usd IS NOT NULL AND est_cost_usd > 0
+			GROUP BY route HAVING count(*) >= 100)
+		SELECT p.route, coalesce(sum(p.cost_usd), 0)::float8,
+			coalesce(sum(p.est_cost_usd) FILTER (WHERE p.cost_usd IS NULL), 0)::float8, coalesce(max(ratio.r), 1)::float8
+		FROM analysis.provider_requests p LEFT JOIN ratio ON ratio.route = p.route
+		WHERE p.created_at >= $1 AND p.status <> 'failed'
+		GROUP BY p.route ORDER BY 1`, t, MinSpendRatio)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RouteSpend
+	for rows.Next() {
+		var r RouteSpend
+		if err := rows.Scan(&r.Route, &r.Done, &r.InFlight, &r.Ratio); err != nil {
+			return nil, err
+		}
+		r.Counted = r.Done + r.InFlight*r.Ratio
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // OpenBatch is a provider batch to poll.

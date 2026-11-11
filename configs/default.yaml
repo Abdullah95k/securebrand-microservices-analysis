@@ -102,8 +102,12 @@ analysis:
   # is off for classification: Claude Haiku 5.5 thinks by default and bills
   # thinking as output.
   routes:
-    comment:    {provider: anthropic, model: claude-haiku-5-5,  lane: batch,    thinking: "off", effort: low, max_tokens: 6000}
-    post:       {provider: anthropic, model: claude-haiku-5-5,  lane: batch,    thinking: "off", effort: low, max_tokens: 2000}
+    # max_tokens holds a full group's answer: up to grouping.max_items (40)
+    # comments at about 150 output tokens each, or long posts at about 300
+    # (11 Nov: at 6000 and 2000 a full group was cut off, and every item in
+    # it failed). Only the tokens written are paid.
+    comment:    {provider: anthropic, model: claude-haiku-5-5,  lane: batch,    thinking: "off", effort: low, max_tokens: 16000}
+    post:       {provider: anthropic, model: claude-haiku-5-5,  lane: batch,    thinking: "off", effort: low, max_tokens: 16000}
     image:      {provider: anthropic, model: claude-haiku-5-5,  lane: realtime, thinking: "off", effort: low, max_tokens: 1500}
     video:      {provider: anthropic, model: claude-haiku-5-5,  lane: realtime, thinking: "off", effort: low, max_tokens: 2000}
     escalation: {provider: anthropic, model: claude-sonnet-5-5, lane: batch,    thinking: "off", effort: low, max_tokens: 4000, min_confidence: 0.6}

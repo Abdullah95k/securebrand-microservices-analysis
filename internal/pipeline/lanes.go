@@ -193,6 +193,15 @@ func (p *Pipeline) submitLease() time.Duration {
 
 func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) error {
 	batcher, hasBatch := p.Providers.Batcher(prov)
+	// A route whose day (or the day's total) is already spent claims
+	// nothing: building and releasing a round's requests would cost the
+	// database for no request.
+	if spent, err := p.Budget.Exhausted(ctx, route); err != nil {
+		return err
+	} else if spent {
+		slog.Info("analysis: batch round skipped: the budget is spent for today", "route", route)
+		return nil
+	}
 	claimed, err := p.Store.Claim(ctx, core.LaneBatch, route, p.Cfg.Batch.MaxItems, p.submitLease(), 0)
 	if err != nil || len(claimed) == 0 {
 		return err
@@ -343,13 +352,22 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 			return giveBack(err)
 		}
 		if !ok {
-			if err := p.Store.ReleaseUnsent(ctx, ids(g.items), route, 10*time.Minute); err != nil {
+			// Over the route's or the day's cap: this group and the ones
+			// not built yet wait, in one release rather than a build and a
+			// release per group.
+			var rest []string
+			for _, r := range groups[gi:] {
+				rest = append(rest, ids(r.items)...)
+			}
+			if err := p.Store.ReleaseUnsent(ctx, rest, route, 10*time.Minute); err != nil {
 				return giveBack(err)
 			}
-			for _, it := range g.items {
-				handled[it.ContentID] = true
+			for _, cid := range rest {
+				handled[cid] = true
 			}
-			continue
+			ametrics.BudgetHeld.WithLabelValues(route).Add(float64(len(rest)))
+			slog.Info("analysis: batch round held by the budget", "route", route, "requests_built", len(reqs), "items_held", len(rest))
+			break
 		}
 		p.Budget.Add(route, est)
 		row := store.RequestRow{ID: id, Route: route, Lane: core.LaneBatch, Provider: prov, Model: model,

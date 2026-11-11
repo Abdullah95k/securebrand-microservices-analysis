@@ -51,6 +51,11 @@ type PlatformReport struct {
 	Sample []CommentSample
 	// The queue now by route and tries (QueueTriesNow).
 	Tries []QueueTries
+	// Today's spend by route as the budget counts it (SpendByRoute from
+	// the day's start), against the day's cap and the routes' caps.
+	Spend     []RouteSpend
+	DailyCap  float64
+	RouteCaps map[string]float64
 }
 
 // PlatformCounts counts, per platform, what came in and what came out since t.

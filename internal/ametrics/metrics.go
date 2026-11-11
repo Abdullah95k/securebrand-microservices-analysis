@@ -28,6 +28,7 @@ var (
 	SpentToday        = metrics.AnalysisSpentToday
 	BudgetUSD         = metrics.AnalysisBudgetUSD
 	BudgetPaused      = metrics.AnalysisBudgetPaused
+	BudgetHeld        = metrics.AnalysisBudgetHeld
 	OpenBatches       = metrics.AnalysisOpenBatches
 	Media             = metrics.AnalysisMedia
 	MediaAtRisk       = metrics.AnalysisMediaAtRisk

@@ -48,6 +48,7 @@ var (
 	AnalysisSpentToday   = analysisGauge("spent_today_usd", "Spend today (analysis.timezone), actual where known, estimated in flight.")
 	AnalysisBudgetUSD    = analysisGauge("budget_daily_usd", "Daily budget (0 = none).")
 	AnalysisBudgetPaused = analysisGauge("budget_paused", "1 while the daily budget holds paid work back (urgent items too unless analysis.budget.urgent_exempt).")
+	AnalysisBudgetHeld   = analysisCounter("budget_held_items_total", "Batch items a round claimed and gave back because the route's or the day's cap was reached.", "route")
 	AnalysisOpenBatches  = analysisGauge("open_batches", "Provider batches in progress.")
 
 	// Media.
