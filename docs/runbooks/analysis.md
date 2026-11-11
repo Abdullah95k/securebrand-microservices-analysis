@@ -67,7 +67,14 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
   - media files announced, analysed, and their states now (pending, done, skipped, failed, gone), with how many were acknowledged to their collector (done, skipped and failed are; gone ones aren't owed an ack) and why files were skipped (`policy:image/thumbnail` and so on);
   - the files pending now by time to their deadline (past it, within 12 h, 12-24 h, 24-48 h, later or none), and how many of them wait for their post (since 11 Nov);
   - files waiting to be tried again after a failure (now), and why files are retrying or failed (failed in the window), by kind, largest first. A reason is the error's first 100 characters with digits shown as `#`, so the same failure on different addresses counts together. Errors name a file at most, never its content (since 11 Nov);
-  - the outbox waiting to be published, by topic.
+  - the outbox waiting to be published, by topic;
+  - the provider requests sent in the window, by route and lane (since 11 Nov):
+    - how many were done, failed and still in flight;
+    - the items they carried, items per request, and how many carried one item;
+    - per done request: input, cache-read, cache-write and output tokens, and the real cost per 1,000 items;
+    - per route, the items sent in more than one request (a retry after a failure, an errored or expired batch request) and the extra sends;
+    - the cache-read tokens per request are the cached prompt and schema itself;
+  - what the real-time lane's rules have to work with: hot accounts in the config, the accounts clients monitor (when `urgent.watchlists` is on) and by how many clients, and the entities clients track. With none, every item takes the batch lane.
 
   It is read-only and prints counts only. `sb_analysis_items_ingested_total{platform}` counts each item under its own platform; before 11 Nov a batch mixing collectors counted under its first item's platform.
 - **To see the open batches:** `sb-analysis batches [--since 24h]`, run in the analysis pod. It prints each open or recent batch with its requests here (submitted, done, failed) and the provider's status and counts (processing, succeeded, errored, canceled, expired), with when it was sent and when it expires. It is read-only and prints no content.

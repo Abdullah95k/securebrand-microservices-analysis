@@ -31,11 +31,21 @@ type PlatformStats struct {
 	PendingPast, Pending12h, Pending24h, Pending48h, PendingLater, PendingForPost int64
 }
 
-// PlatformReport is the per-platform counts and the outbox's state.
+// PlatformReport is the per-platform counts and the outbox's state; the
+// stats command adds the requests and the real-time lane's setup.
 type PlatformReport struct {
 	Platforms  []PlatformStats
 	Outbox     map[string]int64 // records waiting, by topic
 	OutboxHeld int64            // of which after a failed publish
+	// Provider requests by route and lane, and items sent more than once
+	// by route (RequestCounts).
+	Requests []RequestStats
+	Resent   map[string]Resends
+	// The real-time lane's rules: hot accounts in the config, whether the
+	// watchlists count, and what is set up (UrgentCounts).
+	HotAccounts int
+	Watchlists  bool
+	Urgent      UrgentSetup
 }
 
 // PlatformCounts counts, per platform, what came in and what came out since t.
