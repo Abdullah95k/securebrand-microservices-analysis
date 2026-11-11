@@ -261,12 +261,13 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 			if seen {
 				reason = "edit"
 			}
-			b.Queue(`INSERT INTO analysis.analysis_queue (content_id, route, created_at, thread_id, lane, priority, reason)
-				VALUES ($1,$2,$3,$4,$5,$6,$7)
+			b.Queue(`INSERT INTO analysis.analysis_queue (content_id, route, created_at, thread_id, source_id, lane, priority, reason)
+				VALUES ($1,$2,$3,$4,$8,$5,$6,$7)
 				ON CONFLICT (content_id, route) DO UPDATE SET lane = EXCLUDED.lane,
 					priority = LEAST(analysis.analysis_queue.priority, EXCLUDED.priority), reason = EXCLUDED.reason,
-					not_before = now(), lease_until = NULL, request_id = NULL, attempts = 0, enqueued_at = now()`,
-				it.ContentID, p.Route, it.CreatedAt, nilIfEmpty(it.ThreadID), p.Lane, p.Priority, reason)
+					not_before = now(), lease_until = NULL, request_id = NULL, attempts = 0, enqueued_at = now(),
+					source_id = EXCLUDED.source_id`,
+				it.ContentID, p.Route, it.CreatedAt, nilIfEmpty(it.ThreadID), p.Lane, p.Priority, reason, QueueSource(*it, p.Route))
 		}
 		for k, c := range counts {
 			b.Queue(`INSERT INTO analysis.comment_sample_daily (day, platform, received, sampled, urgent, share)
@@ -297,10 +298,10 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 			}
 			// No current analysis after all: analysed as an edit.
 			p := plan(it)
-			if _, err := tx.Exec(ctx, `INSERT INTO analysis.analysis_queue (content_id, route, created_at, thread_id, lane, priority, reason)
-				VALUES ($1,$2,$3,$4,$5,$6,'edit') ON CONFLICT (content_id, route) DO UPDATE SET not_before = now(), lease_until = NULL,
-					request_id = NULL, attempts = 0, enqueued_at = now(), reason = 'edit'`,
-				it.ContentID, p.Route, it.CreatedAt, nilIfEmpty(it.ThreadID), p.Lane, p.Priority); err != nil {
+			if _, err := tx.Exec(ctx, `INSERT INTO analysis.analysis_queue (content_id, route, created_at, thread_id, source_id, lane, priority, reason)
+				VALUES ($1,$2,$3,$4,$7,$5,$6,'edit') ON CONFLICT (content_id, route) DO UPDATE SET not_before = now(), lease_until = NULL,
+					request_id = NULL, attempts = 0, enqueued_at = now(), reason = 'edit', source_id = EXCLUDED.source_id`,
+				it.ContentID, p.Route, it.CreatedAt, nilIfEmpty(it.ThreadID), p.Lane, p.Priority, QueueSource(*it, p.Route)); err != nil {
 				return err
 			}
 			if _, err := tx.Exec(ctx, `UPDATE analysis.content_index SET state = 'queued' WHERE content_id = $1`, it.ContentID); err != nil {

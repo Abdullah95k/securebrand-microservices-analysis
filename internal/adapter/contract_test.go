@@ -215,3 +215,28 @@ func TestBestCaptions(t *testing.T) {
 		t.Fatalf("sample captions %q %q %q", it.Captions, it.CaptionsLang, it.CaptionsSource)
 	}
 }
+
+// TestContractBackfillMode: a post or comment the collector sends from a
+// backfill (provenance.mode CRAWL_MODE_BACKFILL) is marked so; live modes
+// and records without provenance aren't.
+func TestContractBackfillMode(t *testing.T) {
+	for mode, want := range map[contentv1.CrawlMode]bool{
+		contentv1.CrawlMode_CRAWL_MODE_BACKFILL:    true,
+		contentv1.CrawlMode_CRAWL_MODE_INCREMENTAL: false,
+		contentv1.CrawlMode_CRAWL_MODE_UNSPECIFIED: false,
+	} {
+		env := &contentv1.Envelope{Id: "fb:comment:7", Platform: "fb", Version: 1, ObservedAt: timestamppb.Now(),
+			Provenance: &contentv1.Provenance{Mode: mode, Acquisition: contentv1.Acquisition_ACQUISITION_IMPORT}}
+		c := FromContractComment(&contentv1.Comment{Envelope: env, PostId: "fb:post:1", AccountId: "fb:account:1", Text: text("hello")})
+		penv := proto.Clone(env).(*contentv1.Envelope)
+		penv.Id = "fb:post:1"
+		p := FromContractPost(&contentv1.Post{Envelope: penv, AccountId: "fb:account:1", Text: text("hello")})
+		if c == nil || p == nil || c.Backfill != want || p.Backfill != want {
+			t.Errorf("%v: comment %+v, post %+v; want backfill %v", mode, c, p, want)
+		}
+	}
+	env := &contentv1.Envelope{Id: "fb:comment:8", Platform: "fb", Version: 1, ObservedAt: timestamppb.Now()}
+	if c := FromContractComment(&contentv1.Comment{Envelope: env, PostId: "fb:post:1", AccountId: "fb:account:1", Text: text("hi")}); c == nil || c.Backfill {
+		t.Errorf("no provenance: %+v", c)
+	}
+}

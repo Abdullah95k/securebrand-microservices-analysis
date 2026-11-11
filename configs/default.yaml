@@ -81,9 +81,11 @@ analysis:
     # 1,000 requests make a batch body of about 25-35 MB, built in memory.
     max_requests: 1000     # requests per provider batch
     max_items: 10000       # items claimed per route and submission (60,000 an hour)
-    # ...then each claimed thread's other waiting comments, up to
-    # grouping.max_items a thread and this many in all (0 = off): requests
-    # carry a thread's comments together instead of one or two each.
+    # ...then each claimed thread's other waiting comments, and each claimed
+    # page's other waiting short posts, up to grouping.max_items a thread or
+    # page and this many in all, threads first (0 = off): requests carry a
+    # thread's comments, or a page's short posts, together instead of one or
+    # two each.
     top_up_items: 10000
     submit_lease: 15m      # claimed items are leased this long until their batch is sent...
     lease: 26h             # ...then this long: > the providers' 24h batch window

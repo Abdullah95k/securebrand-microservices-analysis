@@ -289,3 +289,96 @@ func TestEstimatePricesMeasuredOutput(t *testing.T) {
 		t.Fatalf("estimate $%v against the worst case $%v: %.0f prompt tokens priced as cached, want about 13,000", second, secondMax, prompt)
 	}
 }
+
+// pagePosts queues n short posts of page k (the comment route, grouped by
+// page), each a second after the comment of the same index of thread k.
+func pagePosts(t *testing.T, e *env, k, n int) {
+	t.Helper()
+	page := fmt.Sprintf("fb:page:%d", k+1)
+	var items []*core.Item
+	for i := range n {
+		items = append(items, &core.Item{ContentID: fmt.Sprintf("fb:post:%d-%d", k, i), Platform: "facebook", Kind: core.KindPost,
+			SourceID: page, CreatedAt: at, ObservedAt: at, Text: fmt.Sprintf("منشور قصير رقم %d للصفحة %d", i, k),
+			Status: core.StatusVisible, Version: 1})
+	}
+	e.ingest(t, items...)
+	for i := range n {
+		if _, err := e.s.DB.Exec(context.Background(), `UPDATE analysis.analysis_queue
+			SET enqueued_at = now() - interval '1 hour' + make_interval(secs => $2) WHERE content_id = $1`,
+			fmt.Sprintf("fb:post:%d-%d", k, i), 2*i+k+1); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestTopUpFillsPages: a round that claims the 3 oldest short posts (two
+// of one page, one of another) also claims those pages' other waiting
+// short posts, so each page goes out as one full request.
+func TestTopUpFillsPages(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) { c.Batch.MaxItems, c.Batch.TopUpItems = 3, 100 })
+	pagePosts(t, e, 0, 10)
+	pagePosts(t, e, 1, 10)
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE route = 'comment' AND source_id = 'fb:page:1'`); n != 10 {
+		t.Fatalf("%d of page 1's 10 short posts queued with their page", n)
+	}
+	before := testutil.ToFloat64(ametrics.ToppedUp.WithLabelValues("comment"))
+	if err := e.p.SubmitBatches(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d := testutil.ToFloat64(ametrics.ToppedUp.WithLabelValues("comment")) - before; d != 17 {
+		t.Fatalf("items_topped_up_total rose by %v, want 17 (20 sent, 3 claimed)", d)
+	}
+	if got := requestSizes(t, e); fmt.Sprint(got) != "[10 10]" {
+		t.Fatalf("requests of %v items, want two of 10 (each page whole)", got)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE request_id IS NULL`); n != 0 {
+		t.Fatalf("%d short posts left unclaimed", n)
+	}
+}
+
+// TestTopUpThreadsBeforePages: threads and pages share batch.top_up_items,
+// threads first.
+func TestTopUpThreadsBeforePages(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) { c.Batch.MaxItems, c.Batch.TopUpItems = 2, 5 })
+	threadComments(t, e, 0, 10) // the oldest: comment 0-0 ...
+	pagePosts(t, e, 0, 10)      // ... then post 0-0, a second later
+	if err := e.p.SubmitBatches(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Claimed comment 0-0 and post 0-0; the 5 topped up are all thread 0's.
+	if got := requestSizes(t, e); fmt.Sprint(got) != "[6 1]" {
+		t.Fatalf("requests of %v items, want 6 (thread 0) and 1 (page 1)", got)
+	}
+}
+
+// TestBackfillGoesBehindLive: a collector's backfill item takes the batch
+// lane at background priority, even from a hot account, so a claim takes
+// every live item before it, however long it has waited.
+func TestBackfillGoesBehindLive(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) {
+		c.Batch.MaxItems, c.Batch.TopUpItems = 1, 0
+		c.Urgent.HotAccounts = []string{"fb:page:7"}
+	})
+	ctx := context.Background()
+	old := comment(1, "تعليق قديم من النسخ الاحتياطي")
+	old.ContentID, old.ThreadID, old.ParentID, old.SourceID, old.Backfill = "fb:comment:old", "fb:post:8", "fb:post:8", "fb:page:7", true
+	if pl := e.p.Plan(old); pl.Lane != core.LaneBatch || pl.Priority != core.PriorityBackground {
+		t.Fatalf("a hot account's backfill item planned %+v, want the batch lane at background priority", pl)
+	}
+	live := comment(2, "تعليق جديد")
+	live.ContentID, live.ThreadID, live.ParentID = "fb:comment:live", "fb:post:9", "fb:post:9"
+	e.ingest(t, old, live)
+	// The backfill item waited an hour longer.
+	if _, err := e.s.DB.Exec(ctx, `UPDATE analysis.analysis_queue SET enqueued_at = now() - interval '2 hours' WHERE content_id = 'fb:comment:old'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE content_id = 'fb:comment:live' AND request_id IS NOT NULL`); n != 1 {
+		t.Fatal("the live comment wasn't claimed first")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE content_id = 'fb:comment:old' AND request_id IS NULL AND priority = 2`); n != 1 {
+		t.Fatal("the backfill comment was claimed before the live one, or not queued at background priority")
+	}
+}

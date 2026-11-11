@@ -215,9 +215,9 @@ func (s *Store) writeOne(ctx context.Context, tx pgx.Tx, r *ItemResult, req uuid
 		}
 	}
 	for _, fu := range r.FollowUps {
-		if _, err := tx.Exec(ctx, `INSERT INTO analysis.analysis_queue (content_id, route, created_at, thread_id, lane, priority, reason)
-			VALUES ($1,$2,$3,NULLIF($4,''),'batch',$5,$6) ON CONFLICT (content_id, route) DO NOTHING`,
-			it.ContentID, fu, it.CreatedAt, it.ThreadID, core.PriorityBackground, fu); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO analysis.analysis_queue (content_id, route, created_at, thread_id, source_id, lane, priority, reason)
+			VALUES ($1,$2,$3,NULLIF($4,''),$7,'batch',$5,$6) ON CONFLICT (content_id, route) DO NOTHING`,
+			it.ContentID, fu, it.CreatedAt, it.ThreadID, core.PriorityBackground, fu, QueueSource(*it, fu)); err != nil {
 			return false, false, err
 		}
 	}

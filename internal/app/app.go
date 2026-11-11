@@ -255,8 +255,12 @@ func (a *App) Components(roles []string) ([]func(context.Context) error, error) 
 			fns = append(fns, rl.Run)
 		case "rollup":
 			// The scheduled jobs: rollups, topic curation, bot scoring
-			// (each takes a database lock, so replicas do not overlap).
+			// (each takes a database lock, so replicas do not overlap),
+			// and the page backfill of queued short posts (migration
+			// 00011), until it is done.
 			fns = append(fns, func(ctx context.Context) error {
+				return a.Store.RunBackfillPages(ctx, store.BackfillRows, store.BackfillPause)
+			}, func(ctx context.Context) error {
 				return Every(ctx, "rollups", cfg.Rollups.Every, func(ctx context.Context) error {
 					n, err := a.Store.RecomputeDirtyDays(ctx, 50, 30*time.Second)
 					ametrics.RollupDays.WithLabelValues().Add(float64(n))

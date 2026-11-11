@@ -67,6 +67,7 @@ func FromContractPost(m *contentv1.Post) *core.Item {
 		Hashtags:   m.GetHashtags(),
 		Version:    env.GetVersion(),
 		Status:     status(m.GetStatus()),
+		Backfill:   backfill(env),
 	}
 	if a := m.GetAuthor().GetId(); a != "" {
 		it.AuthorID = a
@@ -92,6 +93,12 @@ func FromContractPost(m *contentv1.Post) *core.Item {
 	return finish(it)
 }
 
+// backfill reports whether the collector sent the record from a backfill
+// rather than as live work.
+func backfill(env *contentv1.Envelope) bool {
+	return env.GetProvenance().GetMode() == contentv1.CrawlMode_CRAWL_MODE_BACKFILL
+}
+
 // FromContractComment maps a comment or a reply (depth 1 or more).
 func FromContractComment(m *contentv1.Comment) *core.Item {
 	env := m.GetEnvelope()
@@ -107,6 +114,7 @@ func FromContractComment(m *contentv1.Comment) *core.Item {
 		Version:    env.GetVersion(),
 		Depth:      int(m.GetDepth()),
 		Status:     status(m.GetStatus()),
+		Backfill:   backfill(env),
 	}
 	if m.GetDepth() > 0 {
 		it.Kind = core.KindReply

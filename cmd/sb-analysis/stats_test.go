@@ -168,6 +168,9 @@ func TestStatsRequestsAndUrgentSetup(t *testing.T) {
 		t.Fatalf("measures %v %v, want none (3 answered)", r.Measures, err)
 	}
 	r.Measures["post"], r.DefaultOutPerItem = store.RouteMeasure{Requests: 240, OutPerItem: 312, CacheHit: 0.974}, 150
+	if r.Backfills, err = s.Backfills(ctx); err != nil || len(r.Backfills) != 0 {
+		t.Fatalf("backfills %v %v, want none", r.Backfills, err)
+	}
 	r.DailyCap, r.RouteCaps = 60, map[string]float64{"comment": 30}
 	var out bytes.Buffer
 	if err := printStats(&out, r, 24*time.Hour); err != nil {
@@ -184,6 +187,7 @@ func TestStatsRequestsAndUrgentSetup(t *testing.T) {
 		"spend today (Iraq day, as the budget counts it): $0.25 of $60.00; worst case $1.50 (every request in flight missing the cache)",
 		"  comment: $0.25 of $30.00 (answered $0.00; 1 requests in flight expected at $0.25, $1.50 at worst); worst case $1.50; new requests priced with output at 150 tokens an item and the prompt as a cache miss (the defaults: under 100 answered in the last day)",
 		"  post: $0.00 (answered $0.00; 0 requests in flight expected at $0.00, $0.00 at worst); worst case $0.00; new requests priced with output at 312 tokens an item and the prompt 97% read from the cache (measured over the last day's 240 answered)",
+		"page backfill (short posts queued before 00011 given their page, for the page top-up): not started yet",
 		"queue now, comment route, by tries counted: 2 none, 2 one, 0 two, 1 three or more; 1 last failed on their own answer (sent alone)",
 		"  came back because: batch request errored: Overloaded (#) 1, invalid: not JSON 1, no result in batch 1",
 		"comments, tiktok (by Iraq day, since the window's first): 1000 received, 98 in the 10% sample (9.8%), 2 kept outside it for the real-time lane; the rest counted, not stored; scale the analysed comments by 10 for all",
@@ -194,6 +198,22 @@ func TestStatsRequestsAndUrgentSetup(t *testing.T) {
 	}
 	if strings.Contains(text, "re-sent, post route") {
 		t.Errorf("post route shown as re-sent:\n%s", text)
+	}
+	for _, c := range []struct {
+		b    store.Backfill
+		want string
+	}{
+		{store.Backfill{Name: store.BackfillPages, Scanned: 30000, Updated: 1200, LastAt: time.Now()}, "running: 30000 queue entries read, 1200 given their page"},
+		{store.Backfill{Name: store.BackfillPages, Scanned: 881234, Updated: 41000, LastAt: time.Now(), FinishedAt: time.Now()}, "done: 881234 queue entries read, 41000 given their page"},
+	} {
+		r.Backfills = []store.Backfill{c.b}
+		out.Reset()
+		if err := printStats(&out, r, 24*time.Hour); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), "for the page top-up): "+c.want+"\n") {
+			t.Errorf("output lacks %q:\n%s", c.want, out.String())
+		}
 	}
 	r.Watchlists = false
 	out.Reset()

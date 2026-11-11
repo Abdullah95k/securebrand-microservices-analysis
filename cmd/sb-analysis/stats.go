@@ -51,6 +51,9 @@ func statsCmd(args []string) error {
 			return err
 		}
 		r.DefaultOutPerItem = pipeline.DefaultOutPerItem
+		if r.Backfills, err = a.Store.Backfills(ctx); err != nil {
+			return err
+		}
 		r.DailyCap, r.RouteCaps = a.Cfg.Analysis.Budget.DailyUSD, map[string]float64{}
 		for name, rc := range a.Cfg.Analysis.Routes {
 			if rc.DailyUSD > 0 {
@@ -190,6 +193,21 @@ func printRequests(b *strings.Builder, r store.PlatformReport) {
 				s.Route, s.Counted, routeCap, s.Done, s.Requests, s.InFlight, s.InFlightMax, s.Worst, priced)
 		}
 	}
+	pages := "not started yet"
+	for _, f := range r.Backfills {
+		if f.Name != store.BackfillPages {
+			continue
+		}
+		state := "running"
+		switch {
+		case !f.FinishedAt.IsZero():
+			state = "done"
+		case f.LastAt.IsZero():
+			state = "started, no pass yet"
+		}
+		pages = fmt.Sprintf("%s: %d queue entries read, %d given their page", state, f.Scanned, f.Updated)
+	}
+	fmt.Fprintf(b, "page backfill (short posts queued before 00011 given their page, for the page top-up): %s\n", pages)
 	for _, q := range r.Tries {
 		fmt.Fprintf(b, "queue now, %s route, by tries counted: %d none, %d one, %d two, %d three or more; %d last failed on their own answer (sent alone)\n",
 			q.Route, q.None, q.One, q.Two, q.ThreeOrMore, q.ItemFaults)
