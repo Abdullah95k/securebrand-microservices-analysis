@@ -191,6 +191,17 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 				adopt = append(adopt, it)
 				continue
 			case seen && bytes.Equal(ex.textHash, hash):
+				if it.FromContract() && ex.version == 0 {
+					// An item first read from fbs's own topics, not analysed
+					// yet, now through the contract unchanged: it takes the
+					// contract's version and fields, so its result is
+					// published on analysis.result.v1 when it is analysed
+					// (one analysed already is adopted above).
+					b.Queue(`UPDATE analysis.content_items SET content_version = GREATEST(content_version, $3), depth = $4,
+						author_id = coalesce($5, author_id), last_seen_at = $6
+						WHERE created_at = $1 AND content_id = $2`,
+						ex.createdAt, it.ContentID, it.Version, it.Depth, nilIfEmpty(it.AuthorID), now)
+				}
 				if it.Captions != "" {
 					// Same text, captions added or changed: kept for the
 					// video's transcript.

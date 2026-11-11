@@ -340,8 +340,13 @@ fbs moves from its own `fb.*` topics to the contract's `content.*` (REQ-018, fro
   - The adopted item keeps its `fb.*` source and author keys in Postgres. The published record carries the contract's account and author IDs.
 - **Not adopted:**
   - later versions (edits), which are analysed as usual;
-  - items `fb.*` never got analysed (queued, skipped or failed), which are analysed and paid once;
+  - items `fb.*` never got analysed (queued, skipped or failed), which are analysed and paid once. One still waiting whose contract copy is unchanged takes the contract's version (since 11 Nov), so its one analysis is published on `analysis.result.v1`;
   - an item marked analysed with no stored analysis, which is analysed as an edit.
+- **Read one path, not both** (since 11 Nov): once fbs publishes its posts and comments on `content.*` (`contract.enabled`), set `analysis.inputs` from `[content, fb]` to `[content, fb-media]` in the same change.
+  - `fb-media` reads only fbs's `fb.media.ready.v1` (acknowledged on `fb.media.processed.v1`) and `fb.erasure.v1`, not `fb.post.v1` or `fb.comment.v1`.
+  - **Why:** an item read on both paths with a different hash (link titles, media names) is an edit each time either path re-scrapes it, and so is analysed again and again.
+  - What's left unread on `fb.post.v1` and `fb.comment.v1` arrives through fbs's backfill on `content.*` with the same IDs. The comment sample is by ID, so the same 10% is kept.
+  - If fbs also announces media on `content.media.ready.v1`, one path must go: then `fb-media` would read each file twice.
 - **Media:** a re-announced file whose SHA-256 was analysed before is reused at no cost, so fbs should send `sha256` on `content.media.ready.v1`.
 - **The backfill:** adopted and unchanged items aren't queued, so the 200k ingest pause doesn't hold them. Each costs a few database writes: a pace of up to about 200 items a second is fine.
 

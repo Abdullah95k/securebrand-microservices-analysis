@@ -15,9 +15,11 @@ import (
 // service (docs/design/analysis-service.md).
 type Analysis struct {
 	// Inputs: "fb" (the Facebook adapter over fb.post.v1, fb.comment.v1,
-	// fb.media.ready.v1 and fb.erasure.v1) and/or "content" (the platform's
-	// contract: content.post.v1, content.comment.v1, content.media.ready.v1
-	// and content.media.deleted.v1).
+	// fb.media.ready.v1 and fb.erasure.v1) or "fb-media" (only its
+	// fb.media.ready.v1 and fb.erasure.v1, for when fbs publishes its posts
+	// and comments through the contract, REQ-018), and/or "content" (the
+	// platform's contract: content.post.v1, content.comment.v1,
+	// content.media.ready.v1 and content.media.deleted.v1).
 	Inputs        []string `koanf:"inputs"`
 	ConsumerGroup string   `koanf:"consumer_group"`
 	// Postgres: "" uses postgres.dsn (the analysis tables live in schema
@@ -382,10 +384,15 @@ func (a *Analysis) Validate() error {
 	default:
 		errs = append(errs, fmt.Errorf("analysis.erasure.mode %q must be apply, record or off", a.Erasure.Mode))
 	}
+	seenInput := map[string]bool{}
 	for _, in := range a.Inputs {
-		if in != "fb" && in != "content" {
-			errs = append(errs, fmt.Errorf("analysis.inputs: %q must be fb or content", in))
+		if in != "fb" && in != "content" && in != "fb-media" {
+			errs = append(errs, fmt.Errorf("analysis.inputs: %q must be fb, fb-media or content", in))
 		}
+		seenInput[in] = true
+	}
+	if seenInput["fb"] && seenInput["fb-media"] {
+		errs = append(errs, errors.New("analysis.inputs: fb already reads fbs's media and erasures; use fb or fb-media, not both"))
 	}
 	for _, k := range a.Media.ContractKinds {
 		if !ValidContractKind(k) {

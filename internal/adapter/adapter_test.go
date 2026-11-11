@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/topics"
 	fbv1 "github.com/abdullah95k/securebrand-microservices/gen/go/securebrand/fb/v1"
 )
 
@@ -125,4 +126,36 @@ func TestFBTagSpans(t *testing.T) {
 func mustMarshal(m proto.Message) []byte {
 	b, _ := proto.Marshal(m)
 	return b
+}
+
+// TestDecoderFBMedia: with "fb-media" only fbs's media announcements and
+// erasures are read from its own topics; its posts and comments come
+// through the contract (REQ-018), so each is read once.
+func TestDecoderFBMedia(t *testing.T) {
+	d := NewDecoder([]string{"content", "fb-media"})
+	has := func(ts []string, want string) bool {
+		for _, x := range ts {
+			if x == want {
+				return true
+			}
+		}
+		return false
+	}
+	items, media := d.ItemTopics(), d.MediaTopics()
+	for _, want := range []string{topics.Erasure, topics.ContentPost, topics.ContentComment} {
+		if !has(items, want) {
+			t.Errorf("item topics %v lack %s", items, want)
+		}
+	}
+	for _, not := range []string{topics.Post, topics.Comment} {
+		if has(items, not) || has(d.CommentTopics(), not) || has(d.PostTopics(), not) {
+			t.Errorf("%s read with fb-media", not)
+		}
+	}
+	if !has(media, topics.MediaReady) || !has(media, topics.ContentMediaReady) {
+		t.Errorf("media topics %v", media)
+	}
+	if full := NewDecoder([]string{"fb"}); !has(full.ItemTopics(), topics.Post) || !has(full.MediaTopics(), topics.MediaReady) {
+		t.Error("fb no longer reads everything")
+	}
 }
