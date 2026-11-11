@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 7 November 2026 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 11 November 2026 (Iraq time).*
 
 ## Where it stands
 
@@ -216,4 +216,5 @@
   - **Facebook:** 349 analysed, 33,195 waiting; 6,035 files analysed.
   - **The budget:** $12.84 spent against $10, so paused. Text needs about $30 a day at the measured $0.13 per 1,000, plus a backlog; tt images about $13 a day at $0.22 per 1,000. Whisper takes about 1,000–2,000 tt videos a day without captions.
   - **For the owner:** A (about $60 a day for 3 days, then about $45), B ($10 with caps that keep room for images), or C (narrower media scope). Put by the master.
-  - **In review:** media jobs check the budget before fetching their file, so a paused budget costs no downloads.
+  - **Merged and live:** media jobs check the budget before fetching their file, so a paused budget costs no downloads (pull request #33, `3367e51`; live 10:31 Iraq time, analysis and analysis-media, 0 restarts).
+  - **Still with the owner:** the budget (A, B or C), yt thumbnails (about $7 a day), and Whisper's capacity (a second replica, a 120 s limit, or frames only while it is behind).
