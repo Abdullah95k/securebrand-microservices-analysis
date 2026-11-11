@@ -46,8 +46,10 @@ func TestProductionConfig(t *testing.T) {
 		t.Fatalf("production config refused: %v", err)
 	}
 	a := c.Analysis
-	if !slices.Equal(a.Inputs, []string{"content", "fb"}) {
-		t.Errorf("inputs %v, want [content fb]", a.Inputs)
+	// fbs's posts and comments come through the contract since 11 Nov
+	// (the master, #110): of fbs's own topics only media and erasures.
+	if !slices.Equal(a.Inputs, []string{"content", "fb-media"}) {
+		t.Errorf("inputs %v, want [content fb-media]", a.Inputs)
 	}
 	if a.Budget.DailyUSD != 60 || a.Budget.AllowUnlimited || a.Budget.UrgentExempt {
 		t.Errorf("budget %+v, want $60 a day (D-052), a hard stop for urgent items too", a.Budget)

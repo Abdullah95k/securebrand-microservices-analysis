@@ -221,7 +221,7 @@ Also checked:
 ## Switching on (the owner, 7 November 2026)
 
 The owner's answers:
-- **Inputs:** every collector. The contract's topics, which fbs, tks, yts and igs publish as each adopts the contract, and fbs's own `fb.*` until fbs does: `analysis.inputs: [content, fb]`.
+- **Inputs:** every collector. The contract's topics, which fbs, tks, yts and igs publish as each adopts the contract, and fbs's own `fb.*` until fbs does: `analysis.inputs: [content, fb]`. **Since 11 Nov, 21:45 Iraq time** fbs publishes its posts and comments on `content.*`, and the inputs are `[content, fb-media]`: of fbs's own topics only the media hand-off and erasures.
 - **Contract:** v1.2.0.
 - **Budget:** no daily cap; Claude Haiku for everything.
 

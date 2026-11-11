@@ -351,6 +351,8 @@ fbs moves from its own `fb.*` topics to the contract's `content.*` (REQ-018, fro
   - items `fb.*` never got analysed (queued, skipped or failed), which are analysed and paid once. One still waiting whose contract copy is unchanged takes the contract's version (since 11 Nov), so its one analysis is published on `analysis.result.v1`;
   - an item marked analysed with no stored analysis, which is analysed as an edit.
 - **Read one path, not both** (since 11 Nov): once fbs publishes its posts and comments on `content.*` (`contract.enabled`), set `analysis.inputs` from `[content, fb]` to `[content, fb-media]` in the same change.
+  - **Done in production** on 11 Nov at 21:45 Iraq time (the master, #110, with fbs `3af55b0`); `values-production.yaml` reads `[content, fb-media]` since. `TestProductionConfig` fails if it drifts back.
+  - **To check it:** the `sb-analysis starting` log line lists the inputs; in the consumer group `sb-analysis`, `fb.post.v1` and `fb.comment.v1` have no consumer (their lag only grows), while `fb.media.ready.v1`, `fb.erasure.v1` and `content.*` keep theirs.
   - `fb-media` reads only fbs's `fb.media.ready.v1` (acknowledged on `fb.media.processed.v1`) and `fb.erasure.v1`, not `fb.post.v1` or `fb.comment.v1`.
   - **Why:** an item read on both paths with a different hash (link titles, media names) is an edit each time either path re-scrapes it, and so is analysed again and again.
   - What's left unread on `fb.post.v1` and `fb.comment.v1` arrives through fbs's backfill on `content.*` with the same IDs. The comment sample is by ID, so the same 10% is kept.
