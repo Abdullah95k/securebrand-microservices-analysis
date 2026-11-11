@@ -6,14 +6,36 @@ never leaves the cluster. Off by default (whisper.enabled).
 */ -}}
 {{- if .Values.whisper.enabled }}
 {{- $w := .Values.whisper }}
-{{- $name := printf "%s-whisper" (include "sba.fullname" .) }}
+{{- $base := printf "%s-whisper" (include "sba.fullname" .) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $base }}-model
+  labels:
+    {{- include "sba.labels" . | nindent 4 }}
+    app.kubernetes.io/component: whisper
+data:
+  whisper-model.py: |
+    {{- .Files.Get "files/whisper-model.py" | nindent 4 }}
+{{- /*
+One server per replica (whisper.replicas), each with its own Deployment,
+volume and Service: the model's volume is ReadWriteOnce, and the analysis
+sends each server one video at a time (analysis.providers.whisper.
+base_urls), which a shared Service can't do (it balances connections, not
+requests). The first keeps the names it had with one replica, so adding
+replicas leaves it running as it is.
+*/}}
+{{- range $i := until (int $w.replicas) }}
+{{- $name := ternary $base (printf "%s-%d" $base $i) (eq $i 0) }}
+{{- $component := ternary "whisper" (printf "whisper-%d" $i) (eq $i 0) }}
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: {{ $name }}
   labels:
-    {{- include "sba.labels" . | nindent 4 }}
-    app.kubernetes.io/component: whisper
+    {{- include "sba.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
 spec:
   accessModes: ["ReadWriteOnce"]
   {{- with $w.storage.storageClassName }}
@@ -23,24 +45,13 @@ spec:
     requests:
       storage: {{ $w.storage.size }}
 ---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ $name }}-model
-  labels:
-    {{- include "sba.labels" . | nindent 4 }}
-    app.kubernetes.io/component: whisper
-data:
-  whisper-model.py: |
-    {{- .Files.Get "files/whisper-model.py" | nindent 4 }}
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ $name }}
   labels:
-    {{- include "sba.labels" . | nindent 4 }}
-    app.kubernetes.io/component: whisper
+    {{- include "sba.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
 spec:
   replicas: 1
   # The model's volume is ReadWriteOnce: a new pod starts only after the
@@ -48,15 +59,15 @@ spec:
   strategy: {type: Recreate}
   revisionHistoryLimit: 5
   selector:
-    matchLabels: {{- include "sba.selector" (dict "root" . "name" "whisper") | nindent 6 }}
+    matchLabels: {{- include "sba.selector" (dict "root" $ "name" $component) | nindent 6 }}
   template:
     metadata:
-      labels: {{- include "sba.selector" (dict "root" . "name" "whisper") | nindent 8 }}
+      labels: {{- include "sba.selector" (dict "root" $ "name" $component) | nindent 8 }}
       annotations:
         checksum/model: {{ printf "%s@%s" $w.model.id $w.model.revision | sha256sum }}
     spec:
       automountServiceAccountToken: false
-      {{- with .Values.imagePullSecrets }}
+      {{- with $.Values.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
       # The image's own user (ubuntu, 1000); the volume is made writable
@@ -135,7 +146,7 @@ spec:
         - name: data
           persistentVolumeClaim: {claimName: {{ $name }}}
         - name: scripts
-          configMap: {name: {{ $name }}-model}
+          configMap: {name: {{ $base }}-model}
         - name: tmp
           emptyDir: {sizeLimit: 2Gi}
 ---
@@ -145,11 +156,12 @@ kind: Service
 metadata:
   name: {{ $name }}
   labels:
-    {{- include "sba.labels" . | nindent 4 }}
-    app.kubernetes.io/component: whisper
+    {{- include "sba.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
 spec:
   type: ClusterIP
-  selector: {{- include "sba.selector" (dict "root" . "name" "whisper") | nindent 4 }}
+  selector: {{- include "sba.selector" (dict "root" $ "name" $component) | nindent 4 }}
   ports:
     - {name: http, port: 8000, targetPort: http}
+{{- end }}
 {{- end }}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/provider"
 )
@@ -126,5 +127,111 @@ func TestTranscribe(t *testing.T) {
 	}
 	if _, err := New(Config{BaseURL: srv.URL}).Transcribe(context.Background(), nil, "a", ""); err == nil {
 		t.Fatal("transcription without a model accepted")
+	}
+}
+
+// TestTranscribePoolOneVideoPerServer: with a pool of servers (whisper
+// replicas), each transcribes one video at a time; a third video waits for
+// a free server, and a caller that gives up while waiting leaves at once.
+func TestTranscribePoolOneVideoPerServer(t *testing.T) {
+	release := make(chan struct{})
+	var busy [2]atomic.Int32
+	var most [2]atomic.Int32
+	var calls atomic.Int32
+	server := func(i int) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			n := busy[i].Add(1)
+			defer busy[i].Add(-1)
+			for {
+				m := most[i].Load()
+				if n <= m || most[i].CompareAndSwap(m, n) {
+					break
+				}
+			}
+			<-release
+			_, _ = io.WriteString(w, `{"text":"ok"}`)
+		}))
+	}
+	a, b := server(0), server(1)
+	defer a.Close()
+	defer b.Close()
+	p := New(Config{BaseURLs: []string{a.URL + "/", b.URL}, TranscribeModel: "whisper-1"})
+
+	done := make(chan error, 3)
+	for range 3 {
+		go func() {
+			_, err := p.Transcribe(context.Background(), []byte("AUDIO"), "a.mp3", "ar")
+			done <- err
+		}()
+	}
+	// Two reach a server each; the third waits for one of them.
+	deadline := time.Now().Add(2 * time.Second)
+	for calls.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := calls.Load(); got != 2 || busy[0].Load() != 1 || busy[1].Load() != 1 {
+		t.Fatalf("%d calls, busy %d and %d: want one video on each server, the third waiting", got, busy[0].Load(), busy[1].Load())
+	}
+	// A caller that gives up while every server is busy doesn't wait.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := p.Transcribe(ctx, []byte("AUDIO"), "a.mp3", "ar"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waiting caller's error %v, want its deadline", err)
+	}
+	close(release)
+	for range 3 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if most[0].Load() != 1 || most[1].Load() != 1 || calls.Load() != 3 {
+		t.Fatalf("at most %d and %d at once, %d calls: want 1 per server, 3 calls", most[0].Load(), most[1].Load(), calls.Load())
+	}
+}
+
+// TestTranscribePoolPassesOverADeadServer: a server that refuses
+// connections is passed over for the next one, so a dead replica doesn't
+// fail the videos sent its way; with every server dead, the error returns.
+func TestTranscribePoolPassesOverADeadServer(t *testing.T) {
+	alive := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"text":"ok"}`)
+	}))
+	defer alive.Close()
+	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close() // refuses connections from now on
+	p := New(Config{BaseURLs: []string{deadURL, alive.URL}, TranscribeModel: "whisper-1"})
+	for range 4 {
+		if got, err := p.Transcribe(context.Background(), []byte("AUDIO"), "a.mp3", "ar"); err != nil || got != "ok" {
+			t.Fatalf("with one server dead: %q %v", got, err)
+		}
+	}
+	if len(p.servers) != 2 {
+		t.Fatalf("%d servers back in the pool, want both", len(p.servers))
+	}
+	// Every server dead: the error returns at once, and two callers at
+	// once don't hold each other's server.
+	all := New(Config{BaseURLs: []string{deadURL, deadURL}, TranscribeModel: "whisper-1"})
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := all.Transcribe(context.Background(), []byte("AUDIO"), "a.mp3", "ar")
+			errs <- err
+		}()
+	}
+	for range 2 {
+		select {
+		case err := <-errs:
+			if err == nil || !unreachable(err) {
+				t.Fatalf("every server dead: %v, want the connection error", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("callers stuck with every server dead")
+		}
+	}
+	if len(all.servers) != 2 {
+		t.Fatalf("%d servers back in the pool, want both", len(all.servers))
 	}
 }

@@ -75,8 +75,9 @@ func TestProductionConfig(t *testing.T) {
 		t.Errorf("curation runs %s, want %s", a.Topics.Curation.Model, haiku)
 	}
 	// Speech in videos (the owner, 7 November 2026): the whisper server in
-	// the cluster, one video at a time, the first 10 minutes at most, with
-	// a timeout and a lease that fit a slow CPU transcription.
+	// the cluster, one video at a time per server (the chart raises
+	// stt_concurrency to whisper.replicas), the first 10 minutes at most,
+	// with a timeout and a lease that fit a slow CPU transcription.
 	v := a.Media.Video
 	if v.STTProvider != "whisper" || v.STTConcurrency != 1 || v.MaxSeconds > 600 {
 		t.Errorf("speech-to-text %q, %d at once, %ds: want whisper, 1, at most 600s", v.STTProvider, v.STTConcurrency, v.MaxSeconds)

@@ -18,7 +18,7 @@ spec:
     metadata:
       labels: {{- include "sba.selector" (dict "root" $root "name" $name) | nindent 8 }}
       annotations:
-        checksum/config: {{ toYaml (list $root.Values.config $root.Values.whisper.enabled $root.Values.whisper.model) | sha256sum }}
+        checksum/config: {{ toYaml (list $root.Values.config $root.Values.whisper.enabled $root.Values.whisper.model $root.Values.whisper.replicas) | sha256sum }}
         prometheus.io/scrape: "true"
         prometheus.io/port: "9090"
     spec:

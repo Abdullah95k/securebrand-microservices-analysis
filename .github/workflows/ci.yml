@@ -133,6 +133,14 @@ jobs:
           # (internal/config).
           helm template sba $c -f $c/values-production.yaml > /tmp/production.yaml
           test "$(grep -cE '^  replicas: [1-9]' /tmp/production.yaml)" = 3
+          # A second whisper server (whisper.replicas): its own Deployment,
+          # volume and Service, and the analysis sends each one video at a
+          # time (base_urls, stt_concurrency).
+          helm template sba $c -f $c/values-production.yaml --set whisper.replicas=2 > /tmp/whisper2.yaml
+          ~/go/bin/kubeconform -strict -summary -ignore-missing-schemas /tmp/whisper2.yaml
+          test "$(grep -cE '^  replicas: [1-9]' /tmp/whisper2.yaml)" = 4
+          grep -q "claimName: sba-whisper-1" /tmp/whisper2.yaml
+          grep -q -- "- http://sba-whisper-1:8000/v1" /tmp/whisper2.yaml && grep -q "stt_concurrency: 2" /tmp/whisper2.yaml
           # The whisper server: image by digest, Recreate (one volume), and
           # the analysis pointed at its Service.
           grep -q 'image: "ghcr.io/speaches-ai/speaches@sha256:' /tmp/production.yaml

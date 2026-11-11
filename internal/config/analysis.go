@@ -188,6 +188,10 @@ type Provider struct {
 	// Kind: anthropic | openai_compat | fake.
 	Kind    string `koanf:"kind"`
 	BaseURL string `koanf:"base_url"`
+	// BaseURLs (openai_compat): a pool of identical speech-to-text servers
+	// (the chart's whisper replicas); each takes one transcription at a
+	// time. Set analysis.media.video.stt_concurrency to their number.
+	BaseURLs []string `koanf:"base_urls"`
 	// APIKey: set through SB_ANALYSIS_ANALYSIS__PROVIDERS__<NAME>__API_KEY or a
 	// secret config file, never in a committed file.
 	APIKey     string        `koanf:"api_key"`
@@ -407,7 +411,7 @@ func (a *Analysis) Validate() error {
 		default:
 			errs = append(errs, fmt.Errorf("analysis.providers.%s.kind %q must be anthropic, openai_compat or fake", name, p.Kind))
 		}
-		if p.Kind == "openai_compat" && p.BaseURL == "" {
+		if p.Kind == "openai_compat" && p.BaseURL == "" && len(p.BaseURLs) == 0 {
 			errs = append(errs, fmt.Errorf("analysis.providers.%s.base_url is required for openai_compat", name))
 		}
 	}
@@ -430,8 +434,15 @@ func (a *Analysis) Validate() error {
 		errs = append(errs, errors.New("analysis.media.max_bytes, image_max_bytes, image_max_pixels and worker_memory_mib must be > 0"))
 	}
 	if a.Media.Video.Enabled && a.Media.Video.STTProvider != "" {
-		if _, ok := a.Providers[a.Media.Video.STTProvider]; !ok {
+		p, ok := a.Providers[a.Media.Video.STTProvider]
+		if !ok {
 			errs = append(errs, fmt.Errorf("analysis.media.video.stt_provider %q is not in analysis.providers", a.Media.Video.STTProvider))
+		}
+		// A pool of servers takes one video each: fewer transcriptions at
+		// once than servers would leave some idle.
+		if n := len(p.BaseURLs); ok && n > 0 && a.Media.Video.STTConcurrency < n {
+			errs = append(errs, fmt.Errorf("analysis.media.video.stt_concurrency %d is below the %d servers of analysis.providers.%s.base_urls",
+				a.Media.Video.STTConcurrency, n, a.Media.Video.STTProvider))
 		}
 	}
 	if _, err := time.LoadLocation(a.Timezone); err != nil {

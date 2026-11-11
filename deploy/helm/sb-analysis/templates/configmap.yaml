@@ -1,11 +1,29 @@
-{{- /* The config, with the whisper server's address when it runs. */ -}}
+{{- /* The config, with the whisper servers' addresses when they run. */ -}}
 {{- $cfg := deepCopy .Values.config -}}
 {{- if .Values.whisper.enabled -}}
 {{- $analysis := default (dict) $cfg.analysis -}}
 {{- $providers := default (dict) $analysis.providers -}}
 {{- $whisper := default (dict) $providers.whisper -}}
-{{- $_ := set $whisper "base_url" (printf "http://%s-whisper:8000/v1" (include "sba.fullname" .)) -}}
+{{- $base := printf "%s-whisper" (include "sba.fullname" .) -}}
+{{- $_ := set $whisper "base_url" (printf "http://%s:8000/v1" $base) -}}
 {{- $_ := set $whisper "transcribe_model" .Values.whisper.model.id -}}
+{{- $n := int .Values.whisper.replicas -}}
+{{- if gt $n 1 -}}
+{{- /* More than one: each gets one video at a time (base_urls), and the
+media worker transcribes as many at once as there are servers. */ -}}
+{{- $urls := list -}}
+{{- range $i := until $n -}}
+{{- $urls = append $urls (printf "http://%s:8000/v1" (ternary $base (printf "%s-%d" $base $i) (eq $i 0))) -}}
+{{- end -}}
+{{- $_ := set $whisper "base_urls" $urls -}}
+{{- $media := default (dict) $analysis.media -}}
+{{- $video := default (dict) $media.video -}}
+{{- if lt (int (default 1 $video.stt_concurrency)) $n -}}
+{{- $_ := set $video "stt_concurrency" $n -}}
+{{- end -}}
+{{- $_ := set $media "video" $video -}}
+{{- $_ := set $analysis "media" $media -}}
+{{- end -}}
 {{- $_ := set $providers "whisper" $whisper -}}
 {{- $_ := set $analysis "providers" $providers -}}
 {{- $_ := set $cfg "analysis" $analysis -}}
