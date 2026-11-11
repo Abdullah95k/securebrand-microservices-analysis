@@ -231,4 +231,4 @@
   - **The estimate fix** (the master agreed, 13:51 Iraq time; in review): a batch request's system prompt and schema are priced as plain input. For a 1-comment request that's $0.00041 instead of $0.00005, a little above what is paid, so the cap is reached from below.
 - **11 Nov: a second Whisper server** (the owner's video choice, D-052). The platform asked what it takes.
   - It needed a chart and code change: one volume per server (ReadWriteOnce), and one video per server at a time (a Service balances connections).
-  - **In review:** `whisper.replicas`; the first server stays as it is; the analysis sends each server one video at a time. The platform sets `whisper.replicas: 2` once the cluster has the CPU (2 CPU and 4Gi per server).
+  - **Merged:** `whisper.replicas`; the first server stays as it is; the analysis sends each server one video at a time (pull request #37, `b18f5e8`). The master pins it with `whisper.replicas: 2`; the autoscaler adds a 7th node for the CPU (2 CPU and 4Gi per server).
