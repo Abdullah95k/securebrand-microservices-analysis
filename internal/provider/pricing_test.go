@@ -23,10 +23,17 @@ func TestCost(t *testing.T) {
 	if p.Cost("unknown", u, false) != 0 || p.Known("unknown") || !p.Known("claude-haiku-5-5") || !p.Known("fake") {
 		t.Fatal("unknown model")
 	}
-	// A comment's estimate on Haiku batch is a few micro-dollars.
+	// A one-comment batch request on Haiku: its system prompt and schema
+	// priced as plain input, near what production paid on 11 Nov (about
+	// $0.13 per 1,000 items at 1-2 items a request: $0.00013-0.00026).
+	// Assumed cached, it was about 6 times lower.
 	est := p.Estimate("claude-haiku-5-5", 9000, 600, 0, 80, true)
-	if est <= 0 || est > 0.0001 {
-		t.Fatalf("estimate %v", est)
+	if est < 0.00013 || est > 0.00026 {
+		t.Fatalf("batch estimate $%v, want $0.00013-0.00026", est)
+	}
+	// In real time the system prompt is cached after the first request.
+	if rt := p.Estimate("claude-haiku-5-5", 9000, 600, 0, 80, false); rt >= est {
+		t.Fatalf("real-time estimate $%v, want below the batch's $%v (the system prompt cached)", rt, est)
 	}
 	if Pricing(map[string]config.ModelPrice{}).Estimate("x", 1, 1, 1, 1, false) != 0 {
 		t.Fatal("estimate without prices")
