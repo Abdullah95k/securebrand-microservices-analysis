@@ -40,6 +40,9 @@ func statsCmd(args []string) error {
 		if r.Sample, err = a.Store.CommentSampleCounts(ctx, from); err != nil {
 			return err
 		}
+		if r.Tries, err = a.Store.QueueTriesNow(ctx); err != nil {
+			return err
+		}
 		u := a.Cfg.Analysis.Urgent
 		r.HotAccounts, r.Watchlists = len(u.HotAccounts)+len(u.Sources), u.Watchlists
 		return printStats(os.Stdout, r, *since)
@@ -146,6 +149,13 @@ func printRequests(b *strings.Builder, r store.PlatformReport) {
 	}
 	fmt.Fprintf(b, "real-time lane rules: %d hot accounts in the config; %s; %d entities tracked\n",
 		r.HotAccounts, watch, r.Urgent.TrackedEntities)
+	for _, q := range r.Tries {
+		fmt.Fprintf(b, "queue now, %s route, by tries counted: %d none, %d one, %d two, %d three or more; %d last failed on their own answer (sent alone)\n",
+			q.Route, q.None, q.One, q.Two, q.ThreeOrMore, q.ItemFaults)
+		if len(q.Reasons) > 0 {
+			fmt.Fprintf(b, "  came back because: %s\n", countsByCount(top(q.Reasons, 8)))
+		}
+	}
 	for _, c := range r.Sample {
 		pct := 0.0
 		if c.Received > 0 {
@@ -158,6 +168,28 @@ func printRequests(b *strings.Builder, r store.PlatformReport) {
 		fmt.Fprintf(b, "comments, %s (by Iraq day, since the window's first): %d received, %d in the %.4g%% sample (%.1f%%), %d kept outside it for the real-time lane; the rest counted, not stored%s\n",
 			c.Platform, c.Received, c.Sampled, 100*c.Share, pct, c.Urgent, scale)
 	}
+}
+
+// top keeps the n largest counts (ties by name).
+func top(m map[string]int64, n int) map[string]int64 {
+	if len(m) <= n {
+		return m
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if m[keys[i]] != m[keys[j]] {
+			return m[keys[i]] > m[keys[j]]
+		}
+		return keys[i] < keys[j]
+	})
+	out := make(map[string]int64, n)
+	for _, k := range keys[:n] {
+		out[k] = m[k]
+	}
+	return out
 }
 
 // countsByCount formats counts largest first (then by name): "a 9, b 2".

@@ -66,16 +66,17 @@ func TestGroupsCollapseDuplicates(t *testing.T) {
 	claim := func(it core.Item, attempts, prio int) store.Claimed {
 		return store.Claimed{Item: it, Attempts: attempts, Priority: prio}
 	}
+	retry := func(c store.Claimed) store.Claimed { c.LastError = "invalid: the answer is not JSON"; return c }
 	cs := []store.Claimed{
 		claim(item("c1", "p1", "p1", core.KindComment, "تم"), 0, core.PriorityNormal),
 		claim(item("c2", "p1", "p1", core.KindComment, "حلو"), 0, core.PriorityNormal),
-		claim(item("c3", "p1", "p1", core.KindComment, "تم"), 0, core.PriorityNormal),   // joins the closed first group
-		claim(item("c4", "p1", "p1", core.KindComment, "سيء"), 0, core.PriorityNormal),  // second group
-		claim(item("c5", "p1", "p1", core.KindComment, "حلو"), 0, core.PriorityUrgent),  // joins the first, makes it urgent
-		claim(item("c6", "p1", "p1", core.KindComment, "سيء"), 0, core.PriorityNormal),  // joins the open second group
-		claim(item("c7", "p1", "p1", core.KindComment, "عادي"), 0, core.PriorityNormal), // second group: its second leader
-		claim(item("c8", "p1", "p1", core.KindComment, "تم"), 2, core.PriorityNormal),   // a retry: alone
-		claim(item("c9", "p2", "p2", core.KindComment, "تم"), 0, core.PriorityNormal),   // another thread
+		claim(item("c3", "p1", "p1", core.KindComment, "تم"), 0, core.PriorityNormal),        // joins the closed first group
+		claim(item("c4", "p1", "p1", core.KindComment, "سيء"), 0, core.PriorityNormal),       // second group
+		claim(item("c5", "p1", "p1", core.KindComment, "حلو"), 0, core.PriorityUrgent),       // joins the first, makes it urgent
+		claim(item("c6", "p1", "p1", core.KindComment, "سيء"), 0, core.PriorityNormal),       // joins the open second group
+		claim(item("c7", "p1", "p1", core.KindComment, "عادي"), 0, core.PriorityNormal),      // second group: its second leader
+		retry(claim(item("c8", "p1", "p1", core.KindComment, "تم"), 2, core.PriorityNormal)), // its own answer failed: alone
+		claim(item("c9", "p2", "p2", core.KindComment, "تم"), 0, core.PriorityNormal),        // another thread
 	}
 	gs := p.Groups(core.RouteComment, cs)
 	got := map[string]string{}

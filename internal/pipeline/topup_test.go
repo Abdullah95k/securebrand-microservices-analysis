@@ -77,15 +77,13 @@ func TestTopUpFillsThreads(t *testing.T) {
 }
 
 // TestTopUpLimits: a thread is topped up to grouping.max_items at most, the
-// round by batch.top_up_items at most, and a comment being retried after a
-// failure isn't taken (it goes alone, when claimed in turn).
+// round by batch.top_up_items at most, and a comment retried after its own
+// answer failed isn't taken (it goes alone, when claimed in turn).
 func TestTopUpLimits(t *testing.T) {
 	e := setup(t, func(c *config.Analysis) { c.Batch.MaxItems, c.Batch.TopUpItems, c.Grouping.MaxItems = 2, 3, 4 })
 	threadComments(t, e, 0, 10) // the 2 oldest are thread 0's: 0-0 and, interleaved, ...
 	threadComments(t, e, 1, 10) // ... 1-0
-	if _, err := e.s.DB.Exec(context.Background(), `UPDATE analysis.analysis_queue SET attempts = 1 WHERE content_id = 'fb:comment:0-1'`); err != nil {
-		t.Fatal(err)
-	}
+	setRetried(t, e, "fb:comment:0-1", "truncated: the answer was cut off")
 	if err := e.p.SubmitBatches(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -134,5 +132,53 @@ func TestTopUpOff(t *testing.T) {
 	}
 	if n := e.count(t, `SELECT count(*) FROM pg_indexes WHERE schemaname = 'analysis' AND indexname = 'analysis_queue_thread_idx'`); n != 1 {
 		t.Fatal("migration 00008's thread index is missing")
+	}
+}
+
+// setRetried marks a queued comment as tried before, with its last error.
+func setRetried(t *testing.T, e *env, id, lastError string) {
+	t.Helper()
+	if _, err := e.s.DB.Exec(context.Background(), `UPDATE analysis.analysis_queue SET attempts = 1, last_error = $2 WHERE content_id = $1`,
+		id, lastError); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRetriedForOtherReasonsGroup: a comment back after its batch request
+// errored groups with its thread as usual; one whose own answer was
+// invalid goes alone. Until 11 Nov every retried comment went alone, and
+// the oldest backlog went out one comment a request.
+func TestRetriedForOtherReasonsGroup(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) { c.Batch.MaxItems, c.Batch.TopUpItems = 10, 0 })
+	threadComments(t, e, 0, 4)
+	setRetried(t, e, "fb:comment:0-0", "batch request errored: Overloaded (529)")
+	setRetried(t, e, "fb:comment:0-1", "never sent: the process stopped or failed before its batch was submitted")
+	setRetried(t, e, "fb:comment:0-2", "invalid: the answer is not JSON")
+	if err := e.p.SubmitBatches(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := requestSizes(t, e); fmt.Sprint(got) != "[3 1]" {
+		t.Fatalf("requests of %v items, want 3 (two back for other reasons and a fresh one) and 1 (the invalid answer)", got)
+	}
+}
+
+// TestTopUpTakesRetriesBackForOtherReasons: the top-up also takes a
+// thread's comments on later tries that came back for a reason not their
+// own, never one whose own answer failed.
+func TestTopUpTakesRetriesBackForOtherReasons(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) { c.Batch.MaxItems, c.Batch.TopUpItems = 1, 100 })
+	threadComments(t, e, 0, 4)
+	setRetried(t, e, "fb:comment:0-1", "no result in batch")
+	setRetried(t, e, "fb:comment:0-2", "1 item(s) missing from the answer")
+	if err := e.p.SubmitBatches(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Claimed 0-0; topped up with 0-1 (no result) and 0-3 (fresh), not
+	// 0-2 (missing from its answer).
+	if got := requestSizes(t, e); fmt.Sprint(got) != "[3]" {
+		t.Fatalf("requests of %v items, want one of 3", got)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE content_id = 'fb:comment:0-2' AND request_id IS NULL`); n != 1 {
+		t.Fatal("the comment missing from its answer was topped up")
 	}
 }

@@ -158,3 +158,59 @@ func (s *Store) CommentSampleCounts(ctx context.Context, since time.Time) ([]Com
 	}
 	return out, rows.Err()
 }
+
+// QueueTries is one route's queue now by tries counted (a claim counts one;
+// an entry in flight counts its current try), and why entries that came
+// back did: their last error's first 100 characters with digits as #, and
+// whether it was about their own answer (ItemFault, so they go alone).
+type QueueTries struct {
+	Route                       string
+	None, One, Two, ThreeOrMore int64
+	Reasons                     map[string]int64
+	ItemFaults                  int64
+}
+
+// QueueTriesNow counts the queue by route and tries, and the last errors
+// of entries that came back. Read-only; it scans the queue.
+func (s *Store) QueueTriesNow(ctx context.Context) ([]QueueTries, error) {
+	rows, err := s.DB.Query(ctx, `SELECT route, count(*) FILTER (WHERE attempts = 0), count(*) FILTER (WHERE attempts = 1),
+			count(*) FILTER (WHERE attempts = 2), count(*) FILTER (WHERE attempts >= 3),
+			count(*) FILTER (WHERE `+itemFaultSQL+`)
+		FROM analysis.analysis_queue GROUP BY 1 ORDER BY 1`)
+	if err != nil {
+		return nil, err
+	}
+	var out []QueueTries
+	at := map[string]int{}
+	for rows.Next() {
+		var q QueueTries
+		if err := rows.Scan(&q.Route, &q.None, &q.One, &q.Two, &q.ThreeOrMore, &q.ItemFaults); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		q.Reasons = map[string]int64{}
+		at[q.Route] = len(out)
+		out = append(out, q)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows, err = s.DB.Query(ctx, `SELECT route, left(regexp_replace(coalesce(last_error, 'none recorded'), '[0-9]+', '#', 'g'), 100), count(*)
+		FROM analysis.analysis_queue WHERE attempts >= 1 GROUP BY 1, 2`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var route, reason string
+		var n int64
+		if err := rows.Scan(&route, &reason, &n); err != nil {
+			return nil, err
+		}
+		if i, ok := at[route]; ok {
+			out[i].Reasons[reason] += n
+		}
+	}
+	return out, rows.Err()
+}

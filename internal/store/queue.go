@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,7 +22,27 @@ type Claimed struct {
 	Priority int
 	Reason   string
 	Attempts int
+	// LastError is why the entry came back last time ("" if it never
+	// failed): see ItemFault.
+	LastError string
 }
+
+// ItemFault reports whether a queue entry's last failure was about its own
+// answer: invalid or truncated output, missing from the answer, or refused.
+// Only such an entry is sent alone when retried; one that came back for
+// another reason (never sent, aborted, errored or expired in its batch, no
+// result) groups as usual. itemFaultSQL is the same test in SQL.
+func ItemFault(lastError string) bool {
+	for _, p := range []string{"invalid", "truncated", "refused"} {
+		if strings.HasPrefix(lastError, p) {
+			return true
+		}
+	}
+	return strings.Contains(lastError, "missing from the answer")
+}
+
+const itemFaultSQL = `(coalesce(last_error, '') LIKE 'invalid%' OR coalesce(last_error, '') LIKE 'truncated%'
+	OR coalesce(last_error, '') LIKE 'refused%' OR coalesce(last_error, '') LIKE '%missing from the answer%')`
 
 // Claim leases up to limit queue entries of a lane and route, oldest first
 // within priority, enqueued at least minAge ago (so a thread's siblings can
@@ -38,9 +59,10 @@ func (s *Store) Claim(ctx context.Context, lane, route string, limit int, lease,
 		u AS (
 			UPDATE analysis.analysis_queue q SET lease_until = now() + make_interval(secs => $4), attempts = q.attempts + 1
 			FROM c WHERE q.content_id = c.content_id AND q.route = c.route
-			RETURNING q.content_id, q.created_at, q.route, q.lane, q.priority, q.reason, q.attempts, q.enqueued_at)
+			RETURNING q.content_id, q.created_at, q.route, q.lane, q.priority, q.reason, q.attempts, q.enqueued_at, q.last_error)
 		-- Oldest first, as claimed: groups and their requests follow this order.
-		SELECT content_id, created_at, route, lane, priority, reason, attempts FROM u ORDER BY priority, enqueued_at, content_id`,
+		SELECT content_id, created_at, route, lane, priority, reason, attempts, coalesce(last_error, '') FROM u
+		ORDER BY priority, enqueued_at, content_id`,
 		lane, route, limit, lease.Seconds(), minAge.Seconds())
 	if err != nil {
 		return nil, err
@@ -48,7 +70,7 @@ func (s *Store) Claim(ctx context.Context, lane, route string, limit int, lease,
 	var out []Claimed
 	for rows.Next() {
 		var c Claimed
-		if err := rows.Scan(&c.Item.ContentID, &c.Item.CreatedAt, &c.Route, &c.Lane, &c.Priority, &c.Reason, &c.Attempts); err != nil {
+		if err := rows.Scan(&c.Item.ContentID, &c.Item.CreatedAt, &c.Route, &c.Lane, &c.Priority, &c.Reason, &c.Attempts, &c.LastError); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -63,10 +85,11 @@ func (s *Store) Claim(ctx context.Context, lane, route string, limit int, lease,
 
 // ClaimThreads tops up a claim with more waiting entries of the given
 // threads (same lane and route): up to room[i] for threads[i], oldest first
-// within priority, and at most limit in all, threads in the order given. Only entries never claimed
-// before (attempts 0) are taken: one retried after a failure is sent alone
-// anyway. A round's requests then carry a thread's waiting comments
-// together, so the cached prompt is read once for many of them.
+// within priority, and at most limit in all, threads in the order given.
+// Entries whose last failure was about their own answer (ItemFault) are
+// not taken: they go alone when claimed in turn. A round's requests then
+// carry a thread's waiting comments together, so the cached prompt is read
+// once for many of them.
 func (s *Store) ClaimThreads(ctx context.Context, lane, route string, threads []string, room []int, limit int, lease time.Duration) ([]Claimed, error) {
 	if len(threads) == 0 || len(threads) != len(room) || limit <= 0 {
 		return nil, nil
@@ -76,7 +99,7 @@ func (s *Store) ClaimThreads(ctx context.Context, lane, route string, threads []
 			SELECT x.content_id, x.route FROM unnest($3::text[], $4::int[]) AS t(thread_id, room)
 			CROSS JOIN LATERAL (
 				SELECT content_id, route FROM analysis.analysis_queue
-				WHERE thread_id = t.thread_id AND route = $2 AND lane = $1 AND attempts = 0
+				WHERE thread_id = t.thread_id AND route = $2 AND lane = $1 AND NOT `+itemFaultSQL+`
 				  AND not_before <= now() AND (lease_until IS NULL OR lease_until < now())
 				ORDER BY priority, enqueued_at
 				LIMIT t.room FOR UPDATE SKIP LOCKED) x
@@ -84,8 +107,9 @@ func (s *Store) ClaimThreads(ctx context.Context, lane, route string, threads []
 		u AS (
 			UPDATE analysis.analysis_queue q SET lease_until = now() + make_interval(secs => $6), attempts = q.attempts + 1
 			FROM c WHERE q.content_id = c.content_id AND q.route = c.route
-			RETURNING q.content_id, q.created_at, q.route, q.lane, q.priority, q.reason, q.attempts, q.enqueued_at)
-		SELECT content_id, created_at, route, lane, priority, reason, attempts FROM u ORDER BY priority, enqueued_at, content_id`,
+			RETURNING q.content_id, q.created_at, q.route, q.lane, q.priority, q.reason, q.attempts, q.enqueued_at, q.last_error)
+		SELECT content_id, created_at, route, lane, priority, reason, attempts, coalesce(last_error, '') FROM u
+		ORDER BY priority, enqueued_at, content_id`,
 		lane, route, threads, room, limit, lease.Seconds())
 	if err != nil {
 		return nil, err
@@ -93,7 +117,7 @@ func (s *Store) ClaimThreads(ctx context.Context, lane, route string, threads []
 	var out []Claimed
 	for rows.Next() {
 		var c Claimed
-		if err := rows.Scan(&c.Item.ContentID, &c.Item.CreatedAt, &c.Route, &c.Lane, &c.Priority, &c.Reason, &c.Attempts); err != nil {
+		if err := rows.Scan(&c.Item.ContentID, &c.Item.CreatedAt, &c.Route, &c.Lane, &c.Priority, &c.Reason, &c.Attempts, &c.LastError); err != nil {
 			rows.Close()
 			return nil, err
 		}

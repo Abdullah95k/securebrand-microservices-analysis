@@ -178,8 +178,12 @@ type group struct {
 }
 
 // Groups packs claimed items into requests: a thread's items together (up
-// to grouping.max_items and max_chars), items retried after a failure
-// alone, so one bad item cannot sink a group twice. An item identical to
+// to grouping.max_items and max_chars), and an item retried after a
+// failure of its own answer (store.ItemFault) alone, so one bad item
+// cannot sink a group twice. An item back for another reason (never sent,
+// errored or expired in its batch) groups as usual: until 11 Nov every
+// retried item went alone, and the oldest backlog, almost all retried,
+// went out one item a request. An item identical to
 // one already packed for its thread joins that request as a follower
 // (dedup.go) and counts toward neither limit.
 func (p *Pipeline) Groups(route string, cs []store.Claimed) []group {
@@ -188,7 +192,7 @@ func (p *Pipeline) Groups(route string, cs []store.Claimed) []group {
 	var order []string
 	var out []group
 	for _, c := range cs {
-		if c.Attempts >= 2 {
+		if soloRetry(c) {
 			out = append(out, group{route: route, items: []core.Item{c.Item}, urgent: c.Priority == core.PriorityUrgent})
 			continue
 		}
@@ -253,6 +257,10 @@ func (p *Pipeline) Groups(route string, cs []store.Claimed) []group {
 	}
 	return out
 }
+
+// soloRetry: the claimed item failed before because of its own answer, so
+// it goes alone.
+func soloRetry(c store.Claimed) bool { return c.Attempts >= 2 && store.ItemFault(c.LastError) }
 
 // built is a request ready to send.
 type built struct {
