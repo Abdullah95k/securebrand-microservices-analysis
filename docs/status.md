@@ -326,3 +326,12 @@
     - Real-time items and comments already stored are always kept.
     - `sb-analysis stats` shows received against sampled per platform, with the scale factor.
     - Migration 00009 adds `analysis.comment_sample_daily`.
+- **11 Nov, 19:30 Iraq time: why every comment went out alone.**
+  - **Live** (pull request #45, `b560bb5`, master #104): the 10% sample (9.7–10.1% per platform in the first 5 minutes), the top-up on, and comments flowing again (the pauses raised to 1.5M and 2M).
+  - **The before reading** (6 h at 15:59Z): 61,530 comment requests for 61,530 items, 100% one-item, 13,238 cache-read tokens per request, $0.113 per 1,000.
+  - **The cause:** an item tried before went alone, whatever its failure. The oldest backlog had almost all been tried before (old 26 h leases, restarts, errored batches), so every round sent one item a request, and the top-up (first tries only) found nothing to add.
+  - **In review (the master agreed):**
+    - only an item whose own answer failed goes alone; items back for other reasons group again;
+    - the top-up takes those too;
+    - `stats` shows the queue by tries and why entries came back.
+    - Expected: 3–10 items a request at first, $0.05–0.07 per 1,000 comments instead of $0.113.

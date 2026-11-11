@@ -64,7 +64,9 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
   - Before 11 Nov a round leased its items for 26 h before sending, and claimed up to 100,000 items into batches of 5,000 requests (over 100 MB each). A crash then held them for 26 h, with their estimates counted against the budget.
 - **A round fills its threads** (since 11 Nov; the platform agreed): after claiming the oldest `batch.max_items` items, a round also claims each claimed thread's other waiting comments, up to `grouping.max_items` (40) a thread and `batch.top_up_items` (10,000) in all.
   - **Why:** a claim of the oldest items held one or two comments of most threads, so most requests carried one or two comments. The cached prompt and schema (most of a comment's cost) were read once for each.
-  - **What it changes:** only how full requests are. The prompt, the grouping by thread and its limits are as before. Comments being retried after a failure aren't taken; they still go alone.
+  - **What it changes:** only how full requests are. The prompt, the grouping by thread and its limits are as before. Comments retried after a fault of their own answer aren't taken; they still go alone.
+- **Who goes alone** (since 11 Nov): an item is sent in a request of its own only when it was tried before and its last failure was about its own answer: invalid or truncated output, missing from the answer, or refused. An item back for another reason (never sent, aborted by a shutdown, errored or expired in its batch, no result) groups with its thread as usual.
+  - Until then every item tried before went alone. The oldest backlog, almost all tried before (the old 26 h leases, restarts, errored batches), went out one item a request: 61,530 requests for 61,530 items in 6 h on 11 Nov.
   - **To watch:** `sb_analysis_items_topped_up_total{route}`, the `analysis: batch round topped up its threads` log line, and in `sb-analysis stats` the items per request and the cost per 1,000 items. Also `sb_analysis_output_repairs_total` (`duplicate_item`, `unexpected_item`), in case fuller requests answer less cleanly.
   - **To turn it off:** set `batch.top_up_items: 0` and restart. The thread index it uses (`analysis_queue_thread_idx`, migration 00008) is built concurrently, without locking the queue.
 - **Per platform:** `sb-analysis stats [--since 24h]`, run in the analysis pod, prints for each platform:
@@ -80,6 +82,7 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
     - why requests failed, by reason (the error's first 100 characters, digits as `#`). A failed request got no answer (never sent, aborted by a shutdown, errored or expired in its batch), so nothing was paid for it;
     - per route, the items sent in more than one request (a retry after a failure, an errored or expired batch request) and the extra sends;
     - the cache-read tokens per request are the cached prompt and schema itself;
+  - the queue now, per route, by tries counted (none, one, two, three or more), how many last failed on their own answer (they go alone), and why entries came back (top 8 reasons). It scans the queue;
   - what the real-time lane's rules have to work with: hot accounts in the config, the accounts clients monitor (when `urgent.watchlists` is on) and by how many clients, and the entities clients track. With none, every item takes the batch lane.
 
   It is read-only and prints counts only. `sb_analysis_items_ingested_total{platform}` counts each item under its own platform; before 11 Nov a batch mixing collectors counted under its first item's platform.

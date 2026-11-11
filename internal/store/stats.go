@@ -49,6 +49,8 @@ type PlatformReport struct {
 	// Comments received and in the analysed share, by platform
 	// (CommentSampleCounts).
 	Sample []CommentSample
+	// The queue now by route and tries (QueueTriesNow).
+	Tries []QueueTries
 }
 
 // PlatformCounts counts, per platform, what came in and what came out since t.

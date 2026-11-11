@@ -134,8 +134,8 @@ func (p *Pipeline) SubmitBatches(ctx context.Context) error {
 // topUp adds to a round's claim each claimed thread's other waiting
 // comments, up to grouping.max_items a thread and batch.top_up_items in
 // all: a claim of the oldest items holds one or two comments of most
-// threads, and Groups packs only what was claimed. Posts and items being
-// retried (sent alone) don't take part.
+// threads, and Groups packs only what was claimed. Posts and items retried
+// after a fault of their own answer (sent alone) don't take part.
 func (p *Pipeline) topUp(ctx context.Context, route string, claimed []store.Claimed) ([]store.Claimed, error) {
 	limit, perThread := p.Cfg.Batch.TopUpItems, p.Cfg.Grouping.MaxItems
 	if limit <= 0 || perThread <= 1 || route == core.RoutePost {
@@ -145,7 +145,7 @@ func (p *Pipeline) topUp(ctx context.Context, route string, claimed []store.Clai
 	var order []string
 	for _, c := range claimed {
 		t := c.Item.ThreadID
-		if t == "" || c.Item.Kind == core.KindPost || c.Attempts >= 2 {
+		if t == "" || c.Item.Kind == core.KindPost || soloRetry(c) {
 			continue
 		}
 		if have[t] == 0 {

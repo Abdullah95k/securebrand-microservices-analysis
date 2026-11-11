@@ -143,6 +143,22 @@ func TestStatsRequestsAndUrgentSetup(t *testing.T) {
 	if r.Sample, err = s.CommentSampleCounts(ctx, since); err != nil {
 		t.Fatal(err)
 	}
+	// The queue by tries: two fresh, one back after an error, one after an
+	// invalid answer, one on its third try.
+	for _, q := range []string{
+		`INSERT INTO analysis.analysis_queue (content_id, route, created_at, lane, priority, reason, attempts, last_error) VALUES
+			('q1', 'comment', now(), 'batch', 1, 'new', 0, NULL), ('q2', 'comment', now(), 'batch', 1, 'new', 0, NULL),
+			('q3', 'comment', now(), 'batch', 1, 'new', 1, 'batch request errored: Overloaded (529)'),
+			('q4', 'comment', now(), 'batch', 1, 'new', 1, 'invalid: not JSON'),
+			('q5', 'comment', now(), 'batch', 1, 'new', 3, 'no result in batch')`,
+	} {
+		if _, err := db.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if r.Tries, err = s.QueueTriesNow(ctx); err != nil {
+		t.Fatal(err)
+	}
 	var out bytes.Buffer
 	if err := printStats(&out, r, 24*time.Hour); err != nil {
 		t.Fatal(err)
@@ -155,6 +171,8 @@ func TestStatsRequestsAndUrgentSetup(t *testing.T) {
 		"  failed because (no answer, nothing paid): batch request errored: Overloaded (#) 1, never sent: the process stopped 1",
 		"re-sent, comment route: 1 items sent more than once (1 extra sends)",
 		"real-time lane rules: 1 hot accounts in the config; 2 accounts monitored by 2 clients; 1 entities tracked",
+		"queue now, comment route, by tries counted: 2 none, 2 one, 0 two, 1 three or more; 1 last failed on their own answer (sent alone)",
+		"  came back because: batch request errored: Overloaded (#) 1, invalid: not JSON 1, no result in batch 1",
 		"comments, tiktok (by Iraq day, since the window's first): 1000 received, 98 in the 10% sample (9.8%), 2 kept outside it for the real-time lane; the rest counted, not stored; scale the analysed comments by 10 for all",
 	} {
 		if !strings.Contains(text, want) {
