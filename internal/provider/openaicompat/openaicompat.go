@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -29,12 +30,20 @@ type Provider struct {
 	http            *http.Client
 	maxRetries      int
 	transcribeModel string
+	// servers holds the free speech-to-text servers of a pool (BaseURLs),
+	// nil without one.
+	servers chan string
 }
 
 // Config configures the provider.
 type Config struct {
-	Name            string
-	BaseURL         string
+	Name    string
+	BaseURL string
+	// BaseURLs, when set, is a pool of identical speech-to-text servers
+	// (self-hosted Whisper replicas): each takes one transcription at a
+	// time, and a transcription waits for a free one. Chat completions use
+	// BaseURL, or the first of them.
+	BaseURLs        []string
 	APIKey          string
 	Timeout         time.Duration
 	MaxRetries      int
@@ -52,8 +61,18 @@ func New(cfg Config) *Provider {
 		}
 		hc = &http.Client{Timeout: t}
 	}
-	return &Provider{name: cfg.Name, baseURL: strings.TrimRight(cfg.BaseURL, "/"), apiKey: cfg.APIKey, http: hc,
+	p := &Provider{name: cfg.Name, baseURL: strings.TrimRight(cfg.BaseURL, "/"), apiKey: cfg.APIKey, http: hc,
 		maxRetries: cfg.MaxRetries, transcribeModel: cfg.TranscribeModel}
+	if len(cfg.BaseURLs) > 0 {
+		p.servers = make(chan string, len(cfg.BaseURLs))
+		for _, u := range cfg.BaseURLs {
+			p.servers <- strings.TrimRight(u, "/")
+		}
+		if p.baseURL == "" {
+			p.baseURL = strings.TrimRight(cfg.BaseURLs[0], "/")
+		}
+	}
+	return p
 }
 
 // Name is the configured provider name.
@@ -131,7 +150,7 @@ func (p *Provider) Complete(ctx context.Context, req provider.Request) (*provide
 	}
 	start := time.Now()
 	var cr chatResponse
-	if err := p.do(ctx, "/chat/completions", "application/json", func() io.Reader { return bytes.NewReader(b) }, &cr); err != nil {
+	if err := p.do(ctx, p.baseURL, "/chat/completions", "application/json", func() io.Reader { return bytes.NewReader(b) }, &cr); err != nil {
 		return nil, err
 	}
 	if len(cr.Choices) == 0 {
@@ -189,14 +208,60 @@ func (p *Provider) Transcribe(ctx context.Context, audio []byte, filename, langu
 	var out struct {
 		Text string `json:"text"`
 	}
-	if err := p.do(ctx, "/audio/transcriptions", ct, func() io.Reader { return bytes.NewReader(body) }, &out); err != nil {
-		return "", err
+	send := func(base string) error {
+		return p.do(ctx, base, "/audio/transcriptions", ct, func() io.Reader { return bytes.NewReader(body) }, &out)
 	}
-	return out.Text, nil
+	if p.servers == nil {
+		if err := send(p.baseURL); err != nil {
+			return "", err
+		}
+		return out.Text, nil
+	}
+	// A pool: wait for a free server, so each transcribes one video at a
+	// time (a Service balances connections, not requests, and connections
+	// are reused, so two videos could otherwise land on one server). A
+	// server that can't be reached (down, or not ready) is passed over for
+	// the next free one, so a dead server doesn't fail half the videos.
+	// It only moves to a server that is free right now: waiting while
+	// holding a dead one could leave two callers each holding one.
+	var base string
+	select {
+	case base = <-p.servers:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	var down []string
+	defer func() {
+		for _, b := range append(down, base) {
+			p.servers <- b
+		}
+	}()
+	for {
+		err := send(base)
+		if err == nil {
+			return out.Text, nil
+		}
+		if !unreachable(err) {
+			return "", err
+		}
+		select {
+		case next := <-p.servers:
+			down, base = append(down, base), next
+		default:
+			return "", err
+		}
+	}
+}
+
+// unreachable: the request never reached the server (refused, no route,
+// no endpoint behind its Service), so another server can take it.
+func unreachable(err error) bool {
+	var op *net.OpError
+	return errors.As(err, &op) && op.Op == "dial"
 }
 
 // do posts with retries on retryable statuses and network errors.
-func (p *Provider) do(ctx context.Context, path, contentType string, body func() io.Reader, out any) error {
+func (p *Provider) do(ctx context.Context, base, path, contentType string, body func() io.Reader, out any) error {
 	var last error
 	for attempt := 0; attempt <= p.maxRetries; attempt++ {
 		if attempt > 0 {
@@ -206,7 +271,7 @@ func (p *Provider) do(ctx context.Context, path, contentType string, body func()
 			case <-time.After(time.Duration(1<<(attempt-1)) * time.Second):
 			}
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+path, body())
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, body())
 		if err != nil {
 			return err
 		}

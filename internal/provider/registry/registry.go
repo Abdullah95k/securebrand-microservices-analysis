@@ -80,8 +80,8 @@ func New(cfg map[string]config.Provider, opts ...Option) (*Registry, error) {
 		case "anthropic":
 			p = anthropic.New(anthropic.Config{Name: name, APIKey: c.APIKey, BaseURL: c.BaseURL, Timeout: c.Timeout, MaxRetries: c.MaxRetries})
 		case "openai_compat":
-			p = openaicompat.New(openaicompat.Config{Name: name, BaseURL: c.BaseURL, APIKey: c.APIKey, Timeout: c.Timeout,
-				MaxRetries: c.MaxRetries, TranscribeModel: c.TranscribeModel})
+			p = openaicompat.New(openaicompat.Config{Name: name, BaseURL: c.BaseURL, BaseURLs: c.BaseURLs, APIKey: c.APIKey,
+				Timeout: c.Timeout, MaxRetries: c.MaxRetries, TranscribeModel: c.TranscribeModel})
 		case "fake":
 			p = fake.New(name)
 		default:

@@ -118,8 +118,14 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
 Videos are transcribed by a speech-to-text server inside the cluster: **Speaches** with Whisper large-v3-turbo, CPU only. The chart's `whisper` component runs it, and production turns it on (the owner, 7 November 2026). The audio never leaves the cluster.
 
 - **Captions first:** a video whose post has the platform's captions uses them, and isn't sent to Whisper.
+- **More servers** (`whisper.replicas`; a second one is the owner's choice of 11 Nov, D-052):
+  - Each server has its own Deployment, 10Gi volume (it downloads the 1.6 GB model once, from huggingface.co) and Service. The first keeps the names it had alone, so adding servers leaves it running.
+  - The chart gives the analysis every server's address (`analysis.providers.whisper.base_urls`), and sets `stt_concurrency` to the number of servers.
+  - Each server gets one video at a time: a transcription waits for a free one. A shared Service balances connections, not requests, and connections are reused, so two videos could otherwise land on one server.
+  - Each server requests 2 CPU and 4Gi (limits 3 CPU and 6Gi). Throughput grows with the servers: about 1,000–2,000 TikTok videos a day each, at roughly real time.
+  - A server that is down fails the videos sent to it. They come back through the media queue's retries.
 - **Limits:**
-  - one transcription at a time per media process (`analysis.media.video.stt_concurrency`);
+  - one transcription at a time per media process and server (`analysis.media.video.stt_concurrency`, raised by the chart to the number of servers);
   - the first 10 minutes of a video at most (`max_seconds`).
   - A video that finds the slot taken waits `stt_wait` (5s), then goes back to the queue for `stt_retry_after` (2m) without counting a try: images keep flowing, and the file's deadline still applies.
 - **Slow by nature:** on shared CPUs, Whisper runs at about real time or slower.

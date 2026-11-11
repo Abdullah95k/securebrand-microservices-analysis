@@ -19,6 +19,9 @@ components:
 # cluster: Speaches with Whisper large-v3-turbo on CPU (no GPU nodes). The
 # platform's captions come first; Whisper takes the videos without them,
 # one at a time, the first 10 minutes at most.
+# A second server (the owner, 11 November 2026; D-052) is
+# whisper.replicas: 2, set by the platform once the cluster has the CPU
+# (2 CPU and 4Gi requested per server).
 whisper:
   enabled: true
   storage: {size: 10Gi, storageClassName: do-block-storage}
