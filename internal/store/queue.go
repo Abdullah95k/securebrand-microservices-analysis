@@ -83,6 +83,99 @@ func (s *Store) Claim(ctx context.Context, lane, route string, limit int, lease,
 	return s.loadClaimed(ctx, out)
 }
 
+// ClaimShared is Claim shared across platforms (an item's platform is the
+// code before the first ':' of its content ID): each platform waiting in
+// the lane and route gets an equal share of the limit (at least 1) of its
+// oldest live entries (priority normal or urgent, not background), and
+// whatever is left is claimed oldest first across all of them, as Claim
+// does, so a platform with less than its share leaves the rest to the
+// others and backfill entries still come after every live one. Claiming
+// only the oldest held a new collector's items behind a backlog of older
+// ones for days (Instagram, 11 Nov).
+func (s *Store) ClaimShared(ctx context.Context, lane, route string, limit int, lease time.Duration) ([]Claimed, error) {
+	codes, err := s.queuePlatforms(ctx, lane, route)
+	if err != nil {
+		return nil, err
+	}
+	var out []Claimed
+	if len(codes) > 1 {
+		share := max(1, limit/len(codes))
+		rows, err := s.DB.Query(ctx, `
+			WITH c AS (
+				SELECT x.content_id, x.route FROM unnest($3::text[]) AS p(code)
+				CROSS JOIN LATERAL (
+					SELECT content_id, route FROM analysis.analysis_queue
+					WHERE lane = $1 AND route = $2 AND split_part(content_id, ':', 1) = p.code AND priority <= $6
+					  AND not_before <= now() AND (lease_until IS NULL OR lease_until < now())
+					ORDER BY priority, enqueued_at
+					LIMIT $4 FOR UPDATE SKIP LOCKED) x),
+			u AS (
+				UPDATE analysis.analysis_queue q SET lease_until = now() + make_interval(secs => $5), attempts = q.attempts + 1
+				FROM c WHERE q.content_id = c.content_id AND q.route = c.route
+				RETURNING q.content_id, q.created_at, q.route, q.lane, q.priority, q.reason, q.attempts, q.enqueued_at, q.last_error)
+			SELECT content_id, created_at, route, lane, priority, reason, attempts, coalesce(last_error, '') FROM u
+			ORDER BY priority, enqueued_at, content_id`,
+			lane, route, codes, share, lease.Seconds(), core.PriorityNormal)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var c Claimed
+			if err := rows.Scan(&c.Item.ContentID, &c.Item.CreatedAt, &c.Route, &c.Lane, &c.Priority, &c.Reason, &c.Attempts, &c.LastError); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out = append(out, c)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(out) > 0 {
+			if out, err = s.loadClaimed(ctx, out); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if rest := limit - len(out); rest > 0 {
+		more, err := s.Claim(ctx, lane, route, rest, lease, 0)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, more...)
+	}
+	return out, nil
+}
+
+// queuePlatforms lists the platform codes waiting in a lane and route,
+// skipping from one code to the next through analysis_queue_platform_idx
+// rather than reading every entry.
+func (s *Store) queuePlatforms(ctx context.Context, lane, route string) ([]string, error) {
+	rows, err := s.DB.Query(ctx, `
+		WITH RECURSIVE codes AS (
+			(SELECT split_part(content_id, ':', 1) AS code FROM analysis.analysis_queue
+			 WHERE lane = $1 AND route = $2 ORDER BY split_part(content_id, ':', 1) LIMIT 1)
+			UNION ALL
+			SELECT (SELECT split_part(q.content_id, ':', 1) FROM analysis.analysis_queue q
+			        WHERE q.lane = $1 AND q.route = $2 AND split_part(q.content_id, ':', 1) > codes.code
+			        ORDER BY split_part(q.content_id, ':', 1) LIMIT 1)
+			FROM codes WHERE codes.code IS NOT NULL)
+		SELECT code FROM codes WHERE code IS NOT NULL`, lane, route)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // ClaimThreads tops up a claim with more waiting entries of the given
 // threads (same lane and route): up to room[i] for threads[i], oldest first
 // within priority, and at most limit in all, threads in the order given.

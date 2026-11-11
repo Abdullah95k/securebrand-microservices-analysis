@@ -72,7 +72,10 @@ func TestContractEveryKindEndToEnd(t *testing.T) {
 	a.Objects = files{"media/fb/1.png": img, "media/fb/2.webp": img, "media/fb/3.png": img}
 
 	iraq := time.FixedZone("Asia/Baghdad", 3*3600)
-	now := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	// An hour ago, but the spam below spans the 32 minutes before it, and
+	// bot scoring counts by Iraq day: on two days (the first 33 minutes
+	// after 01:00 Iraq time) it wasn't flagged. oneIraqDay keeps it on one.
+	now := oneIraqDay(time.Now().UTC().Add(-time.Hour).Truncate(time.Second), 40*time.Minute)
 	y, m, d := now.In(iraq).AddDate(0, 0, -1).Date()
 	estimate := time.Date(y, m, d, 0, 0, 0, 0, iraq) // "yesterday": 00:00 Iraq time
 	v := now.UnixMicro()
@@ -215,5 +218,32 @@ func decode(t *testing.T, r *kgo.Record, m proto.Message) {
 	}
 	if err := proto.Unmarshal(r.Value, m); err != nil {
 		t.Fatalf("%s: %v", r.Key, err)
+	}
+}
+
+// oneIraqDay moves t, if span before it would cross an Iraq midnight
+// (UTC+3), to span after that midnight: still in the past when t is an
+// hour or more ago and span is under an hour.
+func oneIraqDay(t time.Time, span time.Duration) time.Time {
+	iraq := time.FixedZone("Iraq", 3*3600)
+	l := t.In(iraq)
+	midnight := time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, iraq)
+	if t.Sub(midnight) < span {
+		return midnight.Add(span).UTC()
+	}
+	return t
+}
+
+func TestOneIraqDay(t *testing.T) {
+	span := 40 * time.Minute
+	for in, want := range map[string]string{
+		"2026-11-11T21:20:00Z": "2026-11-11T21:40:00Z", // 00:20 Iraq: moved past 00:40
+		"2026-11-11T21:50:00Z": "2026-11-11T21:50:00Z", // 00:50 Iraq: kept
+		"2026-11-11T09:00:00Z": "2026-11-11T09:00:00Z", // noon Iraq: kept
+	} {
+		at, _ := time.Parse(time.RFC3339, in)
+		if got := oneIraqDay(at, span).Format(time.RFC3339); got != want {
+			t.Errorf("oneIraqDay(%s) = %s, want %s", in, got, want)
+		}
 	}
 }
