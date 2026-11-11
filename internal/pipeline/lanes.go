@@ -132,44 +132,76 @@ func (p *Pipeline) SubmitBatches(ctx context.Context) error {
 }
 
 // topUp adds to a round's claim each claimed thread's other waiting
-// comments, up to grouping.max_items a thread and batch.top_up_items in
-// all: a claim of the oldest items holds one or two comments of most
-// threads, and Groups packs only what was claimed. Posts and items retried
-// after a fault of their own answer (sent alone) don't take part.
+// comments, and each claimed page's other waiting short posts (posts on
+// the comment route, grouped by page), up to grouping.max_items a thread
+// or page and batch.top_up_items in all, threads first: a claim of the
+// oldest items holds one or two items of most threads and pages, and
+// Groups packs only what was claimed. Items retried after a fault of their
+// own answer (sent alone) don't take part, nor does the post route (long
+// posts pack together whatever their page).
 func (p *Pipeline) topUp(ctx context.Context, route string, claimed []store.Claimed) ([]store.Claimed, error) {
-	limit, perThread := p.Cfg.Batch.TopUpItems, p.Cfg.Grouping.MaxItems
-	if limit <= 0 || perThread <= 1 || route == core.RoutePost {
+	limit, per := p.Cfg.Batch.TopUpItems, p.Cfg.Grouping.MaxItems
+	if limit <= 0 || per <= 1 || route == core.RoutePost {
 		return claimed, nil
 	}
-	have := map[string]int{}
-	var order []string
+	var threads, pages keyRoom
 	for _, c := range claimed {
-		t := c.Item.ThreadID
-		if t == "" || c.Item.Kind == core.KindPost || soloRetry(c) {
-			continue
-		}
-		if have[t] == 0 {
-			order = append(order, t)
-		}
-		have[t]++
-	}
-	var threads []string
-	var room []int
-	for _, t := range order {
-		if n := perThread - have[t]; n > 0 {
-			threads, room = append(threads, t), append(room, n)
+		switch {
+		case soloRetry(c):
+		case c.Item.Kind == core.KindPost:
+			pages.add(c.Item.SourceID)
+		default:
+			threads.add(c.Item.ThreadID)
 		}
 	}
-	more, err := p.Store.ClaimThreads(ctx, core.LaneBatch, route, threads, room, limit, p.submitLease())
+	tk, tr := threads.room(per)
+	more, err := p.Store.ClaimThreads(ctx, core.LaneBatch, route, tk, tr, limit, p.submitLease())
 	if err != nil {
 		return claimed, err
 	}
-	if len(more) > 0 {
-		ametrics.ToppedUp.WithLabelValues(route).Add(float64(len(more)))
-		slog.Info("analysis: batch round topped up its threads", "route", route, "claimed", len(claimed), "added", len(more),
-			"threads", len(threads))
+	pk, pr := pages.room(per)
+	posts, err := p.Store.ClaimPages(ctx, core.LaneBatch, route, pk, pr, limit-len(more), p.submitLease())
+	claimed = append(append(claimed, more...), posts...)
+	if err != nil {
+		return claimed, err
 	}
-	return append(claimed, more...), nil
+	if n := len(more) + len(posts); n > 0 {
+		ametrics.ToppedUp.WithLabelValues(route).Add(float64(n))
+		slog.Info("analysis: batch round topped up its threads and pages", "route", route, "claimed", len(claimed)-n,
+			"added", n, "threads", len(tk), "comments_added", len(more), "pages", len(pk), "posts_added", len(posts))
+	}
+	return claimed, nil
+}
+
+// keyRoom counts claimed items by thread or page, in the order first seen.
+type keyRoom struct {
+	order []string
+	have  map[string]int
+}
+
+func (k *keyRoom) add(key string) {
+	if key == "" {
+		return
+	}
+	if k.have == nil {
+		k.have = map[string]int{}
+	}
+	if k.have[key] == 0 {
+		k.order = append(k.order, key)
+	}
+	k.have[key]++
+}
+
+// room is each key with room left under per, and how much.
+func (k *keyRoom) room(per int) ([]string, []int) {
+	var keys []string
+	var room []int
+	for _, key := range k.order {
+		if n := per - k.have[key]; n > 0 {
+			keys, room = append(keys, key), append(room, n)
+		}
+	}
+	return keys, room
 }
 
 // claimedItems are the claimed entries' items.

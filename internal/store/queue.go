@@ -91,15 +91,31 @@ func (s *Store) Claim(ctx context.Context, lane, route string, limit int, lease,
 // carry a thread's waiting comments together, so the cached prompt is read
 // once for many of them.
 func (s *Store) ClaimThreads(ctx context.Context, lane, route string, threads []string, room []int, limit int, lease time.Duration) ([]Claimed, error) {
-	if len(threads) == 0 || len(threads) != len(room) || limit <= 0 {
+	return s.claimBy(ctx, "thread_id", lane, route, threads, room, limit, lease)
+}
+
+// ClaimPages is ClaimThreads for short posts: more waiting short posts of
+// the given pages (queue entries carrying the page: QueueSource), so a
+// request carries a page's posts together, with the page's context once.
+func (s *Store) ClaimPages(ctx context.Context, lane, route string, pages []string, room []int, limit int, lease time.Duration) ([]Claimed, error) {
+	return s.claimBy(ctx, "source_id", lane, route, pages, room, limit, lease)
+}
+
+// claimBy claims up to room[i] waiting entries whose column col (thread_id
+// or source_id, both indexed for this) is keys[i], at most limit in all.
+func (s *Store) claimBy(ctx context.Context, col, lane, route string, keys []string, room []int, limit int, lease time.Duration) ([]Claimed, error) {
+	if len(keys) == 0 || len(keys) != len(room) || limit <= 0 {
 		return nil, nil
+	}
+	if col != "thread_id" && col != "source_id" {
+		return nil, fmt.Errorf("claim by %q", col)
 	}
 	rows, err := s.DB.Query(ctx, `
 		WITH c AS (
-			SELECT x.content_id, x.route FROM unnest($3::text[], $4::int[]) AS t(thread_id, room)
+			SELECT x.content_id, x.route FROM unnest($3::text[], $4::int[]) AS t(key, room)
 			CROSS JOIN LATERAL (
 				SELECT content_id, route FROM analysis.analysis_queue
-				WHERE thread_id = t.thread_id AND route = $2 AND lane = $1 AND NOT `+itemFaultSQL+`
+				WHERE `+col+` = t.key AND route = $2 AND lane = $1 AND NOT `+itemFaultSQL+`
 				  AND not_before <= now() AND (lease_until IS NULL OR lease_until < now())
 				ORDER BY priority, enqueued_at
 				LIMIT t.room FOR UPDATE SKIP LOCKED) x
@@ -110,7 +126,7 @@ func (s *Store) ClaimThreads(ctx context.Context, lane, route string, threads []
 			RETURNING q.content_id, q.created_at, q.route, q.lane, q.priority, q.reason, q.attempts, q.enqueued_at, q.last_error)
 		SELECT content_id, created_at, route, lane, priority, reason, attempts, coalesce(last_error, '') FROM u
 		ORDER BY priority, enqueued_at, content_id`,
-		lane, route, threads, room, limit, lease.Seconds())
+		lane, route, keys, room, limit, lease.Seconds())
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +144,16 @@ func (s *Store) ClaimThreads(ctx context.Context, lane, route string, threads []
 		return nil, err
 	}
 	return s.loadClaimed(ctx, out)
+}
+
+// QueueSource is the page a queue entry carries: a short post's (a post on
+// the comment route, grouped by page), so ClaimPages can find it; nil for
+// every other entry.
+func QueueSource(it core.Item, route string) *string {
+	if it.Kind == core.KindPost && route == core.RouteComment {
+		return nilIfEmpty(it.SourceID)
+	}
+	return nil
 }
 
 // loadClaimed fills the claimed entries' items; entries whose item vanished
@@ -366,9 +392,9 @@ func (s *Store) Enqueue(ctx context.Context, items []core.Item, route, lane stri
 	}
 	b := &pgx.Batch{}
 	for _, it := range items {
-		b.Queue(`INSERT INTO analysis.analysis_queue (content_id, route, created_at, thread_id, lane, priority, reason)
-			VALUES ($1,$2,$3,NULLIF($4,''),$5,$6,$7) ON CONFLICT (content_id, route) DO NOTHING`,
-			it.ContentID, route, it.CreatedAt, it.ThreadID, lane, priority, reason)
+		b.Queue(`INSERT INTO analysis.analysis_queue (content_id, route, created_at, thread_id, source_id, lane, priority, reason)
+			VALUES ($1,$2,$3,NULLIF($4,''),$8,$5,$6,$7) ON CONFLICT (content_id, route) DO NOTHING`,
+			it.ContentID, route, it.CreatedAt, it.ThreadID, lane, priority, reason, QueueSource(it, route))
 	}
 	br := s.DB.SendBatch(ctx, b)
 	defer func() { _ = br.Close() }()

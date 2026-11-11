@@ -196,8 +196,9 @@ func (s *Store) ReplayFailed(ctx context.Context, route string, limit int) (int6
 		WITH d AS (DELETE FROM analysis.dead_letters WHERE ($1 = '' OR route = $1)
 		           AND content_id IN (SELECT content_id FROM analysis.dead_letters WHERE ($1 = '' OR route = $1) LIMIT $2)
 		           RETURNING content_id, route)
-		INSERT INTO analysis.analysis_queue (content_id, route, created_at, thread_id, lane, priority, reason)
-		SELECT d.content_id, d.route, ci.created_at, c.thread_id, 'batch', 2, 'replay'
+		INSERT INTO analysis.analysis_queue (content_id, route, created_at, thread_id, source_id, lane, priority, reason)
+		SELECT d.content_id, d.route, ci.created_at, c.thread_id,
+			CASE WHEN c.kind = 'post' AND d.route = 'comment' THEN c.source_id END, 'batch', 2, 'replay'
 		FROM d JOIN analysis.content_index ci ON ci.content_id = d.content_id
 		JOIN analysis.content_items c ON c.created_at = ci.created_at AND c.content_id = ci.content_id
 		ON CONFLICT (content_id, route) DO NOTHING`, route, limit)

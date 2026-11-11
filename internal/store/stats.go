@@ -61,6 +61,8 @@ type PlatformReport struct {
 	RouteCaps         map[string]float64
 	Measures          map[string]RouteMeasure
 	DefaultOutPerItem float64
+	// The backfills and their progress (Backfills).
+	Backfills []Backfill
 }
 
 // PlatformCounts counts, per platform, what came in and what came out since t.

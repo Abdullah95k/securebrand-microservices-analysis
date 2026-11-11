@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 11 November 2026, 20:35 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 11 November 2026, 20:50 (Iraq time).*
 
 ## Where it stands
 
@@ -360,3 +360,10 @@
     - every request's worst case (its prompt written to the cache) stored in `provider_requests.est_max_usd` (migration 00010, a nullable column: no rewrite);
     - `stats` prints the worst case per route and for the day, and what new requests are priced at.
   - **Then:** the page top-up for short posts (the master agreed), as its own pull request.
+- **11 Nov, 20:50 Iraq time: the estimate is in; short posts get the page top-up.**
+  - **Merged** (pull request #49, `c0e38aa`, sent to the master to pin in place of `a249332`): the accurate estimate with each request's worst case, the `fb-media` input and the unchanged-copy fix. CI green (test, integration, images).
+  - **In review:** the page top-up for short posts (the master agreed, 17:16Z).
+    - Short posts (up to 280 characters) go on the comment route, grouped by page, but a claim held about one post a page.
+    - A round now also claims each claimed page's other waiting short posts, after the threads, within the same `batch.top_up_items`.
+    - A short post's queue entry carries its page: migration 00011 adds `analysis_queue.source_id` (nullable, no rewrite), an index built concurrently, and `analysis.backfills`.
+    - Entries queued before it get their page from a throttled backfill in the `rollup` role: 10,000 entries a pass, a 2-second pause, its place kept across restarts. `stats` prints its progress.
