@@ -227,7 +227,8 @@
 - **11 Nov, 13:36 Iraq time: the owner's decisions (D-052, via the platform):** the daily cap goes from $10 to **$60**; YouTube thumbnails: not now; tks downloads videos only for posts up to 7 days old.
   - **In review:** `daily_usd: 60`, with caps per route so neither side starves the other: comment $30, post $12, image $18, video $12. Text keeps at least $30 and media at least $18.
   - **Merged:** pull request #36 (`b7d6e67`, with #35), sent to the master to pin.
-  - **Caveat:** batch requests count at their (low) estimate until their batch returns, so a day can pass the cap by what is in flight (11 Nov: $12.84 against $10). A fix to the estimate is proposed to the platform.
+  - **Caveat:** batch requests count at their (low) estimate until their batch returns, so a day can pass the cap by what is in flight (11 Nov: $12.84 against $10).
+  - **The estimate fix** (the master agreed, 13:51 Iraq time; in review): a batch request's system prompt and schema are priced as plain input. For a 1-comment request that's $0.00041 instead of $0.00005, a little above what is paid, so the cap is reached from below.
 - **11 Nov: a second Whisper server** (the owner's video choice, D-052). The platform asked what it takes.
   - It needed a chart and code change: one volume per server (ReadWriteOnce), and one video per server at a time (a Service balances connections).
   - **In review:** `whisper.replicas`; the first server stays as it is; the analysis sends each server one video at a time. The platform sets `whisper.replicas: 2` once the cluster has the CPU (2 CPU and 4Gi per server).

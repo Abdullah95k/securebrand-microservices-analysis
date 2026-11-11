@@ -53,13 +53,21 @@ func cacheWrite(pr config.ModelPrice) float64 {
 
 // Estimate is the expected cost of a request before it is sent: input
 // tokens estimated from characters (Arabic runs ~2.5-3 characters per
-// token), the system prompt assumed cached after the first request, and
-// expected output tokens.
+// token) and expected output tokens. systemChars is the system prompt and
+// the schema. In real time they are assumed cached after the first request;
+// in a batch they are priced as plain input, since a batch's cache hits are
+// not to be counted on, and with 1-2 items a request they are most of its
+// cost (assumed cached, 11 Nov estimates ran about 6 times low, and the
+// day's cap was passed by what was in flight).
 func (p Pricing) Estimate(model string, systemChars, userChars, images, expectedOut int, batch bool) float64 {
 	u := Usage{
-		InputTokens:     userChars/3 + images*900,
-		CacheReadTokens: systemChars / 3,
-		OutputTokens:    expectedOut,
+		InputTokens:  userChars/3 + images*900,
+		OutputTokens: expectedOut,
+	}
+	if batch {
+		u.InputTokens += systemChars / 3
+	} else {
+		u.CacheReadTokens = systemChars / 3
 	}
 	return p.Cost(model, u, batch)
 }

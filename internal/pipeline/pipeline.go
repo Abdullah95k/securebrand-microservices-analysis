@@ -8,6 +8,7 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -77,8 +78,19 @@ type taxState struct {
 	tax                    *taxonomy.Taxonomy
 	textSystem             string
 	textSchema, postSchema map[string]any // post route: with keywords
-	mediaSystem            string
-	mediaSchema            map[string]any
+	// The schemas' sizes in JSON, for the cost estimate.
+	textSchemaLen, postSchemaLen int
+	mediaSystem                  string
+	mediaSchema                  map[string]any
+}
+
+// schemaLen is a schema's size in JSON (0 if it can't be encoded).
+func schemaLen(s map[string]any) int {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return 0
+	}
+	return len(b)
 }
 
 // SetTaxonomy swaps in a topic list (a new version of the dynamic list).
@@ -88,8 +100,10 @@ func (p *Pipeline) SetTaxonomy(t *taxonomy.Taxonomy) {
 	if cur := p.tax.Load(); cur != nil && cur.tax.Version == t.Version {
 		return
 	}
-	p.tax.Store(&taxState{tax: t, textSystem: prompt.TextSystem(t), textSchema: prompt.TextSchema(t, false),
-		postSchema: prompt.TextSchema(t, true), mediaSystem: prompt.MediaSystem(t), mediaSchema: prompt.MediaSchema(t)})
+	ts := &taxState{tax: t, textSystem: prompt.TextSystem(t), textSchema: prompt.TextSchema(t, false),
+		postSchema: prompt.TextSchema(t, true), mediaSystem: prompt.MediaSystem(t), mediaSchema: prompt.MediaSchema(t)}
+	ts.textSchemaLen, ts.postSchemaLen = schemaLen(ts.textSchema), schemaLen(ts.postSchema)
+	p.tax.Store(ts)
 }
 
 // Taxonomy returns the topic list in use.
@@ -247,6 +261,9 @@ type built struct {
 	hashes [][]byte
 	// prompted counts the items shown to the model (the leaders).
 	prompted int
+	// schemaChars is the size of the request's schema in JSON (the
+	// estimate prices it with the system prompt).
+	schemaChars int
 }
 
 func (p *Pipeline) mask(s string) string {
@@ -340,9 +357,10 @@ func (p *Pipeline) build(ctx context.Context, g group, model string) (built, err
 			inputs = append(inputs, in)
 		}
 		b.req.User = prompt.TextUser(c, inputs)
-		b.req.Schema = ts.textSchema
+		b.req.Schema, b.schemaChars = ts.textSchema, ts.textSchemaLen
 		if allPosts(g.items) && g.route != core.RouteComment {
-			b.req.Schema = ts.postSchema // escalated or audited long posts keep the model's keywords
+			// escalated or audited long posts keep the model's keywords
+			b.req.Schema, b.schemaChars = ts.postSchema, ts.postSchemaLen
 		}
 	} else {
 		for i, it := range g.items {
@@ -355,7 +373,7 @@ func (p *Pipeline) build(ctx context.Context, g group, model string) (built, err
 			page = g.items[0].SourceName
 		}
 		b.req.User = prompt.TextUser(prompt.Context{Page: page}, inputs)
-		b.req.Schema = ts.postSchema
+		b.req.Schema, b.schemaChars = ts.postSchema, ts.postSchemaLen
 	}
 	b.prompted = len(inputs)
 	rc := p.Cfg.Routes[g.route]
@@ -377,9 +395,10 @@ func allPosts(items []core.Item) bool {
 	return len(items) > 0
 }
 
-// estimate is the expected cost of a built request.
+// estimate is the expected cost of a built request: its system prompt and
+// schema, its items, and their expected output.
 func (p *Pipeline) estimate(b built, batch bool) float64 {
-	return p.Pricing.Estimate(b.req.Model, len(b.req.System), len(b.req.User), len(b.req.Images), 60*b.prompted, batch)
+	return p.Pricing.Estimate(b.req.Model, len(b.req.System)+b.schemaChars, len(b.req.User), len(b.req.Images), 60*b.prompted, batch)
 }
 
 // sent identifies a request being answered.

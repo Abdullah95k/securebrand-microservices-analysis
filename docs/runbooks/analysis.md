@@ -193,7 +193,9 @@ A 401 in the logs means the key is missing or revoked.
   - **Models:** Claude Haiku for everything, with escalation and audit off. The own Whisper server is free, so it isn't limited.
   - `TestProductionConfig` fails if production's settings drift from that.
   - The pilot kept $5 a day.
-- **Batches count at their estimate until they come back:** a batch request counts at its estimated cost until its batch returns (usually within an hour, at most 26 h), then at its real cost. The estimate runs low for requests of 1–2 items: the system prompt and schema it assumes cached are billed in full in a batch. So the day's spend can pass the cap by what was in flight when the cap was reached (11 Nov: $12.84 against $10).
+- **Batches count at their estimate until they come back:** a batch request counts at its estimated cost until its batch returns (usually within an hour, at most 26 h), then at its real cost.
+  - Until 11 Nov the estimate assumed the system prompt cached, which a batch can't count on. It ran about 6 times low for requests of 1–2 items, so the day passed the cap by what was in flight ($12.84 against $10).
+  - Now a batch request's system prompt and schema (about 23 KB) are priced as plain input: about $0.0004 for a 1–2 item comment request on Haiku, a little above what is paid. So the cap is reached from below: paid work may pause a little early, and resumes as batches return at their real cost.
 - **At the cap:** paid work pauses (items wait); urgent real-time items continue only if `analysis.budget.urgent_exempt` (off in production). The topic and entity curation wait too.
 - **To look:** `sb_analysis_spent_today_usd`, `sb_analysis_cost_usd_total` by model and route, or `make analysis-status`.
 - **To change:** set the budget in the config and restart the analysis containers. A new day starts at 00:00 Iraq time.
