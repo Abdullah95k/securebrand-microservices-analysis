@@ -305,3 +305,16 @@
     - the 1-hour prompt cache for batches;
     - no AI for comments with no letters.
     - There's no cheaper model on our list.
+- **11 Nov, 18:30 Iraq time: posts pause at 1M; fuller requests next.**
+  - **Merged** (pull request #43, `6f12507`, the master to pin):
+    - posts also pause at 1,000,000 queued (resume at 900,000); comments keep the 200k pause;
+    - the two gates share one queue count.
+    - **CI:** the runner's Ubuntu mirrors were unreachable all afternoon, so the integration job now runs ffmpeg from our own media image (Debian's ffmpeg, as in production) when apt can't install it.
+  - **The comment route's cost, measured** (the master, 24 h to 14:40Z): 114,402 comments, $13.01, about $0.114 per 1,000.
+    - Cache reads were 55% of it: 12,515 tokens a comment, against a cached prompt and schema of about 7,000. So most requests carried one or two comments, or were re-sent.
+    - Cache writes were about 89,000 tokens: the 1-hour batch cache would only add cost. It was held, and is kept unpushed.
+  - **In review (the master agreed):**
+    - `sb-analysis stats` adds requests by route and lane (how full, re-sent, tokens and cost per request) and the real-time lane's setup (hot accounts, watchlists, tracked entities; none set up in production);
+    - a batch round fills its threads' requests from the queue (`batch.top_up_items`), with migration 00008 (an index on the queue by thread, built concurrently).
+    - The master pins it off first (`top_up_items: 0`) for a baseline, then on. Expected: about $0.06 per 1,000 comments instead of $0.114.
+    - Several threads per request (iii-b) is on hold until these numbers are in.
