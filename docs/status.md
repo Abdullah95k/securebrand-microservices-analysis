@@ -224,3 +224,6 @@
   - **Found:** while ingest is paused, posts wait in Kafka but their media keeps arriving, so a video would go to Whisper and be analysed without its post's text and captions.
   - **Going to the owner** (via the platform): the budget, and whether covers stay analysed (dropping `image/cover` saves about $25 a day at this rate, for every collector).
 - **In review: a file waits for its post** (the platform agreed, 13:32 Iraq time). It goes back to the queue, without losing a try, until its post is stored (ingest wakes it), or 12 h before its deadline, or 7 days after it arrived. Also fixed: claiming a file with no deadline failed (pgx can't read `infinity` into a time).
+- **11 Nov, 13:36 Iraq time: the owner's decisions (D-052, via the platform):** the daily cap goes from $10 to **$60**; YouTube thumbnails: not now; tks downloads videos only for posts up to 7 days old.
+  - **In review:** `daily_usd: 60`, with caps per route so neither side starves the other: comment $30, post $12, image $18, video $12. Text keeps at least $30 and media at least $18.
+  - **Caveat:** batch requests count at their (low) estimate until their batch returns, so a day can pass the cap by what is in flight (11 Nov: $12.84 against $10).
