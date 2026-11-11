@@ -212,6 +212,14 @@ analysis:
     idle_poll: 30s         # as realtime.idle_poll: one worker polls an empty queue, less often
     lease: 10m
     max_tries: 5
+    # A file whose post (or comment) isn't stored yet, because ingest is
+    # paused or the post comes later, waits for it in the queue without
+    # counting a try: the post's text and captions go with it (captions spare
+    # Whisper). It goes ahead without them owner_wait after it arrived (Kafka
+    # keeps 7 days) or owner_margin before its deadline, whichever is first.
+    # Storing the post wakes it. 0 = no wait.
+    owner_wait: 168h
+    owner_margin: 12h
     video:
       enabled: true
       ffmpeg: ffmpeg       # needs the image built with --target analysis-media

@@ -75,8 +75,8 @@ func (s *Store) ClaimMediaJobs(ctx context.Context, limit int, lease time.Durati
 		FROM c WHERE m.media_id = c.media_id
 		RETURNING m.media_id, coalesce(m.owner_content_id, ''), m.platform, coalesce(m.source_id, ''), m.kind, m.bucket, m.key,
 		          coalesce(m.size_bytes, 0), coalesce(m.content_type, ''), coalesce(m.duration_ms, 0), coalesce(m.alt_text, ''),
-		          coalesce(m.delete_after, 'infinity'::timestamptz), m.ack_format, m.tries, coalesce(m.role, ''), coalesce(m.sha256, ''),
-		          m.attempt`, limit, lease.Seconds())
+		          m.delete_after, m.ack_format, m.tries, coalesce(m.role, ''), coalesce(m.sha256, ''),
+		          m.attempt, m.received_at`, limit, lease.Seconds())
 	if err != nil {
 		return nil, err
 	}
@@ -85,13 +85,14 @@ func (s *Store) ClaimMediaJobs(ctx context.Context, limit int, lease time.Durati
 	for rows.Next() {
 		var j core.MediaJob
 		var tries int
-		var del time.Time
+		// No deadline: NULL (pgx can't scan 'infinity' into a time.Time).
+		var del *time.Time
 		if err := rows.Scan(&j.MediaID, &j.OwnerContentID, &j.Platform, &j.SourceID, &j.Kind, &j.Bucket, &j.Key, &j.Size,
-			&j.ContentType, &j.DurationMS, &j.AltText, &del, &j.AckFormat, &tries, &j.Role, &j.Sha256, &j.Attempt); err != nil {
+			&j.ContentType, &j.DurationMS, &j.AltText, &del, &j.AckFormat, &tries, &j.Role, &j.Sha256, &j.Attempt, &j.ReceivedAt); err != nil {
 			return nil, err
 		}
-		if del.Year() < 9000 {
-			j.DeleteAfter = del
+		if del != nil {
+			j.DeleteAfter = *del
 		}
 		out = append(out, j)
 	}
@@ -394,6 +395,9 @@ func nullTime(t time.Time) *time.Time {
 
 // Owner is what a media job needs of the item it belongs to.
 type Owner struct {
+	// Stored: the item is in the store (false: not ingested yet, or no
+	// owner); the rest is zero when it isn't.
+	Stored    bool
 	CreatedAt time.Time
 	Text      string
 	Tags      []textnorm.Span
@@ -412,7 +416,7 @@ func (s *Store) OwnerContext(ctx context.Context, ownerID string) (Owner, error)
 	if !ok {
 		return Owner{}, nil
 	}
-	o := Owner{CreatedAt: it.CreatedAt, Text: it.Text, Tags: it.RemoveSpans}
+	o := Owner{Stored: true, CreatedAt: it.CreatedAt, Text: it.Text, Tags: it.RemoveSpans}
 	if err := s.DB.QueryRow(ctx, `SELECT coalesce(captions, ''), coalesce(captions_lang, ''), coalesce(captions_source, '')
 		FROM analysis.content_items WHERE created_at = $1 AND content_id = $2`, it.CreatedAt, ownerID).
 		Scan(&o.Captions, &o.CaptionsLang, &o.CaptionsSource); err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -453,4 +457,27 @@ func (s *Store) ReleaseMedia(ctx context.Context, mediaID string, delay time.Dur
 	_, err := s.DB.Exec(ctx, `UPDATE analysis.media_jobs SET lease_until = NULL, tries = greatest(tries - 1, 0),
 		not_before = now() + make_interval(secs => $2) WHERE media_id = $1`, mediaID, delay.Seconds())
 	return err
+}
+
+// HoldMediaForOwner puts a job back to wait for its owner item, without
+// counting a try: it is due again at until, or sooner when WakeMediaOf
+// finds the item stored. If the item was stored since the worker looked,
+// the job is due at once.
+func (s *Store) HoldMediaForOwner(ctx context.Context, mediaID, ownerID string, until time.Time) error {
+	_, err := s.DB.Exec(ctx, `UPDATE analysis.media_jobs SET lease_until = NULL, tries = greatest(tries - 1, 0),
+		not_before = CASE WHEN EXISTS (SELECT 1 FROM analysis.content_index WHERE content_id = $2) THEN now() ELSE $3 END
+		WHERE media_id = $1`, mediaID, ownerID, until)
+	return err
+}
+
+// WakeMediaOf makes the waiting jobs of these owner items due now: called
+// once the items are stored, so files held for their post go ahead with it.
+// It returns how many jobs it woke.
+func (s *Store) WakeMediaOf(ctx context.Context, ownerIDs []string) (int64, error) {
+	if len(ownerIDs) == 0 {
+		return 0, nil
+	}
+	tag, err := s.DB.Exec(ctx, `UPDATE analysis.media_jobs SET not_before = now()
+		WHERE owner_content_id = ANY($1) AND state = 'pending' AND not_before > now() AND lease_until IS NULL`, ownerIDs)
+	return tag.RowsAffected(), err
 }

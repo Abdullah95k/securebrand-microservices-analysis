@@ -217,6 +217,18 @@ func (c *Consumer) Flush(ctx context.Context, recs []*kgo.Record) error {
 			}
 		}
 	}
+	// Files announced before their post (or comment) wait for it
+	// (analysis.media.owner_wait): now that it is stored, they go ahead. A
+	// failed wake only delays them: they come back on their own.
+	if len(items) > 0 {
+		ids := make([]string, 0, len(items))
+		for _, it := range items {
+			ids = append(ids, it.ContentID)
+		}
+		if _, err := c.store.WakeMediaOf(ctx, ids); err != nil {
+			slog.Warn("ingest: media waiting for their posts not woken", "err", err)
+		}
+	}
 	if len(media) > 0 {
 		// An announcement without a media ID, bucket or key can't be
 		// fetched: InsertMediaJobs skips it. Count it, so a collector that

@@ -271,7 +271,14 @@ type AnalysisMedia struct {
 	IdlePoll time.Duration `koanf:"idle_poll"`
 	Lease    time.Duration `koanf:"lease"`
 	MaxTries int           `koanf:"max_tries"`
-	Video    VideoConfig   `koanf:"video"`
+	// OwnerWait and OwnerMargin: a file whose post (or comment) isn't
+	// stored yet waits for it in the queue, without counting a try, so the
+	// post's text and captions go with it; it goes ahead without them
+	// OwnerWait after it arrived or OwnerMargin before its deadline,
+	// whichever is first. Storing the post wakes it. OwnerWait 0: no wait.
+	OwnerWait   time.Duration `koanf:"owner_wait"`
+	OwnerMargin time.Duration `koanf:"owner_margin"`
+	Video       VideoConfig   `koanf:"video"`
 }
 
 // VideoConfig: key frames with ffmpeg, speech-to-text through a provider.
