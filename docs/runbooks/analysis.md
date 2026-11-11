@@ -180,12 +180,14 @@ A 401 in the logs means the key is missing or revoked.
 
 `analysis.budget.daily_usd` caps spend per Iraq day; `analysis.routes.<route>.daily_usd` caps one route. Spend is measured from real token usage at list prices (`analysis.pricing`), plus speech-to-text minutes at the transcription model's `per_minute` price (logged as `video` requests of that model; an own Whisper server is priced 0).
 - **No cap only on purpose:** outside `service.env: dev`, a `daily_usd` of 0 (no cap) stops the service at start with an error, unless `analysis.budget.allow_unlimited: true` is set.
-- **Production: $10 a day, a hard stop** (the owner, 7 November 2026; D-031): `daily_usd: 10`, `urgent_exempt: false`.
+- **Production: $60 a day, a hard stop** (the owner, 11 November 2026; D-052, raised from $10, D-031): `daily_usd: 60`, `urgent_exempt: false`.
+  - **Caps per route:** `comment` $30, `post` $12, `image` $18, `video` $12. Images and video together stop at $30, so comments and posts keep at least $30 (about 230k items a day at the measured $0.13 per 1,000). Comments and posts together stop at $42, so media keeps at least $18. Room one side leaves goes to the other, up to its caps.
   - **At the cap:** every paid call waits until 00:00 Iraq time: real-time and batch items, images and videos, and the topic and entity curation.
   - **To see it:** `sb_analysis_budget_paused` is 1, and `AnalysisBudgetReached` fires.
   - **Models:** Claude Haiku for everything, with escalation and audit off. The own Whisper server is free, so it isn't limited.
   - `TestProductionConfig` fails if production's settings drift from that.
   - The pilot kept $5 a day.
+- **Batches count at their estimate until they come back:** a batch request counts at its estimated cost until its batch returns (usually within an hour, at most 26 h), then at its real cost. The estimate runs low for requests of 1–2 items: the system prompt and schema it assumes cached are billed in full in a batch. So the day's spend can pass the cap by what was in flight when the cap was reached (11 Nov: $12.84 against $10).
 - **At the cap:** paid work pauses (items wait); urgent real-time items continue only if `analysis.budget.urgent_exempt` (off in production). The topic and entity curation wait too.
 - **To look:** `sb_analysis_spent_today_usd`, `sb_analysis_cost_usd_total` by model and route, or `make analysis-status`.
 - **To change:** set the budget in the config and restart the analysis containers. A new day starts at 00:00 Iraq time.

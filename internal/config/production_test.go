@@ -49,8 +49,21 @@ func TestProductionConfig(t *testing.T) {
 	if !slices.Equal(a.Inputs, []string{"content", "fb"}) {
 		t.Errorf("inputs %v, want [content fb]", a.Inputs)
 	}
-	if a.Budget.DailyUSD != 10 || a.Budget.AllowUnlimited || a.Budget.UrgentExempt {
-		t.Errorf("budget %+v, want $10 a day, a hard stop for urgent items too", a.Budget)
+	if a.Budget.DailyUSD != 60 || a.Budget.AllowUnlimited || a.Budget.UrgentExempt {
+		t.Errorf("budget %+v, want $60 a day (D-052), a hard stop for urgent items too", a.Budget)
+	}
+	// The caps per route keep a floor for each side within the $60: text
+	// (comments and posts) at least $30, media (images and video) at least
+	// $18. Each route keeps its provider and model from the defaults.
+	text := a.Routes["comment"].DailyUSD + a.Routes["post"].DailyUSD
+	media := a.Routes["image"].DailyUSD + a.Routes["video"].DailyUSD
+	for _, r := range []string{"comment", "post", "image", "video"} {
+		if rc := a.Routes[r]; rc.DailyUSD <= 0 || !rc.On() || rc.Provider != "anthropic" {
+			t.Errorf("route %s: cap $%v, on %v, provider %q; want a cap, on, anthropic", r, rc.DailyUSD, rc.On(), rc.Provider)
+		}
+	}
+	if a.Budget.DailyUSD-media < 30 || a.Budget.DailyUSD-text < 18 {
+		t.Errorf("route caps text $%v, media $%v: want text to keep $30 and media $18 of the $%v", text, media, a.Budget.DailyUSD)
 	}
 	const haiku = "claude-haiku-5-5"
 	for name, r := range a.Routes {

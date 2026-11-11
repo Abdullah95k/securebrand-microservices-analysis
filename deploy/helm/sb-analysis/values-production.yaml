@@ -89,19 +89,30 @@ config:
     # contract, and fbs's own fb.* topics until fbs does (their results stay
     # in Postgres; they have no contract IDs).
     inputs: [content, fb]
-    # $10 a day, a hard stop (the owner, 7 November 2026; D-031): once
-    # today's spend (Iraq time) reaches it, every paid call waits for the
-    # next day, urgent items and the topic and entity curation included;
-    # sb_analysis_budget_paused is 1 and AnalysisBudgetReached fires. The
-    # whisper server is free and keeps transcribing.
-    budget: {daily_usd: 10, allow_unlimited: false, urgent_exempt: false}
+    # $60 a day, a hard stop (the owner, 11 November 2026; D-052, raised
+    # from $10, D-031): once today's spend (Iraq time) reaches it, every
+    # paid call waits for the next day, urgent items and the topic and
+    # entity curation included; sb_analysis_budget_paused is 1 and
+    # AnalysisBudgetReached fires. The whisper server is free and keeps
+    # transcribing.
+    budget: {daily_usd: 60, allow_unlimited: false, urgent_exempt: false}
     # Haiku only (the owner, 7 November 2026): the text, image and video
     # routes already use it; the stronger second opinion (escalation) and
     # the quality sample (audit, Claude Opus) are off; the topic and entity
     # curation use Haiku.
+    # Caps per route within the $60 (11 November 2026, with D-052), so
+    # neither side starves the other: images and video together stop at
+    # $30, so comments and posts always keep at least $30 (about 230k
+    # items a day); comments and posts together stop at $42, so media
+    # always keeps at least $18. Room one side leaves goes to the other, up
+    # to its caps.
     routes:
       escalation: {enabled: false, model: claude-haiku-5-5}
       audit: {enabled: false, model: claude-haiku-5-5}
+      comment: {daily_usd: 30}
+      post: {daily_usd: 12}
+      image: {daily_usd: 18}
+      video: {daily_usd: 12}
     topics:
       curation: {model: claude-haiku-5-5}
     # Speech-to-text on the whisper server above (its address is set by
