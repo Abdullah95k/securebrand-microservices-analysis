@@ -52,10 +52,15 @@ type PlatformReport struct {
 	// The queue now by route and tries (QueueTriesNow).
 	Tries []QueueTries
 	// Today's spend by route as the budget counts it (SpendByRoute from
-	// the day's start), against the day's cap and the routes' caps.
-	Spend     []RouteSpend
-	DailyCap  float64
-	RouteCaps map[string]float64
+	// the day's start), against the day's cap and the routes' caps, and
+	// what the estimate prices requests at where measured (RouteMeasures
+	// over the last day); elsewhere DefaultOutPerItem tokens an item and
+	// the prefix as a cache miss.
+	Spend             []RouteSpend
+	DailyCap          float64
+	RouteCaps         map[string]float64
+	Measures          map[string]RouteMeasure
+	DefaultOutPerItem float64
 }
 
 // PlatformCounts counts, per platform, what came in and what came out since t.

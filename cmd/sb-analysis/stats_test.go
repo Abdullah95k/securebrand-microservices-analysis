@@ -113,6 +113,8 @@ func TestStatsRequestsAndUrgentSetup(t *testing.T) {
 			(gen_random_uuid(), 'comment', 'batch', 'anthropic', 'claude-haiku-5-5', 1, '{c9}', 'failed', NULL, NULL, NULL, NULL, NULL),
 			(gen_random_uuid(), 'comment', 'batch', 'anthropic', 'claude-haiku-5-5', 2, '{c7,c8}', 'submitted', NULL, NULL, NULL, NULL, NULL),
 			(gen_random_uuid(), 'post', 'realtime', 'anthropic', 'claude-haiku-5-5', 1, '{p1}', 'done', 900, 300, 6000, 0, 0.0004)`,
+		// The request in flight: expected at $0.25, $1.50 at worst.
+		`UPDATE analysis.provider_requests SET est_cost_usd = 0.25, est_max_usd = 1.5 WHERE status = 'submitted'`,
 		`UPDATE analysis.provider_requests SET error = CASE WHEN items = 2
 			THEN 'batch request errored: Overloaded (529)' ELSE 'never sent: the process stopped' END WHERE status = 'failed'`,
 		`INSERT INTO analysis.provider_requests (request_id, route, lane, provider, model, items, content_ids, status, created_at)
@@ -162,6 +164,10 @@ func TestStatsRequestsAndUrgentSetup(t *testing.T) {
 	if r.Spend, err = s.SpendByRoute(ctx, since); err != nil {
 		t.Fatal(err)
 	}
+	if r.Measures, err = s.RouteMeasures(ctx, since); err != nil || len(r.Measures) != 0 {
+		t.Fatalf("measures %v %v, want none (3 answered)", r.Measures, err)
+	}
+	r.Measures["post"], r.DefaultOutPerItem = store.RouteMeasure{Requests: 240, OutPerItem: 312, CacheHit: 0.974}, 150
 	r.DailyCap, r.RouteCaps = 60, map[string]float64{"comment": 30}
 	var out bytes.Buffer
 	if err := printStats(&out, r, 24*time.Hour); err != nil {
@@ -175,8 +181,9 @@ func TestStatsRequestsAndUrgentSetup(t *testing.T) {
 		"  failed because (no answer, nothing paid): batch request errored: Overloaded (#) 1, never sent: the process stopped 1",
 		"re-sent, comment route: 1 items sent more than once (1 extra sends)",
 		"real-time lane rules: 1 hot accounts in the config; 2 accounts monitored by 2 clients; 1 entities tracked",
-		"spend today (Iraq day, as the budget counts it): $0.00 of $60.00",
-		"  comment: $0.00 of $30.00 (answered $0.00; $0.00 estimated in flight, counted at 1.00 of its estimate)",
+		"spend today (Iraq day, as the budget counts it): $0.25 of $60.00; worst case $1.50 (every request in flight missing the cache)",
+		"  comment: $0.25 of $30.00 (answered $0.00; 1 requests in flight expected at $0.25, $1.50 at worst); worst case $1.50; new requests priced with output at 150 tokens an item and the prompt as a cache miss (the defaults: under 100 answered in the last day)",
+		"  post: $0.00 (answered $0.00; 0 requests in flight expected at $0.00, $0.00 at worst); worst case $0.00; new requests priced with output at 312 tokens an item and the prompt 97% read from the cache (measured over the last day's 240 answered)",
 		"queue now, comment route, by tries counted: 2 none, 2 one, 0 two, 1 three or more; 1 last failed on their own answer (sent alone)",
 		"  came back because: batch request errored: Overloaded (#) 1, invalid: not JSON 1, no result in batch 1",
 		"comments, tiktok (by Iraq day, since the window's first): 1000 received, 98 in the 10% sample (9.8%), 2 kept outside it for the real-time lane; the rest counted, not stored; scale the analysed comments by 10 for all",

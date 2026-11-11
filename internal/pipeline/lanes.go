@@ -346,7 +346,7 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 		}
 		id := uuid.New()
 		b.req.ID = id.String()
-		est := p.estimate(b, true)
+		est, worst := p.estimate(ctx, route, b, true)
 		ok, err := p.Budget.Allow(ctx, route, est, false)
 		if err != nil {
 			return giveBack(err)
@@ -371,7 +371,7 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 		}
 		p.Budget.Add(route, est)
 		row := store.RequestRow{ID: id, Route: route, Lane: core.LaneBatch, Provider: prov, Model: model,
-			ContentIDs: ids(b.items), InputHashes: b.hashes, EstCostUSD: est}
+			ContentIDs: ids(b.items), InputHashes: b.hashes, EstCostUSD: est, EstMaxUSD: worst}
 		if err := p.Store.StartRequest(ctx, row); err != nil {
 			return giveBack(err)
 		}

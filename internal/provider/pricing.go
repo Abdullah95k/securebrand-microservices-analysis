@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"math"
 	"strings"
 
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/config"
@@ -51,23 +52,46 @@ func cacheWrite(pr config.ModelPrice) float64 {
 	return pr.Input * 1.25
 }
 
-// Estimate is the expected cost of a request before it is sent: input
-// tokens estimated from characters (Arabic runs ~2.5-3 characters per
-// token) and expected output tokens. systemChars is the system prompt and
-// the schema. In real time they are assumed cached after the first request;
-// in a batch they are priced as plain input, since a batch's cache hits are
-// not to be counted on, and with 1-2 items a request they are most of its
-// cost (assumed cached, 11 Nov estimates ran about 6 times low, and the
-// day's cap was passed by what was in flight).
-func (p Pricing) Estimate(model string, systemChars, userChars, images, expectedOut int, batch bool) float64 {
+// Sizes the estimate counts in tokens, measured on 11 Nov: the comment
+// route's system prompt and schema, 23,237 bytes, were read from the cache
+// as 13,238 tokens a request (1.75 bytes a token; the schema as the API
+// renders it costs more than its JSON). Item text is mostly Arabic, two
+// bytes a letter in UTF-8: counted at 2 bytes a token, on the high side.
+const (
+	PrefixBytesPerToken = 1.75
+	TextBytesPerToken   = 2.0
+	ImageTokens         = 900
+)
+
+// Est is a request's cost before it is sent, at the two ends of its
+// prefix (system prompt and schema, marked for caching): HitUSD with the
+// prefix read from the cache, MissUSD with it written to the cache (a
+// write is 1.25 times plain input), the most a prefix costs. Item text is
+// priced as input and output as expected either way.
+type Est struct {
+	HitUSD, MissUSD float64
+}
+
+// At is the cost with the given share of the prefix read from the cache
+// (0 to 1) and the rest written to it.
+func (e Est) At(hit float64) float64 {
+	hit = math.Min(math.Max(hit, 0), 1)
+	return hit*e.HitUSD + (1-hit)*e.MissUSD
+}
+
+// Estimate is the cost of a request before it is sent, from the byte
+// sizes of its prefix (system prompt and schema) and of its own text, its
+// images, and the output expected of it (in tokens). An unpriced model
+// estimates at 0.
+func (p Pricing) Estimate(model string, prefixBytes, textBytes, images, expectedOut int, batch bool) Est {
+	prefix := int(math.Ceil(float64(prefixBytes) / PrefixBytesPerToken))
 	u := Usage{
-		InputTokens:  userChars/3 + images*900,
-		OutputTokens: expectedOut,
+		InputTokens:     int(math.Ceil(float64(textBytes)/TextBytesPerToken)) + images*ImageTokens,
+		OutputTokens:    expectedOut,
+		CacheReadTokens: prefix,
 	}
-	if batch {
-		u.InputTokens += systemChars / 3
-	} else {
-		u.CacheReadTokens = systemChars / 3
-	}
-	return p.Cost(model, u, batch)
+	e := Est{HitUSD: p.Cost(model, u, batch)}
+	u.CacheReadTokens, u.CacheWriteTokens = 0, prefix
+	e.MissUSD = p.Cost(model, u, batch)
+	return e
 }

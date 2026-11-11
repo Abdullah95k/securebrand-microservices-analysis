@@ -23,19 +23,27 @@ func TestCost(t *testing.T) {
 	if p.Cost("unknown", u, false) != 0 || p.Known("unknown") || !p.Known("claude-haiku-5-5") || !p.Known("fake") {
 		t.Fatal("unknown model")
 	}
-	// A one-comment batch request on Haiku: its system prompt and schema
-	// priced as plain input, near what production paid on 11 Nov (about
-	// $0.13 per 1,000 items at 1-2 items a request: $0.00013-0.00026).
-	// Assumed cached, it was about 6 times lower.
-	est := p.Estimate("claude-haiku-5-5", 9000, 600, 0, 80, true)
-	if est < 0.00013 || est > 0.00026 {
-		t.Fatalf("batch estimate $%v, want $0.00013-0.00026", est)
+	// A one-comment batch request on Haiku 5.5 as production sent them
+	// on 11 Nov: a 23,237-byte prefix read from the cache, about 205 input
+	// and 148 output tokens, $0.000113 measured. Expected within 10%; the
+	// worst case, the prefix written to the cache, about 7.7 times that;
+	// half and half, halfway.
+	haiku := Pricing{"claude-haiku-5-5": {Input: 0.10, Output: 0.50, CacheRead: 0.01, CacheWrite: 0.125, BatchDiscount: 0.5}}
+	est := haiku.Estimate("claude-haiku-5-5", 23237, 410, 0, 148, true)
+	if math.Abs(est.HitUSD-0.000113) > 0.0000113 || est.At(1) != est.HitUSD {
+		t.Fatalf("batch estimate $%v, want $0.000113 within 10%%", est.HitUSD)
 	}
-	// In real time the system prompt is cached after the first request.
-	if rt := p.Estimate("claude-haiku-5-5", 9000, 600, 0, 80, false); rt >= est {
-		t.Fatalf("real-time estimate $%v, want below the batch's $%v (the system prompt cached)", rt, est)
+	if est.MissUSD < 0.00085 || est.MissUSD > 0.0009 || est.At(0) != est.MissUSD || est.At(-1) != est.MissUSD || est.At(2) != est.HitUSD {
+		t.Fatalf("batch worst case $%v, want about $0.000875", est.MissUSD)
 	}
-	if Pricing(map[string]config.ModelPrice{}).Estimate("x", 1, 1, 1, 1, false) != 0 {
+	if math.Abs(est.At(0.5)-(est.HitUSD+est.MissUSD)/2) > 1e-15 {
+		t.Fatalf("half the prefix cached: $%v", est.At(0.5))
+	}
+	// Real time: the same at full price.
+	if rt := haiku.Estimate("claude-haiku-5-5", 23237, 410, 0, 148, false); math.Abs(rt.HitUSD-2*est.HitUSD) > 1e-12 || math.Abs(rt.MissUSD-2*est.MissUSD) > 1e-12 {
+		t.Fatalf("real-time estimate %+v, want twice the batch's %+v", rt, est)
+	}
+	if (Pricing(map[string]config.ModelPrice{}).Estimate("x", 1, 1, 1, 1, false) != Est{}) {
 		t.Fatal("estimate without prices")
 	}
 }

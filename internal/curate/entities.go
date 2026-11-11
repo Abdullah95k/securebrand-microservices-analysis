@@ -88,7 +88,7 @@ func (c *EntityCurator) Run(ctx context.Context) (int, error) {
 	req := provider.Request{ID: uuid.NewString(), Model: c.Route.Model, System: prompt.EntityCurationSystem,
 		User: prompt.EntityCurationUser(cands), Schema: prompt.EntityCurationSchema(), SchemaName: "entity_decisions",
 		MaxTokens: c.Route.MaxTokens, Effort: c.Route.Effort, Thinking: c.Route.Thinking}
-	if ok, err := allowed(ctx, c.Allow, c.Pricing.Estimate(c.Route.Model, len(req.System), len(req.User), 0, 1000, false)); err != nil || !ok {
+	if ok, err := allowed(ctx, c.Allow, c.Pricing.Estimate(c.Route.Model, len(req.System), len(req.User), 0, 1000, false).HitUSD); err != nil || !ok {
 		if err == nil {
 			slog.Info("analysis: entity curation deferred, daily budget reached")
 		}

@@ -29,6 +29,7 @@ import (
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/config"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/entities"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/pipeline"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/httpserver"
 	plog "github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/log"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/pg"
@@ -360,8 +361,10 @@ func reanalyzeCmd(args []string) error {
 			if !ok {
 				return fmt.Errorf("route %q not configured", r)
 			}
-			// Per-item estimate on the batch lane: ~150 input, 80 output tokens.
-			est := a.Pipeline.Pricing.Estimate(rc.Model, 0, 450, 0, 80, true) * float64(len(its))
+			// Per-item estimate on the batch lane: about 450 bytes of text
+			// and the default output per item; the cached prompt is shared
+			// by a request's items and left out.
+			est := a.Pipeline.Pricing.Estimate(rc.Model, 0, 450, 0, pipeline.DefaultOutPerItem, true).HitUSD * float64(len(its))
 			total += est
 			fmt.Printf("%-10s %-20s %8d items  ~$%.2f\n", r, rc.Model, len(its), est)
 		}

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log/slog"
+	"math"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -403,10 +404,15 @@ func allPosts(items []core.Item) bool {
 	return len(items) > 0
 }
 
-// estimate is the expected cost of a built request: its system prompt and
-// schema, its items, and their expected output.
-func (p *Pipeline) estimate(b built, batch bool) float64 {
-	return p.Pricing.Estimate(b.req.Model, len(b.req.System)+b.schemaChars, len(b.req.User), len(b.req.Images), 60*b.prompted, batch)
+// estimate is the cost of a built request before it is sent: its system
+// prompt and schema at the route's measured share read from the cache (the
+// rest written to it; all of it in the worst case), its items, and their
+// output at the route's measured tokens per item (Budget.Measure).
+func (p *Pipeline) estimate(ctx context.Context, route string, b built, batch bool) (expected, worst float64) {
+	m := p.Budget.Measure(ctx, route)
+	out := int(math.Ceil(m.OutPerItem * float64(len(b.items))))
+	e := p.Pricing.Estimate(b.req.Model, len(b.req.System)+b.schemaChars, len(b.req.User), len(b.req.Images), out, batch)
+	return e.At(m.CacheHit), e.MissUSD
 }
 
 // sent identifies a request being answered.
@@ -712,7 +718,7 @@ func (p *Pipeline) RunGroup(ctx context.Context, g group, lane string) error {
 		return err
 	}
 	b.req.ID = s.id.String()
-	est := p.estimate(b, false)
+	est, worst := p.estimate(ctx, g.route, b, false)
 	if ok, err := p.Budget.Allow(ctx, g.route, est, g.urgent); err != nil || !ok {
 		if err == nil {
 			err = p.Store.ReleaseUnsent(ctx, ids(g.items), g.route, 10*time.Minute)
@@ -720,7 +726,7 @@ func (p *Pipeline) RunGroup(ctx context.Context, g group, lane string) error {
 		return err
 	}
 	if err := p.Store.StartRequest(ctx, store.RequestRow{ID: s.id, Route: g.route, Lane: core.LaneRealtime, Provider: s.provider,
-		Model: s.model, Fallback: s.fallback, ContentIDs: ids(b.items), InputHashes: b.hashes, EstCostUSD: est}); err != nil {
+		Model: s.model, Fallback: s.fallback, ContentIDs: ids(b.items), InputHashes: b.hashes, EstCostUSD: est, EstMaxUSD: worst}); err != nil {
 		return err
 	}
 	start := p.now()

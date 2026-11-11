@@ -93,7 +93,7 @@ func (c *Curator) decide(ctx context.Context, rows []store.TopicRow) ([]store.To
 	rc := c.Cfg.Curation
 	req := provider.Request{ID: uuid.NewString(), Model: rc.Model, System: prompt.CurationSystem, User: prompt.CurationUser(tax, cands),
 		Schema: prompt.CurationSchema(tax), SchemaName: "topic_decisions", MaxTokens: rc.MaxTokens, Effort: rc.Effort, Thinking: rc.Thinking}
-	if ok, err := allowed(ctx, c.Allow, c.Pricing.Estimate(rc.Model, len(req.System), len(req.User), 0, 1000, false)); err != nil || !ok {
+	if ok, err := allowed(ctx, c.Allow, c.Pricing.Estimate(rc.Model, len(req.System), len(req.User), 0, 1000, false).HitUSD); err != nil || !ok {
 		if err == nil {
 			slog.Info("analysis: topic curation deferred, daily budget reached")
 		}
