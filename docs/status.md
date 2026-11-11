@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 11 November 2026, 22:50 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 11 November 2026, 23:55 (Iraq time).*
 
 ## Where it stands
 
@@ -385,3 +385,11 @@
   - **The reading** (the master, 19:21–19:35Z): no `batch submitted` line after 18:18Z, and no comment or post request in the hour. Polls kept collecting (`batch collected` about every 6 minutes). Nothing wrong with the budget ($24.93 of $60). The fbs switch pod (about 21:50) sent nothing either.
   - **The cause (code):** the batch lane collected and sent in one loop. A poll checks up to 10 finished batches, and collecting one of 1,000 results takes about 6 minutes, so a poll held back every round for most of an hour. A new pod polls before its first round, so with about 11 batches waiting it never sent. No item was lost: they waited in the queue.
   - **The fix (in review):** sending and collecting in two loops of their own; a poll claims one batch at a time; a log line for every round, every collection's duration, and every change of the provider's circuit. A test holds a collection open and checks that a new batch is still sent; it fails on the old loop.
+- **11 Nov, 23:55 Iraq time: the stall fix is pinned; older readings ignored, for the backfills.**
+  - **Pinned:** `7f61d47` (the stall fix, with `[content, fb-media]` in the chart; platform #113). The master's after-reading is pending: GitHub Actions failed to start runs from about 23:23.
+  - **fbs's backfills** (production's, then the pilot's: about 2.57M comments, 1–7 Nov; the owner: the same 10% sample, about $28 over about 3 days). Confirmed from the code:
+    - imported and backfill-mode items take the same sample, behind live items; `ACQUISITION_IMPORT` isn't treated differently;
+    - the sample is fixed by content ID, so a re-send never changes it;
+    - the cost per comment is the same as live.
+  - **In review: older readings ignored** (fbs confirmed `envelope.version` only rises per item). A contract copy at or below the stored version changes nothing; without it, a pilot copy of a comment production also read would be paid for again and replace the newer text. The production backfill should run first.
+  - **The queue's cap** counts the whole queue (1.5M, resuming at 1.4M), so the master paces the pilot backfill on the total depth.

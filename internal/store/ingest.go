@@ -35,6 +35,11 @@ type IngestStats struct {
 	// NotSampled counts new comments outside analysis.comments.sample_share:
 	// counted per day and platform, not stored.
 	NotSampled int
+	// Stale counts contract copies whose envelope.version is at or below
+	// the stored one: the same reading again, or an older one (fbs's
+	// version is the reading's time and only rises per item). Nothing is
+	// written for them.
+	Stale int
 }
 
 // sampleCount is one Iraq day and platform's comment records: received,
@@ -136,6 +141,15 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 					b.Queue(`UPDATE analysis.content_index SET visible = false, updated_at = now() WHERE content_id = $1`, it.ContentID)
 					st.Deleted++
 				}
+				continue
+			}
+			if seen && it.FromContract() && ex.version > 0 && it.Version <= ex.version {
+				// The same reading again, or an older one (a redelivery, or a
+				// backfill of an earlier scrape, such as the pilot's): its
+				// text must not replace the newer one stored, nor be paid
+				// for again. Items stored from fbs's own topics (version 0)
+				// have no version to compare and go on as before.
+				st.Stale++
 				continue
 			}
 			if it.Kind != core.KindPost {
