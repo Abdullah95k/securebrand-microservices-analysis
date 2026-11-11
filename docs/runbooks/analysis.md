@@ -77,6 +77,7 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
     - how many were done, failed and still in flight;
     - the items they carried, items per request, and how many carried one item;
     - per done request: input, cache-read, cache-write and output tokens, and the real cost per 1,000 items;
+    - why requests failed, by reason (the error's first 100 characters, digits as `#`). A failed request got no answer (never sent, aborted by a shutdown, errored or expired in its batch), so nothing was paid for it;
     - per route, the items sent in more than one request (a retry after a failure, an errored or expired batch request) and the extra sends;
     - the cache-read tokens per request are the cached prompt and schema itself;
   - what the real-time lane's rules have to work with: hot accounts in the config, the accounts clients monitor (when `urgent.watchlists` is on) and by how many clients, and the entities clients track. With none, every item takes the batch lane.

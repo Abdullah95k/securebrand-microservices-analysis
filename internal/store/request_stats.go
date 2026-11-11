@@ -17,6 +17,10 @@ type RequestStats struct {
 	DoneItems                                                    int64
 	InputTokens, CacheReadTokens, CacheWriteTokens, OutputTokens int64
 	CostUSD                                                      float64
+	// Why requests failed: the error's first 100 characters with digits as
+	// #, with counts. A failed request got no answer (never sent, aborted,
+	// errored, expired), so nothing was paid for it.
+	FailReasons map[string]int64
 }
 
 // Resends are a route's items sent in more than one request since a time
@@ -62,6 +66,33 @@ func (s *Store) RequestCounts(ctx context.Context, since time.Time) ([]RequestSt
 		}
 		return out[i].Lane < out[j].Lane
 	})
+	at := map[[2]string]int{}
+	for i, r := range out {
+		at[[2]string{r.Route, r.Lane}] = i
+	}
+	rows, err = s.DB.Query(ctx, `SELECT route, lane, left(regexp_replace(coalesce(error, 'no reason'), '[0-9]+', '#', 'g'), 100), count(*)
+		FROM analysis.provider_requests WHERE created_at >= $1 AND status = 'failed' GROUP BY 1, 2, 3`, since)
+	if err != nil {
+		return nil, nil, err
+	}
+	for rows.Next() {
+		var route, lane, reason string
+		var n int64
+		if err := rows.Scan(&route, &lane, &reason, &n); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		if i, ok := at[[2]string{route, lane}]; ok {
+			if out[i].FailReasons == nil {
+				out[i].FailReasons = map[string]int64{}
+			}
+			out[i].FailReasons[reason] += n
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
 	resent := map[string]Resends{}
 	rows, err = s.DB.Query(ctx, `SELECT route, count(*), coalesce(sum(n - 1), 0) FROM (
 			SELECT r.route, cid, count(*) AS n FROM analysis.provider_requests r, unnest(r.content_ids) AS cid
