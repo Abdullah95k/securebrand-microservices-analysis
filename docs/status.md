@@ -255,3 +255,7 @@
     - the server starts only once it transcribes a second of silence;
     - on a video's last try, a server error means its frames are analysed without a transcript (the master agreed);
     - `sb-analysis media-retry` puts back the videos that failed this way while their files last.
+  - **Merged and live** (pull request #41, `5d90a15`, with #40). Both whisper servers are Ready: 27 transcriptions ok and 0 errors in 10 minutes. media-retry: 19 videos matched, all in time, applied.
+- **11 Nov, 16:10 Iraq time: TikTok media over 5 days** (analysis-stats 120h): 105,461 announced, 822 analysed, 94,605 pending, 10,015 skipped by policy (audio covers, profile pictures).
+  - **Why:** until 13:57 today the $10 cap held media most of each day; since 14:00 files wait for their posts; and the 200k pause held posts too.
+  - **In review:** the pause holds comments only, so posts flow and their media goes ahead with them. `sb-analysis stats` now shows pending media by time to deadline, and how many wait for their post.

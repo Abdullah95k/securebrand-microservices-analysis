@@ -174,9 +174,10 @@ analysis:
     deepdml/faster-whisper-large-v3-turbo-ct2: {per_minute: 0} # own server: a fixed cost
     fake:                  {input: 0, output: 0}
   # The analysis queue's cap: at max_queue items, ingest stops taking new
-  # posts and comments (they wait in Kafka, which keeps 7 days) until the
-  # queue is down to resume_queue. Media announcements and erasures keep
-  # flowing. The queue can pass max_queue by at most one ingest batch.
+  # comments (they wait in Kafka, which keeps 7 days) until the queue is
+  # down to resume_queue. Posts (few, and their media waits for them), media
+  # announcements and erasures keep flowing. The queue can pass max_queue by
+  # at most one ingest batch, plus the posts.
   backpressure:
     max_queue: 200000
     resume_queue: 150000

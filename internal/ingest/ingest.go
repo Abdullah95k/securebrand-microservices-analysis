@@ -86,8 +86,10 @@ func New(cfg Config) (*Consumer, error) {
 	if cfg.Linger <= 0 {
 		cfg.Linger = 500 * time.Millisecond
 	}
-	content := make([]string, 0, len(cfg.Decoder.ContentTopics()))
-	for _, t := range cfg.Decoder.ContentTopics() {
+	// While the queue is full only comments wait (11 Nov): posts are few,
+	// and their media waits for them (analysis.media.owner_wait).
+	content := make([]string, 0, len(cfg.Decoder.CommentTopics()))
+	for _, t := range cfg.Decoder.CommentTopics() {
 		content = append(content, cfg.Kafka.TopicPrefix+t)
 	}
 	return &Consumer{cl: cl, prefix: cfg.Kafka.TopicPrefix, dec: cfg.Decoder, store: cfg.Store, plan: cfg.Plan,
@@ -149,8 +151,9 @@ func (c *Consumer) Run(ctx context.Context) error {
 	}
 }
 
-// backpressure pauses the content topics while the gate says the queue is
-// full, and resumes them once it has room. Paused records stay in Kafka.
+// backpressure pauses the comment topics while the gate says the queue is
+// full, and resumes them once it has room. Paused records stay in Kafka;
+// posts, media announcements and erasures keep flowing.
 func (c *Consumer) backpressure(ctx context.Context) {
 	if c.gate == nil {
 		return
@@ -163,12 +166,12 @@ func (c *Consumer) backpressure(ctx context.Context) {
 	if full {
 		c.cl.PauseFetchTopics(c.content...)
 		ametrics.IngestPaused.Set(1)
-		slog.Warn("ingest: analysis queue full; new content waits in Kafka", "max", c.gate.Max, "resume_at", c.gate.Resume)
+		slog.Warn("ingest: analysis queue full; new comments wait in Kafka", "max", c.gate.Max, "resume_at", c.gate.Resume)
 		return
 	}
 	c.cl.ResumeFetchTopics(c.content...)
 	ametrics.IngestPaused.Set(0)
-	slog.Info("ingest: analysis queue has room again; content resumes")
+	slog.Info("ingest: analysis queue has room again; comments resume")
 }
 
 // Flush stores one batch: items first, then media jobs, then erasures, so

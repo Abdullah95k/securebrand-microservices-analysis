@@ -76,6 +76,7 @@ func TestStatsCountsPerPlatform(t *testing.T) {
 		"media: 1 announced, 0 analysed; now 0 pending, 0 done, 1 skipped, 0 failed, 0 gone; 1 acknowledged",
 		"skipped because: policy:image/thumbnail 1",
 		"tiktok\n  items: 1 ingested",
+		"pending now by deadline: 0 past it, 0 within 12 h, 0 in 12-24 h, 0 in 24-48 h, 2 later or none; 2 waiting for their post",
 		"2 waiting to be tried again after a failure; failed or retrying because: " +
 			"video: transcribe: provider: no server reachable: dial tcp #.#.#.#:# 2, image: media: undecodable image 1",
 		"outbox (waiting to be published): empty; 0 held",

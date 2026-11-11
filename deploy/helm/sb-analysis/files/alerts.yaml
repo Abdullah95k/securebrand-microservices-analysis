@@ -119,6 +119,6 @@ groups:
         for: 1h
         labels: {severity: warning}
         annotations:
-          summary: The analysis queue has been full for an hour; new posts and comments wait in Kafka
-          description: Kafka keeps 7 days; content waiting longer is lost from Kafka and needs a backfill. Clear the queue's cause (budget, provider, batches).
+          summary: The analysis queue has been full for an hour; new comments wait in Kafka
+          description: Kafka keeps 7 days; comments waiting longer are lost from Kafka and need a backfill. Clear the queue's cause (budget, provider, batches).
           runbook_url: https://github.com/abdullah95k/securebrand-microservices-analysis/blob/main/docs/runbooks/analysis.md#queue-backlog

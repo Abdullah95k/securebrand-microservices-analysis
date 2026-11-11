@@ -57,6 +57,10 @@ func printStats(w io.Writer, r store.PlatformReport, since time.Duration) error 
 			}
 			fmt.Fprintf(&b, "  skipped because: %s\n", strings.Join(parts, ", "))
 		}
+		if pending := p.PendingPast + p.Pending12h + p.Pending24h + p.Pending48h + p.PendingLater; pending > 0 {
+			fmt.Fprintf(&b, "  pending now by deadline: %d past it, %d within 12 h, %d in 12-24 h, %d in 24-48 h, %d later or none; %d waiting for their post\n",
+				p.PendingPast, p.Pending12h, p.Pending24h, p.Pending48h, p.PendingLater, p.PendingForPost)
+		}
 		if len(p.MediaFailReasons) > 0 {
 			fmt.Fprintf(&b, "  %d waiting to be tried again after a failure; failed or retrying because: %s\n",
 				p.MediaRetrying, countsByCount(p.MediaFailReasons))

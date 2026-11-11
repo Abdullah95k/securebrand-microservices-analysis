@@ -23,9 +23,9 @@ import (
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/topics"
 )
 
-// At the queue's cap ingest stops taking posts and comments: they wait in
-// Kafka, while erasures still get through; once the queue drains, the rest
-// arrives.
+// At the queue's cap ingest stops taking comments: they wait in Kafka,
+// while posts (few, and their media waits for them) and erasures still get
+// through; once the queue drains, the rest arrives.
 func TestBackpressurePausesIngest(t *testing.T) {
 	db := testenv.Postgres(t)
 	brokers := testenv.Kafka(t)
@@ -87,7 +87,22 @@ func TestBackpressurePausesIngest(t *testing.T) {
 	if got := ingested(); got != held || held >= comments {
 		t.Fatalf("ingest went on while full: %d items, then %d (of %d)", held, got, comments)
 	}
-	// Erasures keep flowing while content waits.
+	// Posts keep flowing while comments wait.
+	post, err := prod.Record(topics.Post, "2", &fbv1.Post{Obs: obs, PostId: 2, PageId: 9, CreatedAt: timestamppb.New(now),
+		Text: "منشور جديد عن العروض"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prod.ProduceSync(ctx, post); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, ctx, func() bool {
+		return count(t, a, `SELECT count(*) FROM analysis.content_items WHERE content_id = 'fb:post:2'`) == 1
+	})
+	if got := count(t, a, `SELECT count(*) FROM analysis.content_items WHERE kind <> 'post'`); got != held {
+		t.Fatalf("comments ingested while full: %d, were %d", got, held)
+	}
+	// Erasures keep flowing while comments wait.
 	rec, err := prod.Record(topics.Erasure, "r1", &fbv1.ErasureEvent{EventId: "r1", RequestId: "r1",
 		SubjectType: fbv1.SubjectType_SUBJECT_TYPE_AUTHOR, AuthorKey: []byte("a0")})
 	if err != nil {
@@ -100,7 +115,7 @@ func TestBackpressurePausesIngest(t *testing.T) {
 	// The analysis drains the queue (here: by hand); the rest comes in.
 	waitFor(t, ctx, func() bool {
 		_, _ = db.Exec(ctx, `DELETE FROM analysis.analysis_queue`)
-		return ingested() == comments
+		return ingested() == comments+1
 	})
 	t.Logf("paused with %d of %d comments ingested; all %d after the queue drained", held, comments, comments)
 }
