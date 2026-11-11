@@ -285,8 +285,9 @@ func (p *Provider) sideline(base string, cause error) {
 	go func() {
 		t := time.NewTicker(p.probeEvery)
 		defer t.Stop()
+		d := net.Dialer{Timeout: 2 * time.Second}
 		for range t.C {
-			c, err := net.DialTimeout("tcp", addr, 2*time.Second)
+			c, err := d.DialContext(context.Background(), "tcp", addr)
 			if err != nil {
 				continue
 			}
