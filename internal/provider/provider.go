@@ -104,6 +104,11 @@ type Transcriber interface {
 	Transcribe(ctx context.Context, audio []byte, filename, language string) (string, error)
 }
 
+// ErrUnavailable: no speech-to-text server could be reached (down, or not
+// ready yet). Nothing about the audio is wrong: the caller tries again later
+// without counting it against the file.
+var ErrUnavailable = errors.New("provider: no server reachable")
+
 // Error classifies provider failures for retries and circuit breakers.
 type Error struct {
 	Status int

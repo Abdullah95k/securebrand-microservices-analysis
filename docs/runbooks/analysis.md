@@ -123,7 +123,10 @@ Videos are transcribed by a speech-to-text server inside the cluster: **Speaches
   - The chart gives the analysis every server's address (`analysis.providers.whisper.base_urls`), and sets `stt_concurrency` to the number of servers.
   - Each server gets one video at a time: a transcription waits for a free one. A shared Service balances connections, not requests, and connections are reused, so two videos could otherwise land on one server.
   - Each server requests 2 CPU and 4Gi (limits 3 CPU and 6Gi). Throughput grows with the servers: about 1,000–2,000 TikTok videos a day each, at roughly real time.
-  - A server that is down fails the videos sent to it. They come back through the media queue's retries.
+  - **A server that can't be reached** (down, or a new replica not ready yet) leaves the pool, with `analysis: speech-to-text server unreachable` in the log. It is tried every 10 s and rejoins as soon as it accepts connections (`... answers again, back in the pool`).
+    - A video waits up to 1 minute for a reachable server. If none comes, it goes back to the queue for `stt_retry_after` without losing a try, as when Whisper is busy. This also covers a single server during a restart.
+    - It counts in `sb_analysis_transcriptions_total{outcome="unavailable"}` and `sb_analysis_stt_deferred_total`.
+    - Before 11 Nov (pull request #37 alone), a video sent to a server that wasn't Ready yet failed at once and lost a try.
 - **Limits:**
   - one transcription at a time per media process and server (`analysis.media.video.stt_concurrency`, raised by the chart to the number of servers);
   - the first 10 minutes of a video at most (`max_seconds`).
