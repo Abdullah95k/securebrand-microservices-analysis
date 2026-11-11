@@ -64,6 +64,7 @@ func New(ctx context.Context, cfg *config.Config, db *pgxpool.Pool, kc kafka.Cli
 	}
 	st := store.New(db, loc)
 	st.ErasureMode = cfg.Analysis.Erasure.Mode
+	st.CommentShare = cfg.Analysis.Comments.SampleShare
 	tax, err := taxonomy.Load(a.TaxonomyFile)
 	if err != nil {
 		return nil, err

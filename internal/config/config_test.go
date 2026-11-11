@@ -62,6 +62,31 @@ func TestValidateSASL(t *testing.T) {
 	}
 }
 
+// comments.sample_share: above 0, at most 1; 1 (all) by default; a quoted
+// value from a values file reads as a number.
+func TestCommentSampleShare(t *testing.T) {
+	c, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Analysis.Comments.SampleShare != 1 {
+		t.Errorf("default sample_share %v, want 1 (every comment)", c.Analysis.Comments.SampleShare)
+	}
+	for _, bad := range []float64{0, -0.1, 1.5} {
+		c.Analysis.Comments.SampleShare = bad
+		if c.Validate() == nil {
+			t.Errorf("sample_share %v accepted", bad)
+		}
+	}
+	f := filepath.Join(t.TempDir(), "c.yaml")
+	if err := os.WriteFile(f, []byte("analysis:\n  comments:\n    sample_share: \"0.10\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := Load(f); err != nil || c.Analysis.Comments.SampleShare != 0.10 {
+		t.Fatalf("quoted 0.10: %v %v", c, err)
+	}
+}
+
 // batch.top_up_items as a quoted string, as a gitops values file may set
 // it: "0" turns the top-up off.
 func TestTopUpItemsQuoted(t *testing.T) {

@@ -118,6 +118,11 @@ func TestStatsRequestsAndUrgentSetup(t *testing.T) {
 		`INSERT INTO analysis.client_sources (client_id, source_id) VALUES ('client-1', 'fb:page:1'), ('client-2', 'fb:page:1'), ('client-2', 'tt:account:2')`,
 		`INSERT INTO analysis.entities (entity_id, name, type) VALUES ('brand-a', 'A', 'brand')`,
 		`INSERT INTO analysis.client_entities (client_id, entity_id) VALUES ('client-1', 'brand-a'), ('client-2', 'brand-a')`,
+		// The comment sample (D-053): yesterday at 1, today at 0.10; a day
+		// before the window isn't counted.
+		`INSERT INTO analysis.comment_sample_daily (day, platform, received, sampled, urgent, share) VALUES
+			((now() AT TIME ZONE 'UTC')::date - 5, 'tiktok', 999, 999, 0, 1),
+			((now() AT TIME ZONE 'UTC')::date, 'tiktok', 1000, 98, 2, 0.10)`,
 	} {
 		if _, err := db.Exec(ctx, q); err != nil {
 			t.Fatal(err)
@@ -132,6 +137,9 @@ func TestStatsRequestsAndUrgentSetup(t *testing.T) {
 	if r.Urgent, err = s.UrgentCounts(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if r.Sample, err = s.CommentSampleCounts(ctx, since); err != nil {
+		t.Fatal(err)
+	}
 	var out bytes.Buffer
 	if err := printStats(&out, r, 24*time.Hour); err != nil {
 		t.Fatal(err)
@@ -143,6 +151,7 @@ func TestStatsRequestsAndUrgentSetup(t *testing.T) {
 		"requests, post route, realtime lane: 1 sent (1 done, 0 failed, 0 in flight), 1 items, 1.00 items a request, 1 with one item (100%)",
 		"re-sent, comment route: 1 items sent more than once (1 extra sends)",
 		"real-time lane rules: 1 hot accounts in the config; 2 accounts monitored by 2 clients; 1 entities tracked",
+		"comments, tiktok (by Iraq day, since the window's first): 1000 received, 98 in the 10% sample (9.8%), 2 kept outside it for the real-time lane; the rest counted, not stored; scale the analysed comments by 10 for all",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("output lacks %q:\n%s", want, text)

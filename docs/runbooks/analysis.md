@@ -97,6 +97,15 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
 3. **Batches not collected** (`sb_analysis_open_batches` grows): check that a pipeline replica runs and can reach the provider. Batches finish within 24h; results stay downloadable for 29 days, so a restart collects them.
 4. **Real-time lane slow** at a burst: raise `analysis.realtime.workers`, or set `analysis.urgent.tracked_entities: false` to send fewer items there.
 
+**The comment sample** (the owner's D-053, 11 Nov): `analysis.comments.sample_share` (production 0.10) is the share of comments analysed.
+- **Which ones:** a comment is in or out by its content ID alone (a hash), so the same comment always gets the same answer, on every platform, the backlog included. Posts aren't sampled.
+- **Outside the share:** a new comment is counted, not stored or analysed. Its raw text stays with the platform (ClickHouse; fbs's Postgres for Facebook) for a later analysis. `sb_analysis_items_ingested_total{outcome="not_sampled"}` counts these.
+- **Always kept:**
+  - a comment that takes the real-time lane (hot account, tracked entity);
+  - a comment already stored, so its edits and deletions keep it current.
+- **To read it:** `sb-analysis stats` prints per platform the comments received, those in the sample, those kept outside it, and the factor to scale analysed comments by (1/share). Counts are per Iraq day (`analysis.comment_sample_daily`). A re-sent comment counts each time, in or out alike, so sampled ÷ received stays close to the share.
+- **To change it:** set the value and restart. A larger share takes every comment a smaller one took, plus more. Comments outside the old share that were never stored come back only by a backfill from the platform.
+
 **The queue's cap (backpressure):** at `analysis.backpressure.max_queue` items (200,000), ingest stops taking new comments: `sb_analysis_ingest_paused` is 1, and they wait in Kafka.
 - **Posts keep flowing** (since 11 Nov) until the much higher post cap, `max_queue_posts` (1,000,000; they resume at `resume_queue_posts`, 900,000). A post's media files wait for it (`analysis.media.owner_wait`), its captions included. Before, the pause held posts too, and tks's covers and videos waited behind them.
   - Letting posts through brought in the posts' Kafka backlog at once: about 420k items in the first hour on 11 Nov. Short posts queue on the comment route, so the post route's depth undercounts them.

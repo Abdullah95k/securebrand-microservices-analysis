@@ -109,6 +109,11 @@ config:
     # items a day); comments and posts together stop at $42, so media
     # always keeps at least $18. Room one side leaves goes to the other, up
     # to its caps.
+    # 10% of comments, on every platform (the owner, 11 November 2026;
+    # D-053): the same comments always (by content ID), the backlog
+    # included. The rest are counted, not stored or analysed; their raw text
+    # stays with the platform for later.
+    comments: {sample_share: 0.10}
     routes:
       escalation: {enabled: false, model: claude-haiku-5-5}
       audit: {enabled: false, model: claude-haiku-5-5}

@@ -318,3 +318,11 @@
     - a batch round fills its threads' requests from the queue (`batch.top_up_items`), with migration 00008 (an index on the queue by thread, built concurrently).
     - The master pins it off first (`top_up_items: 0`) for a baseline, then on. Expected: about $0.06 per 1,000 comments instead of $0.114.
     - Several threads per request (iii-b) is on hold until these numbers are in.
+- **11 Nov, 19:00 Iraq time: 10% of comments (the owner's D-053).**
+  - **Merged** (pull request #44, `691663c`, the master to pin): per-request stats and the round's thread top-up, pinned off first (`top_up_items: "0"`) for a baseline.
+  - **In review:** `analysis.comments.sample_share` (production 0.10).
+    - A fixed 10% of comments on every platform, chosen by content ID, the backlog included.
+    - The rest are counted per day and platform, not stored or analysed; their raw text stays with the platform.
+    - Real-time items and comments already stored are always kept.
+    - `sb-analysis stats` shows received against sampled per platform, with the scale factor.
+    - Migration 00009 adds `analysis.comment_sample_daily`.

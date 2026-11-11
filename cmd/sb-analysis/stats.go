@@ -37,6 +37,9 @@ func statsCmd(args []string) error {
 		if r.Urgent, err = a.Store.UrgentCounts(ctx); err != nil {
 			return err
 		}
+		if r.Sample, err = a.Store.CommentSampleCounts(ctx, from); err != nil {
+			return err
+		}
 		u := a.Cfg.Analysis.Urgent
 		r.HotAccounts, r.Watchlists = len(u.HotAccounts)+len(u.Sources), u.Watchlists
 		return printStats(os.Stdout, r, *since)
@@ -140,6 +143,18 @@ func printRequests(b *strings.Builder, r store.PlatformReport) {
 	}
 	fmt.Fprintf(b, "real-time lane rules: %d hot accounts in the config; %s; %d entities tracked\n",
 		r.HotAccounts, watch, r.Urgent.TrackedEntities)
+	for _, c := range r.Sample {
+		pct := 0.0
+		if c.Received > 0 {
+			pct = 100 * float64(c.Sampled) / float64(c.Received)
+		}
+		scale := ""
+		if c.Share > 0 && c.Share < 1 {
+			scale = fmt.Sprintf("; scale the analysed comments by %.4g for all", 1/c.Share)
+		}
+		fmt.Fprintf(b, "comments, %s (by Iraq day, since the window's first): %d received, %d in the %.4g%% sample (%.1f%%), %d kept outside it for the real-time lane; the rest counted, not stored%s\n",
+			c.Platform, c.Received, c.Sampled, 100*c.Share, pct, c.Urgent, scale)
+	}
 }
 
 // countsByCount formats counts largest first (then by name): "a 9, b 2".

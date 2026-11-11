@@ -184,6 +184,12 @@ analysis:
   # at most one ingest batch, plus the posts.
   # Posts wait too, but only at a much higher cap: a safety valve, so one
   # collector's backfill can't grow the queue without bound (0 = never).
+  # The share of comments analysed, in (0, 1] (1 = all): a comment is in
+  # or out by its content ID alone. One outside it is counted but neither
+  # stored nor analysed (its raw text stays with the platform). Real-time
+  # items and comments already stored are always kept; posts aren't sampled.
+  comments:
+    sample_share: 1
   backpressure:
     max_queue: 200000
     resume_queue: 150000
