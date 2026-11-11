@@ -28,6 +28,10 @@ type IngestStats struct {
 	// RedactedKept counts redactions not applied: analysis.erasure.mode is
 	// not "apply", so the stored text and results are kept.
 	RedactedKept int
+	// Adopted counts items analysed from fbs's own topics arriving for the
+	// first time through the contract: their stored analysis is published,
+	// with no new AI call (the cut-over, decision 17).
+	Adopted int
 }
 
 type indexRow struct {
@@ -35,6 +39,9 @@ type indexRow struct {
 	textHash  []byte
 	state     string
 	visible   bool
+	// version is the stored item's envelope.version: 0 for an item read
+	// from fbs's own topics (fb.*), which carry none.
+	version int64
 }
 
 // Ingest stores a batch of items: new items are inserted and queued (or
@@ -66,15 +73,17 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 			ids = append(ids, it.ContentID)
 		}
 		existing := map[string]indexRow{}
-		rows, err := tx.Query(ctx, `SELECT content_id, created_at, text_hash, state, visible FROM analysis.content_index
-			WHERE content_id = ANY($1) FOR UPDATE`, ids)
+		rows, err := tx.Query(ctx, `SELECT i.content_id, i.created_at, i.text_hash, i.state, i.visible, coalesce(c.content_version, 0)
+			FROM analysis.content_index i
+			LEFT JOIN analysis.content_items c ON c.created_at = i.created_at AND c.content_id = i.content_id
+			WHERE i.content_id = ANY($1) FOR UPDATE OF i`, ids)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
 			var id string
 			var r indexRow
-			if err := rows.Scan(&id, &r.createdAt, &r.textHash, &r.state, &r.visible); err != nil {
+			if err := rows.Scan(&id, &r.createdAt, &r.textHash, &r.state, &r.visible, &r.version); err != nil {
 				rows.Close()
 				return err
 			}
@@ -86,6 +95,7 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 		}
 		b := &pgx.Batch{}
 		var redact []itemKey
+		var adopt []*core.Item
 		now := time.Now().UTC()
 		for _, it := range items {
 			if erased["author:"+hex.EncodeToString(it.AuthorKey)] && len(it.AuthorKey) > 0 || erased["source:"+it.SourceID] {
@@ -121,6 +131,26 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 				skip = &r
 			}
 			switch {
+			case seen && it.FromContract() && ex.version == 0 && ex.state == "analyzed" && analyzable:
+				// The cut-over (decision 17): the first contract version of an
+				// item already analysed from fbs's own topics takes the
+				// contract's fields and is not analysed again, whatever its
+				// hash (the two paths word posts and name media slightly
+				// differently); its stored analysis is published on
+				// analysis.result.v1 below. Later versions are edits as usual.
+				b.Queue(`UPDATE analysis.content_items SET text = $3, media_ids = $4, hashtags = $5, status = 'visible',
+					skip_reason = NULL, last_seen_at = $6, tag_spans = $7, content_version = GREATEST(content_version, $8), depth = $9,
+					author_id = coalesce($10, author_id), captions = coalesce($11, captions), captions_lang = coalesce($12, captions_lang),
+					captions_source = coalesce($13, captions_source)
+					WHERE created_at = $1 AND content_id = $2`,
+					ex.createdAt, it.ContentID, nilIfEmpty(it.Text), it.MediaIDs, it.Hashtags, now, textnorm.SpansToInts(it.RemoveSpans),
+					it.Version, it.Depth, nilIfEmpty(it.AuthorID), nilIfEmpty(it.Captions), nilIfEmpty(it.CaptionsLang),
+					nilIfEmpty(it.CaptionsSource))
+				b.Queue(`UPDATE analysis.content_index SET text_hash = $2, visible = true, updated_at = now() WHERE content_id = $1`,
+					it.ContentID, hash)
+				it.CreatedAt = ex.createdAt
+				adopt = append(adopt, it)
+				continue
 			case seen && bytes.Equal(ex.textHash, hash):
 				if it.Captions != "" {
 					// Same text, captions added or changed: kept for the
@@ -197,6 +227,28 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 			if _, err := eraseItems(ctx, tx, s, redact, true); err != nil {
 				return err
 			}
+		}
+		for _, it := range adopt {
+			published, err := publishAdopted(ctx, tx, it)
+			if err != nil {
+				return err
+			}
+			if published {
+				st.Adopted++
+				continue
+			}
+			// No current analysis after all: analysed as an edit.
+			p := plan(it)
+			if _, err := tx.Exec(ctx, `INSERT INTO analysis.analysis_queue (content_id, route, created_at, thread_id, lane, priority, reason)
+				VALUES ($1,$2,$3,$4,$5,$6,'edit') ON CONFLICT (content_id, route) DO UPDATE SET not_before = now(), lease_until = NULL,
+					request_id = NULL, attempts = 0, enqueued_at = now(), reason = 'edit'`,
+				it.ContentID, p.Route, it.CreatedAt, nilIfEmpty(it.ThreadID), p.Lane, p.Priority); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE analysis.content_index SET state = 'queued' WHERE content_id = $1`, it.ContentID); err != nil {
+				return err
+			}
+			st.Edited++
 		}
 		return nil
 	})

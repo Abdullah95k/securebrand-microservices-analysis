@@ -210,7 +210,7 @@ func (c *Consumer) Flush(ctx context.Context, recs []*kgo.Record) error {
 			return fmt.Errorf("items: %w", err)
 		}
 		platform := group[0].Platform
-		for k, v := range map[string]int{"new": st.New, "edited": st.Edited, "unchanged": st.Unchanged, "skipped": st.Skipped,
+		for k, v := range map[string]int{"new": st.New, "edited": st.Edited, "unchanged": st.Unchanged, "skipped": st.Skipped, "adopted": st.Adopted,
 			"deleted": st.Deleted, "redacted": st.Redacted, "suppressed": st.Suppressed} {
 			if v > 0 {
 				ametrics.Ingested.WithLabelValues(platform, k).Add(float64(v))

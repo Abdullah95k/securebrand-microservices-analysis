@@ -284,6 +284,24 @@ Once a day every author with 5+ items in 30 days is scored from behaviour (burst
 - **Score now:** `sb-analysis authors score`.
 - **Tune:** `analysis.bots` (thresholds, window, minimum items). Before showing bot flags to clients, review a sample of flagged authors: false positives (super-fans, giveaway hunters) are expected.
 
+## fbs's cut-over to the contract
+
+fbs moves from its own `fb.*` topics to the contract's `content.*` (REQ-018, from 13 Nov). It also backfills every stored Facebook post, comment and reply, with the same IDs (`fb:post:<post_id>`, `fb:comment:<comment_id>`).
+
+- **How an item is matched:** by content ID, then by a hash of its kind, its text (whitespace collapsed) and its sorted media IDs. Same ID and same hash: unchanged, so nothing is queued and nothing is paid.
+- **Adopted** (since 11 Nov, agreed by the master): the first contract version of an item already analysed from `fb.*` is not analysed again, whatever its hash. The two paths word posts (link titles) and name media slightly differently.
+  - The item takes the contract's fields and envelope.version.
+  - Its stored analysis is published on `analysis.result.v1` in the contract's format, with no AI call. Results of `fb.*` items stayed in Postgres until then (decision 17).
+  - It counts as `sb_analysis_items_ingested_total{outcome="adopted"}`.
+  - Not stored with the old analysis, so the published record lacks them: why the item took its lane (`routing` reads `normal`) and the tracked entities matched (`matched_entity_ids` is empty). The entities the model found are there.
+  - The adopted item keeps its `fb.*` source and author keys in Postgres. The published record carries the contract's account and author IDs.
+- **Not adopted:**
+  - later versions (edits), which are analysed as usual;
+  - items `fb.*` never got analysed (queued, skipped or failed), which are analysed and paid once;
+  - an item marked analysed with no stored analysis, which is analysed as an edit.
+- **Media:** a re-announced file whose SHA-256 was analysed before is reused at no cost, so fbs should send `sha256` on `content.media.ready.v1`.
+- **The backfill:** adopted and unchanged items aren't queued, so the 200k ingest pause doesn't hold them. Each costs a few database writes: a pace of up to about 200 items a second is fine.
+
 ## Re-analysis
 
 Always estimate first:

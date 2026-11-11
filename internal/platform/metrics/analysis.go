@@ -21,7 +21,7 @@ func analysisHist(name, help string, buckets []float64, labels ...string) *prome
 
 var (
 	// Ingest.
-	AnalysisIngested     = analysisCounter("items_ingested_total", "Items ingested by platform, kind and outcome (new, edited, unchanged, skipped, deleted, redacted, suppressed).", "platform", "outcome")
+	AnalysisIngested     = analysisCounter("items_ingested_total", "Items ingested by platform, kind and outcome (new, edited, unchanged, skipped, deleted, redacted, suppressed; adopted: analysed from fb.*, its first contract version published without a new AI call).", "platform", "outcome")
 	AnalysisUndecodable  = analysisCounter("records_undecodable_total", "Input records that could not be decoded.", "topic")
 	AnalysisIngestPaused = analysisGauge("ingest_paused", "1 while new content waits in Kafka because the analysis queue is full (analysis.backpressure).")
 
