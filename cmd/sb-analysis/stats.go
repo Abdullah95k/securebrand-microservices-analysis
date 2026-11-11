@@ -127,6 +127,9 @@ func printRequests(b *strings.Builder, r store.PlatformReport) {
 				per(q.InputTokens, q.Done), per(q.CacheReadTokens, q.Done), per(q.CacheWriteTokens, q.Done), per(q.OutputTokens, q.Done),
 				q.CostUSD, per1k)
 		}
+		if len(q.FailReasons) > 0 {
+			fmt.Fprintf(b, "  failed because (no answer, nothing paid): %s\n", countsByCount(q.FailReasons))
+		}
 	}
 	routes := make([]string, 0, len(r.Resent))
 	for route := range r.Resent {

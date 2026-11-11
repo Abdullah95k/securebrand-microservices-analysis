@@ -110,8 +110,11 @@ func TestStatsRequestsAndUrgentSetup(t *testing.T) {
 			(gen_random_uuid(), 'comment', 'batch', 'anthropic', 'claude-haiku-5-5', 1, '{c1}', 'done', 200, 150, 7000, 7000, 0.0001),
 			(gen_random_uuid(), 'comment', 'batch', 'anthropic', 'claude-haiku-5-5', 1, '{c4}', 'done', 200, 150, 7000, 0, 0.0001),
 			(gen_random_uuid(), 'comment', 'batch', 'anthropic', 'claude-haiku-5-5', 2, '{c5,c6}', 'failed', NULL, NULL, NULL, NULL, NULL),
+			(gen_random_uuid(), 'comment', 'batch', 'anthropic', 'claude-haiku-5-5', 1, '{c9}', 'failed', NULL, NULL, NULL, NULL, NULL),
 			(gen_random_uuid(), 'comment', 'batch', 'anthropic', 'claude-haiku-5-5', 2, '{c7,c8}', 'submitted', NULL, NULL, NULL, NULL, NULL),
 			(gen_random_uuid(), 'post', 'realtime', 'anthropic', 'claude-haiku-5-5', 1, '{p1}', 'done', 900, 300, 6000, 0, 0.0004)`,
+		`UPDATE analysis.provider_requests SET error = CASE WHEN items = 2
+			THEN 'batch request errored: Overloaded (529)' ELSE 'never sent: the process stopped' END WHERE status = 'failed'`,
 		`INSERT INTO analysis.provider_requests (request_id, route, lane, provider, model, items, content_ids, status, created_at)
 			VALUES (gen_random_uuid(), 'comment', 'batch', 'anthropic', 'claude-haiku-5-5', 1, '{c2}', 'done', now() - interval '2 days')`,
 		`INSERT INTO analysis.clients (client_id, name) VALUES ('client-1', 'Client 1'), ('client-2', 'Client 2')`,
@@ -146,9 +149,10 @@ func TestStatsRequestsAndUrgentSetup(t *testing.T) {
 	}
 	text := out.String()
 	for _, want := range []string{
-		"requests, comment route, batch lane: 5 sent (3 done, 1 failed, 1 in flight), 9 items, 1.80 items a request, 2 with one item (40%)",
+		"requests, comment route, batch lane: 6 sent (3 done, 2 failed, 1 in flight), 10 items, 1.67 items a request, 3 with one item (50%)",
 		"  per done request: 333 input, 7000 cache read, 2333 cache write, 250 output tokens; $0.00 in all, $0.080 per 1,000 items",
 		"requests, post route, realtime lane: 1 sent (1 done, 0 failed, 0 in flight), 1 items, 1.00 items a request, 1 with one item (100%)",
+		"  failed because (no answer, nothing paid): batch request errored: Overloaded (#) 1, never sent: the process stopped 1",
 		"re-sent, comment route: 1 items sent more than once (1 extra sends)",
 		"real-time lane rules: 1 hot accounts in the config; 2 accounts monitored by 2 clients; 1 entities tracked",
 		"comments, tiktok (by Iraq day, since the window's first): 1000 received, 98 in the 10% sample (9.8%), 2 kept outside it for the real-time lane; the rest counted, not stored; scale the analysed comments by 10 for all",
