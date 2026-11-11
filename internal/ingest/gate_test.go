@@ -34,3 +34,32 @@ func TestGateHysteresisAndPace(t *testing.T) {
 	fail = errors.New("database down")
 	step(0, time.Second, true) // an unknown depth keeps the last answer
 }
+
+// TestGatesShareOneCount: the comment and post gates, checked one after the
+// other, count the queue once per check; a failed count isn't reused.
+func TestGatesShareOneCount(t *testing.T) {
+	counts := 0
+	var fail error
+	clock := time.Unix(0, 0)
+	now := func() time.Time { return clock }
+	depth := sharedDepth(func(context.Context) (int64, error) { counts++; return 12, fail }, 500*time.Millisecond, now)
+	comments := &Gate{Max: 10, Resume: 5, Every: time.Second, now: now, Depth: depth}
+	posts := &Gate{Max: 50, Resume: 40, Every: time.Second, now: now, Depth: depth}
+	ctx := context.Background()
+	for i := range 3 {
+		clock = clock.Add(time.Second)
+		if !comments.Full(ctx) || posts.Full(ctx) {
+			t.Fatal("want comments full at 12, posts not")
+		}
+		if counts != i+1 {
+			t.Fatalf("check %d: counted %d times, want %d", i+1, counts, i+1)
+		}
+	}
+	fail = errors.New("database down")
+	clock = clock.Add(time.Second)
+	comments.Full(ctx)
+	posts.Full(ctx)
+	if counts != 5 {
+		t.Fatalf("after a failed count: counted %d times, want 5 (the failure not reused)", counts)
+	}
+}

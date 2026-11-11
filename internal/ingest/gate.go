@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -44,4 +45,33 @@ func (g *Gate) Full(ctx context.Context) bool {
 		g.full = false
 	}
 	return g.full
+}
+
+// SharedDepth lets gates that are checked together share one count: a
+// reading is reused for window after it was taken. The comment and post
+// gates, checked one after the other, then count the queue once, not twice.
+func SharedDepth(depth func(context.Context) (int64, error), window time.Duration) func(context.Context) (int64, error) {
+	return sharedDepth(depth, window, time.Now)
+}
+
+func sharedDepth(depth func(context.Context) (int64, error), window time.Duration, now func() time.Time) func(context.Context) (int64, error) {
+	var (
+		mu sync.Mutex
+		at time.Time
+		n  int64
+	)
+	return func(ctx context.Context) (int64, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !at.IsZero() && now().Sub(at) < window {
+			return n, nil
+		}
+		start := now()
+		v, err := depth(ctx)
+		if err != nil {
+			return 0, err
+		}
+		n, at = v, start
+		return n, nil
+	}
 }
