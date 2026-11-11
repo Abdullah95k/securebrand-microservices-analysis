@@ -93,6 +93,11 @@ func TestProductionConfig(t *testing.T) {
 	if bp := a.Backpressure; bp.MaxQueue != 200000 || bp.MaxQueuePosts < 5*bp.MaxQueue || bp.ResumeQueuePosts >= bp.MaxQueuePosts {
 		t.Errorf("backpressure %+v: want comments at 200k, posts at 5 times that or more", bp)
 	}
+	// A batch round fills its threads' requests from the queue (the
+	// platform, 11 Nov).
+	if a.Batch.TopUpItems <= 0 {
+		t.Errorf("batch.top_up_items %d, want a round to fill its threads", a.Batch.TopUpItems)
+	}
 	// A file announced before its post waits for it (the platform, 11 Nov),
 	// and stops waiting with time to spare before its deadline: at least
 	// a few media leases.

@@ -113,6 +113,12 @@ type BatchLane struct {
 	MaxRequests int           `koanf:"max_requests"`
 	// MaxItems caps the items claimed per submission.
 	MaxItems int `koanf:"max_items"`
+	// TopUpItems: after claiming, a round also claims each claimed
+	// thread's other waiting comments (up to grouping.max_items a thread),
+	// at most this many in all (0 = off). A claim of the oldest items holds
+	// one or two of most threads, so without it most requests carry one or
+	// two comments and the cached prompt is read once for each.
+	TopUpItems int `koanf:"top_up_items"`
 	// SubmitLease is how long claimed items stay leased while their
 	// batch is built and sent: a process that dies or fails before sending
 	// gives them back within it.

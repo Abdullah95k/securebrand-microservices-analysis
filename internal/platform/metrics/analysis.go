@@ -38,6 +38,7 @@ var (
 	AnalysisRefusals     = analysisCounter("refusals_total", "Requests the model refused.", "route", "model")
 	AnalysisRateFallback = analysisCounter("rate_limit_fallback_total", "Requests limited per process because Valkey, which shares the limit, was unreachable.", "provider")
 	AnalysisFollowUps    = analysisCounter("follow_ups_total", "Items queued for escalation or audit.", "route")
+	AnalysisToppedUp     = analysisCounter("items_topped_up_total", "Batch items claimed to fill their thread's request (analysis.batch.top_up_items).", "route")
 	AnalysisDeduplicated = analysisCounter("items_deduplicated_total", "Items that shared the answer of an identical item of the same thread and parent (not sent to the model).", "route")
 	AnalysisDeadLetters  = analysisGauge("dead_letters", "Items given up after max attempts (analysis.dead_letters), waiting for replay-failed.")
 

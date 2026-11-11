@@ -25,7 +25,7 @@ type Claimed struct {
 
 // Claim leases up to limit queue entries of a lane and route, oldest first
 // within priority, enqueued at least minAge ago (so a thread's siblings can
-// arrive), and loads their items.
+// arrive), and loads their items, returned in that order.
 func (s *Store) Claim(ctx context.Context, lane, route string, limit int, lease, minAge time.Duration) ([]Claimed, error) {
 	rows, err := s.DB.Query(ctx, `
 		WITH c AS (
@@ -34,11 +34,59 @@ func (s *Store) Claim(ctx context.Context, lane, route string, limit int, lease,
 			  AND (lease_until IS NULL OR lease_until < now())
 			  AND enqueued_at <= now() - make_interval(secs => $5)
 			ORDER BY priority, enqueued_at
-			LIMIT $3 FOR UPDATE SKIP LOCKED)
-		UPDATE analysis.analysis_queue q SET lease_until = now() + make_interval(secs => $4), attempts = q.attempts + 1
-		FROM c WHERE q.content_id = c.content_id AND q.route = c.route
-		RETURNING q.content_id, q.created_at, q.route, q.lane, q.priority, q.reason, q.attempts`,
+			LIMIT $3 FOR UPDATE SKIP LOCKED),
+		u AS (
+			UPDATE analysis.analysis_queue q SET lease_until = now() + make_interval(secs => $4), attempts = q.attempts + 1
+			FROM c WHERE q.content_id = c.content_id AND q.route = c.route
+			RETURNING q.content_id, q.created_at, q.route, q.lane, q.priority, q.reason, q.attempts, q.enqueued_at)
+		-- Oldest first, as claimed: groups and their requests follow this order.
+		SELECT content_id, created_at, route, lane, priority, reason, attempts FROM u ORDER BY priority, enqueued_at, content_id`,
 		lane, route, limit, lease.Seconds(), minAge.Seconds())
+	if err != nil {
+		return nil, err
+	}
+	var out []Claimed
+	for rows.Next() {
+		var c Claimed
+		if err := rows.Scan(&c.Item.ContentID, &c.Item.CreatedAt, &c.Route, &c.Lane, &c.Priority, &c.Reason, &c.Attempts); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || len(out) == 0 {
+		return nil, err
+	}
+	return s.loadClaimed(ctx, out)
+}
+
+// ClaimThreads tops up a claim with more waiting entries of the given
+// threads (same lane and route): up to room[i] for threads[i], oldest first
+// within priority, and at most limit in all, threads in the order given. Only entries never claimed
+// before (attempts 0) are taken: one retried after a failure is sent alone
+// anyway. A round's requests then carry a thread's waiting comments
+// together, so the cached prompt is read once for many of them.
+func (s *Store) ClaimThreads(ctx context.Context, lane, route string, threads []string, room []int, limit int, lease time.Duration) ([]Claimed, error) {
+	if len(threads) == 0 || len(threads) != len(room) || limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.DB.Query(ctx, `
+		WITH c AS (
+			SELECT x.content_id, x.route FROM unnest($3::text[], $4::int[]) AS t(thread_id, room)
+			CROSS JOIN LATERAL (
+				SELECT content_id, route FROM analysis.analysis_queue
+				WHERE thread_id = t.thread_id AND route = $2 AND lane = $1 AND attempts = 0
+				  AND not_before <= now() AND (lease_until IS NULL OR lease_until < now())
+				ORDER BY priority, enqueued_at
+				LIMIT t.room FOR UPDATE SKIP LOCKED) x
+			LIMIT $5),
+		u AS (
+			UPDATE analysis.analysis_queue q SET lease_until = now() + make_interval(secs => $6), attempts = q.attempts + 1
+			FROM c WHERE q.content_id = c.content_id AND q.route = c.route
+			RETURNING q.content_id, q.created_at, q.route, q.lane, q.priority, q.reason, q.attempts, q.enqueued_at)
+		SELECT content_id, created_at, route, lane, priority, reason, attempts FROM u ORDER BY priority, enqueued_at, content_id`,
+		lane, route, threads, room, limit, lease.Seconds())
 	if err != nil {
 		return nil, err
 	}
