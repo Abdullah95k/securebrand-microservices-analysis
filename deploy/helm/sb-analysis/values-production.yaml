@@ -88,10 +88,12 @@ config:
       dsn: ""            # "" = the parts above
       max_conns: 4
     # Every collector (the owner, 7 November 2026): the contract's content.*
-    # topics, which fbs, tks, yts and igs publish as each adopts the
-    # contract, and fbs's own fb.* topics until fbs does (their results stay
-    # in Postgres; they have no contract IDs).
-    inputs: [content, fb]
+    # topics, which fbs, tks, yts and igs publish. fbs publishes its posts
+    # and comments there since 11 November 2026, 21:45 Iraq time (the master,
+    # #110), so of fbs's own topics only its media hand-off and erasures
+    # are read (fb-media): reading fb.post.v1 and fb.comment.v1 too would
+    # analyse an item again each time either path re-scrapes it.
+    inputs: [content, fb-media]
     # $60 a day, a hard stop (the owner, 11 November 2026; D-052, raised
     # from $10, D-031): once today's spend (Iraq time) reaches it, every
     # paid call waits for the next day, urgent items and the topic and

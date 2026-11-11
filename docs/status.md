@@ -1,13 +1,13 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 11 November 2026, 20:50 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 11 November 2026, 22:10 (Iraq time).*
 
 ## Where it stands
 
 | Area | State |
 |---|---|
 | Code | Built and tested: unit and integration tests with race detection against real Postgres, Redpanda and Valkey. In `main` of the public repository `Abdullah95k/securebrand-microservices-analysis`. **A repository of its own since 6 Nov** (REQ-011 fix 1, `b080a72`): fbs's code is removed, and fbs's module is a dependency for the fb protos only. |
-| Running | **Started in production (7 Nov, 06:39 Iraq time)** at `5df7e33`: the migrate hook passed and svc-analysis synced. It reads `[content, fb]`, with a $10 daily hard stop and Claude Haiku. Running at `fdf8e73` since 10:47 Iraq time, 7 Nov (less database use while idle). The whisper server is up: the model download finished and it is Ready. PostgreSQL now allows 200 connections (was 50), since 14:32 Iraq time. No new runs on the shared server (owner's D-026). |
+| Running | **Started in production (7 Nov, 06:39 Iraq time)** at `5df7e33`: the migrate hook passed and svc-analysis synced. It read `[content, fb]` (`[content, fb-media]` since 11 Nov, 21:45 Iraq time), with a $10 daily hard stop and Claude Haiku. Running at `fdf8e73` since 10:47 Iraq time, 7 Nov (less database use while idle). The whisper server is up: the model download finished and it is Ready. PostgreSQL now allows 200 connections (was 50), since 14:32 Iraq time. No new runs on the shared server (owner's D-026). |
 | Pilot server | **No new runs there** (owner's D-026, 6 Nov). The Compose deployment next to the fbs pilot (`deploy/analysis/compose.yml`) stays in the repository; it was never started. |
 | Quality | **Not measured, and on hold.** The owner (7 Nov): "just Haiku for now", so the one-off check with Opus labels (about $3–5) doesn't run. Haiku can still be measured at no AI cost if a person labels the sample (`docs/analysis/evaluation.md`, section 2). |
 | Contract | **Contract v1.2.0** (owner, 7 Nov; REQ-022 done on v1.0.0, `fe0dc52`). sb-analysis reads the contract's `content.post.v1`, `content.comment.v1`, `content.media.ready.v1` and `content.media.deleted.v1`, and publishes the contract's `analysis.*` and `content.media.processed.v1` (as `sb-analysis`). In CI, every kind it produces passes the contract's own conformance checks (production mode). It also reads fbs's `fb.*`, whose results stay in Postgres. Record: [`analysis-contract-adoption.md`](master/analysis-contract-adoption.md). |
@@ -369,3 +369,15 @@
     - Entries queued before it get their page from a throttled backfill in the `rollup` role: 10,000 entries a pass, a 2-second pause, its place kept across restarts. `stats` prints its progress.
   - **Also in review: live first for fbs's backfill** (the master, 17:46Z). A contract post or comment marked `provenance.mode = CRAWL_MODE_BACKFILL` takes the batch lane at background priority, so claims take every live item before it.
   - **Confirmed for the master** (tested): a comment already analysed from `fb.*` and sent again through the contract is adopted with no AI call, even outside the 10% sample, and published once. Sent again unchanged, nothing happens. A comment never seen is kept only in the sample.
+- **11 Nov, 22:10 Iraq time: fuller requests in production; fbs through the contract.**
+  - **Live:** `c0e38aa` (the accurate estimate, fb-media) at 20:57; `b6bd362` (the page top-up, live first for backfills) at about 21:05 (master #108, #109).
+  - **The reading** (the master, `stats 1h` at 18:16Z):
+    - comment route: 2,698 requests for 13,125 items, **4.86 items a request, 49% one-item** (was 1.00 and 100%). 49% is expected with the 10% sample: a thread keeps about 1 comment in 10;
+    - post route: 732 requests for 10,000 items, 13.66 items a request, 1% one-item;
+    - spend today $28.20 of $60; comment $21.46 of $30 ($15.31 answered, 10,761 requests in flight at $6.16, mostly at the old, higher estimate until they come back);
+    - new requests priced at 152 output tokens an item, the prompt 100% read from the cache (135,777 answered in the last day);
+    - page backfill running: 540,000 queue entries read, 313,573 short posts given their page;
+    - the sample: 10.0% on fb, ig and tt, 9.9% on yt.
+  - **fbs switched** at 21:45 (the master, #110): fbs `3af55b0` publishes its posts and comments on `content.*`, and sb-analysis reads `[content, fb-media]`. Facebook items now come from `content.*`.
+  - **In review:** `values-production.yaml` set to `[content, fb-media]` (the master agreed), so a deploy from the repository doesn't read both paths again.
+  - **Next:** the master's 19:20Z reading (the real cost per 1,000 comments on the new code); fbs's backfill (fbs #84), which the master will announce.
