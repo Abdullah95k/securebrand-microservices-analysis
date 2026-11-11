@@ -338,3 +338,35 @@ func orDefault(s, d string) string {
 	}
 	return s
 }
+
+// publishAdopted publishes an adopted item's current analysis on
+// analysis.result.v1, in the contract's format with the contract's IDs and
+// envelope.version, as if it had just been analysed: no AI call. It reports
+// false when the item has no current analysis.
+func publishAdopted(ctx context.Context, tx pgx.Tx, it *core.Item) (bool, error) {
+	var res []byte
+	var p core.Provenance
+	var route string
+	var inputHash []byte
+	var version int
+	err := tx.QueryRow(ctx, `SELECT result, route, lane, provider, model, prompt_version, taxonomy_version, schema_version,
+			input_hash, fallback, analyzed_at, version
+		FROM analysis.analyses WHERE created_at = $1 AND content_id = $2 AND is_current`, it.CreatedAt, it.ContentID).
+		Scan(&res, &route, &p.Lane, &p.Provider, &p.Model, &p.PromptVersion, &p.TaxonomyVersion, &p.SchemaVersion,
+			&inputHash, &p.Fallback, &p.AnalyzedAt, &version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var x core.Result
+	if err := json.Unmarshal(res, &x); err != nil {
+		return false, fmt.Errorf("adopted %s: stored result: %w", it.ContentID, err)
+	}
+	ev := ItemEvent(it, &x, &p, route, inputHash, version)
+	if ev.AuthorBot, err = authorBot(ctx, tx, it.Platform, it.AuthorKey); err != nil {
+		return false, err
+	}
+	return true, outbox(ctx, tx, topics.AnalysisResult, it.ContentID, ev)
+}
