@@ -43,6 +43,10 @@
 
 1. **fbs's move to the contract:** a cut-over at one time T, designed when fbs's version is near (master, 7 Nov). No adapters for tks, igs or yts.
 2. **sb-analysis's own text copy:** keep it, or slim it to working state once the platform's entity layer and the client app exist (the owner's decision 7, "keep both for now"; REQ-011, later).
+3. **The paused comments (owner, 11 Nov):** about 3.05M comments wait in Kafka, and at today's caps about 2.5M of them would expire from Kafka between about 01:00 on 18 Nov and 17:00 on 18 Nov (Iraq time). The choices, with the numbers, are under "11 Nov, 17:20 Iraq time" below:
+   - raise the text caps for about a week;
+   - store the waiting items in Postgres first, and analyse them at a chosen pace;
+   - let them expire, and have the collectors replay them later.
 
 ## Changes since the last update
 
@@ -263,3 +267,24 @@
   - My premise that posts were few was wrong: short posts queue on the comment route.
   - Comments stay paused until the queue falls to 150k. Numbers for the owner's choice (raise the text caps for a few days, or a later backfill) are with the master.
   - **In review (the master agreed):** a safety valve. Posts pause too, at 1,000,000 queued (resume at 900,000), with `sb_analysis_ingest_posts_paused` and `AnalysisIngestPostsPaused`.
+- **11 Nov, 17:20 Iraq time: the comment backlog** (the master's readings at 14:20Z).
+  - **Waiting:**
+    - in Kafka: 2,297,212 comments on `content.comment.v1`, 747,903 on `fb.comment.v1`, and 531,733 posts on `content.post.v1`;
+    - in the queue: about 537k.
+    - Real cost in the last 24 h: comment $12.74, post $1.39, image $1.85, video $0.20.
+  - **Arrivals:** the 3.05M comments arrived in about 16 h, since the pause at about 22:00Z on 10 Nov. That's about 30× the pace before 10 Nov, so it looks like the collectors' catch-up. I've asked the master for the hourly rates and for the age of the oldest unread record.
+  - **At today's caps:**
+    - text runs at about 250–270k items a day;
+    - comments resume around 03:00 on 16 Nov (Iraq time), if the catch-up ends now and posts arrive at about 60k a day;
+    - by the time the oldest pass Kafka's 7 days, about 400k comments are read, and about 2.5M expire.
+  - **Saving them through Kafka alone:**
+    - about 630k items a day for 7 days: comment route about $70 a day and post route about $30 (half the posts long), with the daily cap about $130;
+    - about $430 more over the week, of which about $330 is for the comments that would otherwise expire.
+    - This only works if the catch-up has ended.
+  - **Store first (my suggestion, for the owner):** raise the comment pause to about 6M, so ingest moves the waiting items into Postgres in about 8–10 hours.
+    - Nothing expires, and there's no AI cost until items are analysed.
+    - It costs roughly 5–10 GB of disk and several hours of heavy writes on the shared server, which needs the owner's approval.
+    - It's a config change only.
+  - **Backfill instead:** let them expire, and the collectors replay them later. The AI cost per item is the same. It depends on their stores keeping everything.
+  - **`content.post.v1` still 532k behind:** ingest ran at about 117 items/s in the first hour, which would clear 532k in about 75 minutes. Readings are asked for, to tell whether posts are still arriving fast or ingest slowed.
+  - **In review:** the comment and post gates now share one queue count (`82b6503`), instead of counting the queue twice every 5 s.
