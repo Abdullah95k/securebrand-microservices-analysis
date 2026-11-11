@@ -29,6 +29,12 @@ type Provider struct {
 	// Transcribing, when set, runs inside Transcribe (tests hold a
 	// transcription open with it); its error is returned.
 	Transcribing func(ctx context.Context) error
+	// Collecting, when set, runs inside BatchResults (tests hold a batch's
+	// collection open with it); its error is returned.
+	Collecting func(ctx context.Context) error
+	// Unfinished, when set, makes BatchDone report the batches it matches
+	// as still running.
+	Unfinished func(id string) bool
 
 	mu      sync.Mutex
 	batches map[string][]provider.Request
@@ -262,12 +268,15 @@ func (p *Provider) SubmitBatch(_ context.Context, reqs []provider.Request) (stri
 	return id, nil
 }
 
-// BatchDone is always true for known batches.
+// BatchDone is true for known batches, unless Unfinished says otherwise.
 func (p *Provider) BatchDone(_ context.Context, id string) (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if _, ok := p.batches[id]; !ok {
 		return false, fmt.Errorf("fake: unknown batch %s", id)
+	}
+	if p.Unfinished != nil && p.Unfinished(id) {
+		return false, nil
 	}
 	return true, nil
 }
@@ -290,6 +299,11 @@ func (p *Provider) BatchResults(ctx context.Context, id string) ([]provider.Batc
 	p.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("fake: unknown batch %s", id)
+	}
+	if p.Collecting != nil {
+		if err := p.Collecting(ctx); err != nil {
+			return nil, err
+		}
 	}
 	out := make([]provider.BatchResult, 0, len(reqs))
 	for _, r := range reqs {

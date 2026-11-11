@@ -3,6 +3,7 @@ package pipeline_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -107,5 +108,102 @@ func TestBatchFirstRoundAtStart(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestBatchSubmitsWhileCollecting: a batch's collection that takes long
+// (held open here) doesn't hold back submission: a new item is sent in a
+// batch of its own meanwhile. On 11 Nov both ran in one loop, and polls
+// collecting several batches of 1,000 results held back every submission
+// for over an hour.
+func TestBatchSubmitsWhileCollecting(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) {
+		c.Batch.SubmitEvery, c.Batch.PollEvery = 20*time.Millisecond, 10*time.Millisecond
+	})
+	collecting := make(chan struct{}, 1)
+	e.primary.Collecting = func(ctx context.Context) error {
+		select {
+		case collecting <- struct{}{}:
+		default:
+		}
+		<-ctx.Done() // held open until the loop stops
+		return ctx.Err()
+	}
+	e.ingest(t, comment(1, "الخدمة ممتازة"))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- e.p.RunBatch(ctx) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	select {
+	case <-collecting:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first batch was never sent and collected")
+	}
+	// The first batch's collection is held open; a new comment still goes
+	// out.
+	c := comment(2, "الشبكة ضعيفة")
+	c.ThreadID, c.ParentID = "fb:post:2", "fb:post:2"
+	e.ingest(t, c)
+	deadline := time.Now().Add(10 * time.Second)
+	for e.count(t, `SELECT count(*) FROM analysis.provider_batches`) < 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("no batch sent while a collection was held open: submission waited for it")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestPollChecksEachBatchOnce: a poll checks each open batch once,
+// collects the finished ones, and releases the one still running for the
+// next poll (not claimed again and again within the poll).
+func TestPollChecksEachBatchOnce(t *testing.T) {
+	e := setup(t, nil)
+	ctx := context.Background()
+	for i := range 3 {
+		c := comment(i+1, "تعليق")
+		c.ThreadID, c.ParentID = fmt.Sprintf("fb:post:%d", i+10), fmt.Sprintf("fb:post:%d", i+10)
+		e.ingest(t, c)
+		if err := e.p.SubmitBatches(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'in_progress'`); n != 3 {
+		t.Fatalf("%d open batches, want 3", n)
+	}
+	var checks int
+	var mu sync.Mutex
+	e.primary.Unfinished = func(id string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		if id == "fakebatch_2" {
+			checks++
+			return true
+		}
+		return false
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'ended'`); n != 2 {
+		t.Fatalf("%d batches collected, want the 2 finished", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'in_progress' AND lease_until IS NULL`); n != 1 {
+		t.Fatal("the running batch wasn't released for the next poll")
+	}
+	if checks != 1 {
+		t.Fatalf("the running batch was checked %d times in one poll, want 1", checks)
+	}
+	// Once finished, the next poll collects it.
+	e.primary.Unfinished = nil
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'ended'`); n != 3 {
+		t.Fatalf("%d batches collected after the next poll, want 3", n)
 	}
 }

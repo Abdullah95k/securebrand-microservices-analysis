@@ -58,6 +58,11 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
   - a request counts against the budget at its estimate as soon as it is built, before it is sent;
   - once a batch is recorded, its items are leased for `batch.lease` (26 h, longer than the provider's 24 h);
   - on an error before a batch is sent, the round closes the requests built for it and releases the items not yet built. Batches already sent are followed as usual.
+- **Sending and collecting run apart** (since 11 Nov): the batch lane sends a round every `batch.submit_every` (10 min) and collects finished batches every `batch.poll_every` (1 min), in two loops of their own.
+  - **Why:** collecting a batch of 1,000 results took about 6 minutes in production, and a poll checks up to 10 batches. With both in one loop, no batch was sent from 21:18 to past 22:30 Iraq time on 11 Nov, with nothing in the log.
+  - **A poll** claims one open batch at a time (30 min lease, enough to collect it), collects it if finished, and releases the ones still running when it ends.
+  - **To see it:** every round logs `analysis: batch round` (route, items claimed, items after the top-up, requests sent, batches, seconds), or `analysis: batch round: nothing to claim`. Each collection logs `analysis: batch collected` with its route and seconds. A round held back by the provider's circuit logs `analysis: batch provider unavailable (circuit open)`, and every circuit change logs `analysis: provider circuit changed`.
+  - **Collection keeps up:** at about 170 requests a minute it collects about 50,000 comments an hour at 4–5 a request, against about 25,000 an hour that the $30 comment cap allows on average. If `sb_analysis_open_batches` keeps growing, collection is falling behind. Items of a batch not collected within `batch.lease` (26 h) would be sent again.
 - **Work a stopped round left behind** (a crash or restart between claim and send) comes back at the start of the next round, with `analysis: released batch work that was claimed but never sent` in the log:
   - requests recorded but never given a batch, older than `batch.submit_lease`, are marked failed, so their estimates stop counting against the day's budget;
   - items leased long but not in a sent batch are released.

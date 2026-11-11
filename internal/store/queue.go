@@ -544,6 +544,13 @@ type OpenBatch struct {
 	SubmittedAt                time.Time
 }
 
+// OpenBatchCount is how many provider batches are in progress.
+func (s *Store) OpenBatchCount(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'in_progress'`).Scan(&n)
+	return n, err
+}
+
 // ClaimOpenBatches leases batches still in progress for polling.
 func (s *Store) ClaimOpenBatches(ctx context.Context, limit int, lease time.Duration) ([]OpenBatch, error) {
 	rows, err := s.DB.Query(ctx, `

@@ -61,6 +61,11 @@ func New(cfg map[string]config.Provider, opts ...Option) (*Registry, error) {
 	for _, o := range opts {
 		o(r)
 	}
+	// A provider's circuit decides whether its batches are sent: say when
+	// it changes, so a lane held back by it is seen.
+	r.breakers.OnChange = func(name string, from, to breaker.State) {
+		slog.Warn("analysis: provider circuit changed", "provider", name, "from", from.String(), "to", to.String())
+	}
 	names := make([]string, 0, len(cfg))
 	for n := range cfg {
 		names = append(names, n)
