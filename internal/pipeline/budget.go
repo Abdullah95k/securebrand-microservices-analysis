@@ -72,6 +72,29 @@ func (b *Budget) Allow(ctx context.Context, route string, est float64, urgent bo
 	return ok, nil
 }
 
+// Exhausted reports whether the day's cap, or the route's, is already
+// reached: no request of that route can run until the next day. A caller
+// with expensive preparation (the media worker fetching and decoding a
+// file) asks this first, so a paused budget costs no work.
+func (b *Budget) Exhausted(ctx context.Context, route string) (bool, error) {
+	if b == nil || !b.limited() {
+		return false, nil
+	}
+	if err := b.refresh(ctx); err != nil {
+		return false, err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	done := b.DailyUSD > 0 && b.spent >= b.DailyUSD
+	if limit := b.RouteUSD[route]; limit > 0 && b.route[route] >= limit {
+		done = true
+	}
+	if done {
+		ametrics.BudgetPaused.Set(1)
+	}
+	return done, nil
+}
+
 // Add records spend this process just committed to (until the next
 // refresh reads it back from the database).
 func (b *Budget) Add(route string, usd float64) {
