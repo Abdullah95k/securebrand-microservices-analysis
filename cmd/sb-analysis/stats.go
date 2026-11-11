@@ -76,7 +76,7 @@ func printStats(w io.Writer, r store.PlatformReport, since time.Duration) error 
 		fmt.Fprintf(&b, "%s\n", p.Platform)
 		oldest := ""
 		if p.Waiting > 0 {
-			oldest = fmt.Sprintf(" (the oldest for %s)", waited(p.OldestWaiting))
+			oldest = fmt.Sprintf(" (%d in flight, %d backfill; the oldest not sent for %s)", p.InFlight, p.Backfill, waited(p.OldestWaiting))
 		}
 		fmt.Fprintf(&b, "  items: %d ingested, %d analysed (%d refused), %d waiting%s, %d in dead letters\n",
 			p.Ingested, p.Analysed, p.Refused, p.Waiting, oldest, p.DeadLetters)
