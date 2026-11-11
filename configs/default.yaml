@@ -178,9 +178,13 @@ analysis:
   # down to resume_queue. Posts (few, and their media waits for them), media
   # announcements and erasures keep flowing. The queue can pass max_queue by
   # at most one ingest batch, plus the posts.
+  # Posts wait too, but only at a much higher cap: a safety valve, so one
+  # collector's backfill can't grow the queue without bound (0 = never).
   backpressure:
     max_queue: 200000
     resume_queue: 150000
+    max_queue_posts: 1000000
+    resume_queue_posts: 900000
     check_every: 5s
   rate_limit:
     key_prefix: "sb-analysis:rl:"

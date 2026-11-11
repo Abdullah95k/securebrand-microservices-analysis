@@ -33,10 +33,14 @@ type Consumer struct {
 	media    bool
 	maxBatch int
 	linger   time.Duration
-	// gate pauses the content topics (paused) while the queue is full.
-	gate    *Gate
-	content []string
-	paused  bool
+	// gate pauses the comment topics (paused) while the queue is full;
+	// postGate, at a much higher cap, the post topics (postsPaused).
+	gate        *Gate
+	content     []string
+	paused      bool
+	postGate    *Gate
+	posts       []string
+	postsPaused bool
 }
 
 // Config configures the consumer.
@@ -50,9 +54,11 @@ type Config struct {
 	Consumer string // media ack consumer name
 	MaxBatch int
 	Linger   time.Duration
-	// Gate, when set, pauses the content topics while the analysis queue is
-	// full; media announcements and erasures keep flowing.
-	Gate *Gate
+	// Gate, when set, pauses the comment topics while the analysis queue is
+	// full; media announcements and erasures keep flowing. PostGate, when
+	// set, pauses the post topics at its own, much higher cap.
+	Gate     *Gate
+	PostGate *Gate
 }
 
 // New creates the consumer over the decoder's topics.
@@ -92,9 +98,13 @@ func New(cfg Config) (*Consumer, error) {
 	for _, t := range cfg.Decoder.CommentTopics() {
 		content = append(content, cfg.Kafka.TopicPrefix+t)
 	}
+	posts := make([]string, 0, len(cfg.Decoder.PostTopics()))
+	for _, t := range cfg.Decoder.PostTopics() {
+		posts = append(posts, cfg.Kafka.TopicPrefix+t)
+	}
 	return &Consumer{cl: cl, prefix: cfg.Kafka.TopicPrefix, dec: cfg.Decoder, store: cfg.Store, plan: cfg.Plan,
 		consumer: cfg.Consumer, media: cfg.Media, maxBatch: cfg.MaxBatch, linger: cfg.Linger,
-		gate: cfg.Gate, content: content}, nil
+		gate: cfg.Gate, content: content, postGate: cfg.PostGate, posts: posts}, nil
 }
 
 // Run consumes until ctx ends.
@@ -155,6 +165,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 // full, and resumes them once it has room. Paused records stay in Kafka;
 // posts, media announcements and erasures keep flowing.
 func (c *Consumer) backpressure(ctx context.Context) {
+	c.postBackpressure(ctx)
 	if c.gate == nil {
 		return
 	}
@@ -172,6 +183,28 @@ func (c *Consumer) backpressure(ctx context.Context) {
 	c.cl.ResumeFetchTopics(c.content...)
 	ametrics.IngestPaused.Set(0)
 	slog.Info("ingest: analysis queue has room again; comments resume")
+}
+
+// postBackpressure pauses the post topics at the post gate's much higher
+// cap: a safety valve against one collector's backfill.
+func (c *Consumer) postBackpressure(ctx context.Context) {
+	if c.postGate == nil || len(c.posts) == 0 {
+		return
+	}
+	full := c.postGate.Full(ctx)
+	if full == c.postsPaused {
+		return
+	}
+	c.postsPaused = full
+	if full {
+		c.cl.PauseFetchTopics(c.posts...)
+		ametrics.IngestPostsPaused.Set(1)
+		slog.Warn("ingest: analysis queue at the post cap; new posts wait in Kafka too", "max", c.postGate.Max, "resume_at", c.postGate.Resume)
+		return
+	}
+	c.cl.ResumeFetchTopics(c.posts...)
+	ametrics.IngestPostsPaused.Set(0)
+	slog.Info("ingest: analysis queue under the post cap again; posts resume")
 }
 
 // Flush stores one batch: items first, then media jobs, then erasures, so

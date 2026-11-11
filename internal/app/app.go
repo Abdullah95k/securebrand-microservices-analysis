@@ -180,9 +180,15 @@ func (a *App) Components(roles []string) ([]func(context.Context) error, error) 
 		switch r {
 		case "ingest":
 			bp := cfg.Backpressure
-			gate := &ingest.Gate{Max: bp.MaxQueue, Resume: bp.ResumeQueue, Every: bp.CheckEvery, Depth: a.Store.QueueDepth}
+			// Both gates read one count of the queue per check.
+			depth := ingest.SharedDepth(a.Store.QueueDepth, bp.CheckEvery/2)
+			gate := &ingest.Gate{Max: bp.MaxQueue, Resume: bp.ResumeQueue, Every: bp.CheckEvery, Depth: depth}
+			var postGate *ingest.Gate
+			if bp.MaxQueuePosts > 0 {
+				postGate = &ingest.Gate{Max: bp.MaxQueuePosts, Resume: bp.ResumeQueuePosts, Every: bp.CheckEvery, Depth: depth}
+			}
 			c, err := ingest.New(ingest.Config{Kafka: a.Kafka, Group: cfg.ConsumerGroup, Decoder: adapter.NewDecoder(cfg.Inputs),
-				Store: a.Store, Plan: a.Pipeline.Plan, Media: cfg.Media.Enabled, Consumer: cfg.Media.Consumer, Gate: gate})
+				Store: a.Store, Plan: a.Pipeline.Plan, Media: cfg.Media.Enabled, Consumer: cfg.Media.Consumer, Gate: gate, PostGate: postGate})
 			if err != nil {
 				return nil, err
 			}

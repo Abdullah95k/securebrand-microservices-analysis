@@ -88,6 +88,11 @@ func TestProductionConfig(t *testing.T) {
 	if a.Media.Lease < 30*time.Minute {
 		t.Errorf("media lease %v is shorter than a slow transcription", a.Media.Lease)
 	}
+	// Comments wait at the 200k cap, posts only at the much higher post cap
+	// (the platform, 11 Nov): a safety valve against a collector's backfill.
+	if bp := a.Backpressure; bp.MaxQueue != 200000 || bp.MaxQueuePosts < 5*bp.MaxQueue || bp.ResumeQueuePosts >= bp.MaxQueuePosts {
+		t.Errorf("backpressure %+v: want comments at 200k, posts at 5 times that or more", bp)
+	}
 	// A file announced before its post waits for it (the platform, 11 Nov),
 	// and stops waiting with time to spare before its deadline: at least
 	// a few media leases.

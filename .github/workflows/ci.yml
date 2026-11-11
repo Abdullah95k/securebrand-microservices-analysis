@@ -50,6 +50,9 @@ jobs:
 
   integration:
     runs-on: ubuntu-latest
+    # A normal run takes about 4 minutes; a hung step must not hold the PR
+    # for GitHub's default 6 hours.
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:18-alpine
@@ -67,7 +70,26 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Install ffmpeg (video key-frame tests)
-        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
+        # On 11 Nov the runner's Ubuntu mirrors were unreachable (names not
+        # resolving; runs hung or timed out here) while Docker, and Debian's
+        # mirrors inside it, worked. If apt doesn't finish quickly, ffmpeg
+        # runs from our own analysis-media image (debian:12-slim with
+        # Debian's ffmpeg, as in production) through a wrapper. Either way a
+        # short clip is made here, so a broken ffmpeg fails this step
+        # instead of the video tests skipping themselves.
+        timeout-minutes: 15
+        run: |
+          if sudo timeout 90 apt-get update -q && sudo timeout 150 apt-get install -y -q --no-install-recommends ffmpeg; then
+            echo "ffmpeg from apt"
+          else
+            echo "apt unavailable; building analysis-media to run ffmpeg from it"
+            docker build -q -f deploy/docker/Dockerfile --target analysis-media -t sb-analysis-media:ci .
+            sudo install -m 0755 .github/ci/ffmpeg-in-docker.sh /usr/local/bin/ffmpeg
+          fi
+          ffmpeg -hide_banner -version | head -1
+          ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc=duration=1:size=64x64:rate=5 \
+            -c:v libx264 -pix_fmt yuv420p -y /tmp/ffmpeg-check.mp4
+          test -s /tmp/ffmpeg-check.mp4
       - name: Start Redpanda
         run: |
           docker run -d --name redpanda -p 19092:19092 redpandadata/redpanda:v24.2.7 \

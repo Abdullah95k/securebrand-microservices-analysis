@@ -43,6 +43,9 @@
 
 1. **fbs's move to the contract:** a cut-over at one time T, designed when fbs's version is near (master, 7 Nov). No adapters for tks, igs or yts.
 2. **sb-analysis's own text copy:** keep it, or slim it to working state once the platform's entity layer and the client app exist (the owner's decision 7, "keep both for now"; REQ-011, later).
+3. **How many comments to analyse (owner, 11 Nov):** about 2.7M comments arrive a day, steadily (the master's Kafka readings), against about 270k items a day analysed at today's caps. At the measured $0.13 per 1,000, every comment would cost about $351 a day.
+   - Comments not analysed aren't lost: their raw text stays in ClickHouse (tt, yt, ig) and fbs's Postgres (fb), for a later re-analysis.
+   - The options and their costs are under "11 Nov, 17:45 Iraq time" below.
 
 ## Changes since the last update
 
@@ -258,4 +261,47 @@
   - **Merged and live** (pull request #41, `5d90a15`, with #40). Both whisper servers are Ready: 27 transcriptions ok and 0 errors in 10 minutes. media-retry: 19 videos matched, all in time, applied.
 - **11 Nov, 16:10 Iraq time: TikTok media over 5 days** (analysis-stats 120h): 105,461 announced, 822 analysed, 94,605 pending, 10,015 skipped by policy (audio covers, profile pictures).
   - **Why:** until 13:57 today the $10 cap held media most of each day; since 14:00 files wait for their posts; and the 200k pause held posts too.
-  - **In review:** the pause holds comments only, so posts flow and their media goes ahead with them. `sb-analysis stats` now shows pending media by time to deadline, and how many wait for their post.
+  - **Merged and live** (pull request #42, `661b17b`): the pause holds comments only; `sb-analysis stats` shows pending media by deadline.
+- **11 Nov, 17:15 Iraq time: after `661b17b`** (the master): media moving (449 analysed in 30 min, no holds for posts). But the queue jumped from about 201k to 537k in an hour: the posts' Kafka backlog came in at once (tiktok 279k, youtube 81k, facebook 39k, instagram's first 24k).
+  - My premise that posts were few was wrong: short posts queue on the comment route.
+  - Comments stay paused until the queue falls to 150k. Numbers for the owner's choice (raise the text caps for a few days, or a later backfill) are with the master.
+  - **In review (the master agreed):** a safety valve. Posts pause too, at 1,000,000 queued (resume at 900,000), with `sb_analysis_ingest_posts_paused` and `AnalysisIngestPostsPaused`.
+- **11 Nov, 17:20 Iraq time: the comment backlog** (the master's readings at 14:20Z).
+  - **Waiting:**
+    - in Kafka: 2,297,212 comments on `content.comment.v1`, 747,903 on `fb.comment.v1`, and 531,733 posts on `content.post.v1`;
+    - in the queue: about 537k.
+    - Real cost in the last 24 h: comment $12.74, post $1.39, image $1.85, video $0.20.
+  - **Arrivals:** the 3.05M comments arrived in about 16 h, since the pause at about 22:00Z on 10 Nov. That's about 30× the pace before 10 Nov, so it looks like the collectors' catch-up. I've asked the master for the hourly rates and for the age of the oldest unread record.
+  - **At today's caps:**
+    - text runs at about 250–270k items a day;
+    - comments resume around 03:00 on 16 Nov (Iraq time), if the catch-up ends now and posts arrive at about 60k a day;
+    - by the time the oldest pass Kafka's 7 days, about 400k comments are read, and about 2.5M expire.
+  - **Saving them through Kafka alone:**
+    - about 630k items a day for 7 days: comment route about $70 a day and post route about $30 (half the posts long), with the daily cap about $130;
+    - about $430 more over the week, of which about $330 is for the comments that would otherwise expire.
+    - This only works if the catch-up has ended.
+  - **Store first (my suggestion, for the owner):** raise the comment pause to about 6M, so ingest moves the waiting items into Postgres in about 8–10 hours.
+    - Nothing expires, and there's no AI cost until items are analysed.
+    - It costs roughly 5–10 GB of disk and several hours of heavy writes on the shared server, which needs the owner's approval.
+    - It's a config change only.
+  - **Backfill instead:** let them expire, and the collectors replay them later. The AI cost per item is the same. It depends on their stores keeping everything.
+  - **`content.post.v1` still 532k behind:** ingest ran at about 117 items/s in the first hour, which would clear 532k in about 75 minutes. Readings are asked for, to tell whether posts are still arriving fast or ingest slowed.
+  - **In review:** the comment and post gates now share one queue count (`82b6503`), instead of counting the queue twice every 5 s.
+- **11 Nov, 17:45 Iraq time: comments are a steady flow, not a catch-up** (the master, end-offset growth at 14:27Z).
+  - Comments arrive at about 2.7M a day (24 h and the last 6 h agree), and posts at about 222k a day. `content.post.v1` is draining at about 8.8k a minute, so ingest is fine.
+  - So the estimates at 17:20 (about 2.5M expiring once, and the one-week caps) are replaced by a steady-state choice.
+  - **The owner's options** (daily total including media's $30):
+    1. $60 (today): all posts, the priority comments, and about 2% of the others;
+    2. about $100: the same with a fixed 10% sample (my suggestion to start);
+    3. about $155 with 25%, or about $240 with 50%;
+    4. about $415 (about $12.5k a month): everything. This needs faster batch building and a higher claim limit first.
+  - **What exists:** watched accounts and items naming a tracked entity go first, in the real-time lane.
+  - **New code, once the owner chooses:** one selection step at ingest. It takes, in order:
+    - the urgent items;
+    - the comments on urgent posts;
+    - a stable sample of the rest.
+    - Unchosen comments are counted, not stored.
+  - **Possibly cheaper per comment** (measurements asked for):
+    - the 1-hour prompt cache for batches;
+    - no AI for comments with no letters.
+    - There's no cheaper model on our list.
