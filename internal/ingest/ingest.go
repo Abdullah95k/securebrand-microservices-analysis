@@ -247,7 +247,7 @@ func (c *Consumer) Flush(ctx context.Context, recs []*kgo.Record) error {
 		}
 		platform := group[0].Platform
 		for k, v := range map[string]int{"new": st.New, "edited": st.Edited, "unchanged": st.Unchanged, "skipped": st.Skipped, "adopted": st.Adopted,
-			"deleted": st.Deleted, "redacted": st.Redacted, "suppressed": st.Suppressed} {
+			"deleted": st.Deleted, "redacted": st.Redacted, "suppressed": st.Suppressed, "not_sampled": st.NotSampled} {
 			if v > 0 {
 				ametrics.Ingested.WithLabelValues(platform, k).Add(float64(v))
 			}

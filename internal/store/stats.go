@@ -46,6 +46,9 @@ type PlatformReport struct {
 	HotAccounts int
 	Watchlists  bool
 	Urgent      UrgentSetup
+	// Comments received and in the analysed share, by platform
+	// (CommentSampleCounts).
+	Sample []CommentSample
 }
 
 // PlatformCounts counts, per platform, what came in and what came out since t.

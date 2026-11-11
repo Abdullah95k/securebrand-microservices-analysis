@@ -27,6 +27,9 @@ type Store struct {
 	// ErasureMode is analysis.erasure.mode: "apply", "record" or "off".
 	// Anything but "apply" deletes nothing (empty acts as "record").
 	ErasureMode string
+	// CommentShare is analysis.comments.sample_share: the share of new
+	// comments stored and analysed (0 = all).
+	CommentShare float64
 
 	mu     sync.Mutex
 	months map[string]bool // partitions known to exist

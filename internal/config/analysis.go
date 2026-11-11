@@ -45,6 +45,7 @@ type Analysis struct {
 	// taking new comments (they wait in Kafka) until the queue is down to
 	// ResumeQueue. Posts, media and erasures keep flowing.
 	Backpressure AnalysisBackpressure `koanf:"backpressure"`
+	Comments     AnalysisComments     `koanf:"comments"`
 	Media        AnalysisMedia        `koanf:"media"`
 	Privacy      AnalysisPrivacy      `koanf:"privacy"`
 	Erasure      AnalysisErasure      `koanf:"erasure"`
@@ -223,6 +224,19 @@ type ModelPrice struct {
 	BatchDiscount float64 `koanf:"batch_discount"`
 	// PerMinute is the price of one audio minute (speech-to-text models).
 	PerMinute float64 `koanf:"per_minute"`
+}
+
+// AnalysisComments: which comments are analysed.
+type AnalysisComments struct {
+	// SampleShare is the share of comments analysed, in (0, 1] (1 = all).
+	// A comment is in or out by its content ID alone, so the same one
+	// always gets the same answer. A comment outside the share is counted
+	// (analysis.comment_sample_daily) but not stored or analysed; its raw
+	// text stays with the platform (ClickHouse, fbs's Postgres) for a
+	// later analysis. Items that take the real-time lane (hot accounts,
+	// tracked entities) are kept whatever the share, and a comment already
+	// stored keeps getting its edits and deletions. Posts aren't sampled.
+	SampleShare float64 `koanf:"sample_share"`
 }
 
 // AnalysisBackpressure caps the analysis queue's depth.
@@ -425,6 +439,9 @@ func (a *Analysis) Validate() error {
 		if p.Kind == "openai_compat" && p.BaseURL == "" && len(p.BaseURLs) == 0 {
 			errs = append(errs, fmt.Errorf("analysis.providers.%s.base_url is required for openai_compat", name))
 		}
+	}
+	if a.Comments.SampleShare <= 0 || a.Comments.SampleShare > 1 {
+		errs = append(errs, fmt.Errorf("analysis.comments.sample_share %v must be above 0 and at most 1", a.Comments.SampleShare))
 	}
 	if a.Grouping.MaxItems <= 0 || a.Grouping.MaxChars <= 0 {
 		errs = append(errs, errors.New("analysis.grouping.max_items and max_chars must be > 0"))

@@ -32,7 +32,14 @@ type IngestStats struct {
 	// first time through the contract: their stored analysis is published,
 	// with no new AI call (the cut-over, decision 17).
 	Adopted int
+	// NotSampled counts new comments outside analysis.comments.sample_share:
+	// counted per day and platform, not stored.
+	NotSampled int
 }
+
+// sampleCount is one Iraq day and platform's comment records: received,
+// in the sample, and kept outside it because they take the real-time lane.
+type sampleCount struct{ received, sampled, urgent int }
 
 type indexRow struct {
 	createdAt time.Time
@@ -97,6 +104,15 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 		var redact []itemKey
 		var adopt []*core.Item
 		now := time.Now().UTC()
+		share := s.CommentShare
+		if share <= 0 {
+			share = 1
+		}
+		type dayPlatform struct {
+			day      string
+			platform string
+		}
+		counts := map[dayPlatform]*sampleCount{}
 		for _, it := range items {
 			if erased["author:"+hex.EncodeToString(it.AuthorKey)] && len(it.AuthorKey) > 0 || erased["source:"+it.SourceID] {
 				st.Suppressed++
@@ -121,6 +137,29 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 					st.Deleted++
 				}
 				continue
+			}
+			if it.Kind != core.KindPost {
+				// The owner's D-053: a fixed share of comments, by ID. A
+				// comment outside it is counted, and stored only if it is
+				// stored already (its edits keep it current) or takes the
+				// real-time lane.
+				k := dayPlatform{now.In(s.Loc).Format(time.DateOnly), it.Platform}
+				c := counts[k]
+				if c == nil {
+					c = &sampleCount{}
+					counts[k] = c
+				}
+				c.received++
+				switch {
+				case core.InSample(it.ContentID, share):
+					c.sampled++
+				case seen:
+				case plan(it).Priority == core.PriorityUrgent:
+					c.urgent++
+				default:
+					st.NotSampled++
+					continue
+				}
 			}
 			hash := it.InputHash()
 			analyzable := it.Analyzable()
@@ -217,6 +256,14 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 					priority = LEAST(analysis.analysis_queue.priority, EXCLUDED.priority), reason = EXCLUDED.reason,
 					not_before = now(), lease_until = NULL, request_id = NULL, attempts = 0, enqueued_at = now()`,
 				it.ContentID, p.Route, it.CreatedAt, nilIfEmpty(it.ThreadID), p.Lane, p.Priority, reason)
+		}
+		for k, c := range counts {
+			b.Queue(`INSERT INTO analysis.comment_sample_daily (day, platform, received, sampled, urgent, share)
+				VALUES ($1::date, $2, $3, $4, $5, $6)
+				ON CONFLICT (day, platform) DO UPDATE SET received = analysis.comment_sample_daily.received + EXCLUDED.received,
+					sampled = analysis.comment_sample_daily.sampled + EXCLUDED.sampled,
+					urgent = analysis.comment_sample_daily.urgent + EXCLUDED.urgent, share = EXCLUDED.share`,
+				k.day, k.platform, c.received, c.sampled, c.urgent, share)
 		}
 		if b.Len() > 0 {
 			if err := tx.SendBatch(ctx, b).Close(); err != nil {

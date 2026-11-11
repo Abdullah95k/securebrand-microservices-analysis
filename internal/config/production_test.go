@@ -93,6 +93,10 @@ func TestProductionConfig(t *testing.T) {
 	if bp := a.Backpressure; bp.MaxQueue != 200000 || bp.MaxQueuePosts < 5*bp.MaxQueue || bp.ResumeQueuePosts >= bp.MaxQueuePosts {
 		t.Errorf("backpressure %+v: want comments at 200k, posts at 5 times that or more", bp)
 	}
+	// 10% of comments, every platform (the owner's D-053, 11 Nov).
+	if a.Comments.SampleShare != 0.10 {
+		t.Errorf("comments.sample_share %v, want 0.10 (D-053)", a.Comments.SampleShare)
+	}
 	// A batch round fills its threads' requests from the queue (the
 	// platform, 11 Nov).
 	if a.Batch.TopUpItems <= 0 {

@@ -97,3 +97,33 @@ func (s *Store) UrgentCounts(ctx context.Context) (UrgentSetup, error) {
 		Scan(&u.MonitoredSources, &u.Clients, &u.TrackedEntities)
 	return u, err
 }
+
+// CommentSample is one platform's comment records since a day (Iraq
+// days): received, in the sample, kept outside it as real-time items, and
+// the share in force on the last of those days.
+type CommentSample struct {
+	Platform                  string
+	Received, Sampled, Urgent int64
+	Share                     float64
+}
+
+// CommentSampleCounts sums analysis.comment_sample_daily from the Iraq day
+// holding since. Read-only.
+func (s *Store) CommentSampleCounts(ctx context.Context, since time.Time) ([]CommentSample, error) {
+	rows, err := s.DB.Query(ctx, `SELECT platform, sum(received)::bigint, sum(sampled)::bigint, sum(urgent)::bigint,
+			(array_agg(share ORDER BY day DESC))[1]::float8
+		FROM analysis.comment_sample_daily WHERE day >= $1::date GROUP BY 1 ORDER BY 1`, since.In(s.Loc).Format(time.DateOnly))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CommentSample
+	for rows.Next() {
+		var c CommentSample
+		if err := rows.Scan(&c.Platform, &c.Received, &c.Sampled, &c.Urgent, &c.Share); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
