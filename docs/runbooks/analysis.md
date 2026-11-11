@@ -52,11 +52,12 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
 
   A failed read keeps the last list. Media (images, videos) stays real time: its files are deleted at their deadline.
 - **To look:** `sb_analysis_queue_depth{lane="realtime"}` against `{lane="batch"}`. Each real-time item costs about twice a batch one, so every hot account adds to the daily spend, which the budget caps.
-- **How a batch round works** (every `batch.submit_every`, 10 minutes):
+- **How a batch round works** (at start, then every `batch.submit_every`, 10 minutes; before 11 Nov the first round waited 10 minutes):
   - it claims up to `batch.max_items` (10,000) due items per route, leased for `batch.submit_lease` (15 minutes) only;
-  - it builds the requests and sends them in batches of `batch.max_requests` (1,000). Each request repeats the prompt and output schema (about 23 KB), so a batch body is about 25–35 MB in memory;
+  - it builds the requests and sends each batch as soon as `batch.max_requests` (1,000) of them are built. Building runs at about 10 requests a second (a few database round trips each), so a round of 10,000 items takes about 10–15 minutes. Before 11 Nov nothing was sent until the whole round was built, and a restart in between lost the round's work. Each request repeats the prompt and output schema (about 23 KB), so a batch body is about 25–35 MB in memory;
+  - a request counts against the budget at its estimate as soon as it is built, before it is sent;
   - once a batch is recorded, its items are leased for `batch.lease` (26 h, longer than the provider's 24 h);
-  - on an error before sending, the round closes the requests it recorded and releases the rest.
+  - on an error before a batch is sent, the round closes the requests built for it and releases the items not yet built. Batches already sent are followed as usual.
 - **Work a stopped round left behind** (a crash or restart between claim and send) comes back at the start of the next round, with `analysis: released batch work that was claimed but never sent` in the log:
   - requests recorded but never given a batch, older than `batch.submit_lease`, are marked failed, so their estimates stop counting against the day's budget;
   - items leased long but not in a sent batch are released.

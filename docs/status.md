@@ -237,3 +237,6 @@
   - **Media:** in 30 min, 235 analysed, 6,234 waiting for their post, 470 failed with a retry. sba-whisper-1 was Pending; the autoscaler added 2 nodes.
   - **Found, my bug from #37:** while sba-whisper-1 wasn't Ready, a video sent to it (with sba-whisper busy) failed at once and lost a try.
   - **In review, the fix:** an unreachable server leaves the pool and is tried every 10 s. A video waits up to 1 minute for a reachable one, else goes back to the queue without losing a try. The master is checking the 470's reasons, in case there is more than this.
+- **11 Nov, 14:42 Iraq time: still no batch sent since the cap went to $60.** The master: no open batches, budget not paused, no batch log lines. But spend rose $2.70 in 10 minutes.
+  - **Cause:** a round claims 10k comment items and builds every request (about 10 a second) before sending any. The 14:07 round was cut by the restart at 14:20; the 14:30 round was still building. The spend is the requests' estimates, counted as they are built.
+  - **In review** (the master agreed): each batch goes out as soon as its 1,000 requests are built, and the first round runs at start. Also, `sb-analysis stats` shows why media files are retrying or failed (counts and reasons, for the platform's analysis-stats action; no ad-hoc SQL on production).

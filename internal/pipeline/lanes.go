@@ -76,13 +76,22 @@ func (p *Pipeline) RealtimeOnce(ctx context.Context) (int, error) {
 	return total, errors.Join(errs...)
 }
 
-// RunBatch submits batch-lane items every batch.submit_every and polls
-// open batches every batch.poll_every until ctx ends.
+// RunBatch submits batch-lane items at start and then every
+// batch.submit_every, and polls open batches every batch.poll_every, until
+// ctx ends.
 func (p *Pipeline) RunBatch(ctx context.Context) error {
 	submit := time.NewTicker(p.Cfg.Batch.SubmitEvery)
 	poll := time.NewTicker(p.Cfg.Batch.PollEvery)
 	defer submit.Stop()
 	defer poll.Stop()
+	// The first round runs at start, not one submit_every later: a restart
+	// then delays the queue by a round's build time only.
+	if err := p.PollBatches(ctx); err != nil && ctx.Err() == nil {
+		slog.Warn("analysis: batch poll", "err", err)
+	}
+	if err := p.SubmitBatches(ctx); err != nil && ctx.Err() == nil {
+		slog.Warn("analysis: batch submit", "err", err)
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -172,36 +181,102 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 		req provider.Request
 		g   group
 	}
+	// reqs are the requests built and started but not yet sent. Each batch
+	// goes out as soon as batch.max_requests of them are built, so a
+	// round's first batch leaves within a minute or two, not after the
+	// whole round is built, and a stopped round loses at most one batch's
+	// work.
 	var reqs []pending
-	// handled are the claimed items already started as a request or
-	// released (over budget). giveBack, on an error before anything was
-	// sent, closes the requests started and releases the other claimed
-	// items, so nothing waits for its lease to run out and no estimate
-	// keeps counting against the budget.
+	size := max(p.Cfg.Batch.MaxRequests, 1)
+	// handled are the claimed items already started as a request (sent or
+	// not) or released (over budget).
 	handled := map[string]bool{}
-	giveBack := func(cause error) error {
-		bg := context.WithoutCancel(ctx)
-		var started []uuid.UUID
-		for _, r := range reqs {
-			started = append(started, r.row.ID)
-		}
+	// releaseRest gives back the claimed items not yet started as a
+	// request, so none waits for its lease to run out.
+	releaseRest := func() error {
 		var rest []string
 		for _, c := range claimed {
 			if !handled[c.Item.ContentID] {
 				rest = append(rest, c.Item.ContentID)
 			}
 		}
-		reason := "batch round failed: " + cause.Error()
+		if len(rest) == 0 {
+			return nil
+		}
+		return p.Store.ReleaseUnsent(context.WithoutCancel(ctx), rest, route, 5*time.Minute)
+	}
+	// giveBack, on an error before the requests built were sent, closes
+	// them and releases the rest, so no estimate keeps counting against
+	// the budget. Batches already sent are followed as usual.
+	giveBack := func(cause error) error {
 		errs := []error{cause}
-		if len(started) > 0 {
-			errs = append(errs, p.Store.AbortRequests(bg, started, reason, 5*time.Minute))
+		if len(reqs) > 0 {
+			started := make([]uuid.UUID, len(reqs))
+			for i, r := range reqs {
+				started[i] = r.row.ID
+			}
+			errs = append(errs, p.Store.AbortRequests(context.WithoutCancel(ctx), started, "batch round failed: "+cause.Error(), 5*time.Minute))
 		}
-		if len(rest) > 0 {
-			errs = append(errs, p.Store.ReleaseUnsent(bg, rest, route, 5*time.Minute))
-		}
+		errs = append(errs, releaseRest())
 		return errors.Join(errs...)
 	}
-	for _, g := range groups {
+	// send submits the requests built so far as one batch. done reports
+	// that the round is over: the batch couldn't be sent (its requests are
+	// closed; with the fallback in use, they and the groups not yet built,
+	// later, go to it in real time) or can't be followed.
+	send := func(later []group) (done bool, err error) {
+		if len(reqs) == 0 {
+			return false, nil
+		}
+		chunk := reqs
+		reqs = nil
+		batch := make([]provider.Request, len(chunk))
+		reqIDs := make([]uuid.UUID, len(chunk))
+		for i, r := range chunk {
+			batch[i], reqIDs[i] = r.req, r.row.ID
+		}
+		id, err := batcher.SubmitBatch(ctx, batch)
+		p.Providers.Observe(prov, err)
+		if err != nil && provider.Retryable(err) {
+			p.markDown(prov)
+		}
+		if err != nil {
+			ametrics.Requests.WithLabelValues(prov, model, core.LaneBatch, "submit_error").Add(float64(len(chunk)))
+			if aerr := p.Store.AbortRequests(context.WithoutCancel(ctx), reqIDs, "batch submit: "+err.Error(), 5*time.Minute); aerr != nil {
+				return true, errors.Join(err, aerr)
+			}
+			if !useFallback {
+				return true, errors.Join(err, releaseRest())
+			}
+			// Down for longer than batch.fallback_after: this batch and the
+			// groups not yet built go to the fallback in real time (the
+			// aborted items stay unclaimable for 5 minutes meanwhile).
+			slog.Warn("analysis: batch provider down; using the fallback", "route", route, "provider", prov, "since", since, "err", err)
+			var errs []error
+			for _, r := range chunk {
+				if rerr := p.RunGroup(ctx, r.g, core.LaneBatch); rerr != nil {
+					errs = append(errs, rerr)
+				}
+			}
+			for _, g := range later {
+				if rerr := p.RunGroup(ctx, g, core.LaneBatch); rerr != nil {
+					errs = append(errs, rerr)
+				}
+			}
+			return true, errors.Join(errs...)
+		}
+		p.markUp(prov)
+		if err := p.Store.SetBatchID(ctx, id, prov, model, route, reqIDs, p.Cfg.Batch.Lease); err != nil {
+			// This batch was sent but can't be followed: ReleaseStrandedBatch
+			// closes its requests after batch.submit_lease, and its items are
+			// sent again. The groups not yet built are released now.
+			return true, errors.Join(err, releaseRest())
+		}
+		ametrics.Requests.WithLabelValues(prov, model, core.LaneBatch, "submitted").Add(float64(len(chunk)))
+		slog.Info("analysis: batch submitted", "route", route, "model", model, "batch", id, "requests", len(chunk))
+		return false, nil
+	}
+	for gi, g := range groups {
 		b, err := p.build(ctx, g, model)
 		if err != nil {
 			return giveBack(err)
@@ -232,65 +307,14 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 			handled[cid] = true
 		}
 		reqs = append(reqs, pending{row: row, req: b.req, g: g})
-	}
-	size := max(p.Cfg.Batch.MaxRequests, 1)
-	for start := 0; start < len(reqs); start += size {
-		chunk := reqs[start:min(start+size, len(reqs))]
-		batch := make([]provider.Request, len(chunk))
-		reqIDs := make([]uuid.UUID, len(chunk))
-		for i, r := range chunk {
-			batch[i], reqIDs[i] = r.req, r.row.ID
-		}
-		id, err := batcher.SubmitBatch(ctx, batch)
-		p.Providers.Observe(prov, err)
-		if err != nil && provider.Retryable(err) {
-			p.markDown(prov)
-		}
-		if err != nil {
-			ametrics.Requests.WithLabelValues(prov, model, core.LaneBatch, "submit_error").Add(float64(len(chunk)))
-			// Abort this chunk and every later one (none was sent).
-			var unsent []uuid.UUID
-			for _, r := range reqs[start:] {
-				unsent = append(unsent, r.row.ID)
-			}
-			if aerr := p.Store.AbortRequests(context.WithoutCancel(ctx), unsent, "batch submit: "+err.Error(), 5*time.Minute); aerr != nil {
-				return errors.Join(err, aerr)
-			}
-			if !useFallback {
+		if len(reqs) >= size {
+			if done, err := send(groups[gi+1:]); done || err != nil {
 				return err
 			}
-			// Down for longer than batch.fallback_after: the rest goes to
-			// the fallback in real time (the aborted items stay unclaimable
-			// for 5 minutes meanwhile).
-			slog.Warn("analysis: batch provider down; using the fallback", "route", route, "provider", prov, "since", since, "err", err)
-			var errs []error
-			for _, r := range reqs[start:] {
-				if rerr := p.RunGroup(ctx, r.g, core.LaneBatch); rerr != nil {
-					errs = append(errs, rerr)
-				}
-			}
-			return errors.Join(errs...)
 		}
-		p.markUp(prov)
-		if err := p.Store.SetBatchID(ctx, id, prov, model, route, reqIDs, p.Cfg.Batch.Lease); err != nil {
-			// This chunk was sent but can't be followed: ReleaseStrandedBatch
-			// closes its requests after batch.submit_lease, and its items are
-			// sent again. The later chunks were never sent: close them now.
-			var unsent []uuid.UUID
-			for _, r := range reqs[start+len(chunk):] {
-				unsent = append(unsent, r.row.ID)
-			}
-			if len(unsent) > 0 {
-				if aerr := p.Store.AbortRequests(context.WithoutCancel(ctx), unsent, "batch submit: "+err.Error(), 5*time.Minute); aerr != nil {
-					return errors.Join(err, aerr)
-				}
-			}
-			return err
-		}
-		ametrics.Requests.WithLabelValues(prov, model, core.LaneBatch, "submitted").Add(float64(len(chunk)))
-		slog.Info("analysis: batch submitted", "route", route, "model", model, "batch", id, "requests", len(chunk))
 	}
-	return nil
+	_, err = send(nil)
+	return err
 }
 
 // PollBatches collects the results of finished batches.
