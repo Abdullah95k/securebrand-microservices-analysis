@@ -159,6 +159,10 @@ func TestStatsRequestsAndUrgentSetup(t *testing.T) {
 	if r.Tries, err = s.QueueTriesNow(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if r.Spend, err = s.SpendByRoute(ctx, since); err != nil {
+		t.Fatal(err)
+	}
+	r.DailyCap, r.RouteCaps = 60, map[string]float64{"comment": 30}
 	var out bytes.Buffer
 	if err := printStats(&out, r, 24*time.Hour); err != nil {
 		t.Fatal(err)
@@ -171,6 +175,8 @@ func TestStatsRequestsAndUrgentSetup(t *testing.T) {
 		"  failed because (no answer, nothing paid): batch request errored: Overloaded (#) 1, never sent: the process stopped 1",
 		"re-sent, comment route: 1 items sent more than once (1 extra sends)",
 		"real-time lane rules: 1 hot accounts in the config; 2 accounts monitored by 2 clients; 1 entities tracked",
+		"spend today (Iraq day, as the budget counts it): $0.00 of $60.00",
+		"  comment: $0.00 of $30.00 (answered $0.00; $0.00 estimated in flight, counted at 1.00 of its estimate)",
 		"queue now, comment route, by tries counted: 2 none, 2 one, 0 two, 1 three or more; 1 last failed on their own answer (sent alone)",
 		"  came back because: batch request errored: Overloaded (#) 1, invalid: not JSON 1, no result in batch 1",
 		"comments, tiktok (by Iraq day, since the window's first): 1000 received, 98 in the 10% sample (9.8%), 2 kept outside it for the real-time lane; the rest counted, not stored; scale the analysed comments by 10 for all",

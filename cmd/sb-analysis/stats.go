@@ -43,6 +43,15 @@ func statsCmd(args []string) error {
 		if r.Tries, err = a.Store.QueueTriesNow(ctx); err != nil {
 			return err
 		}
+		if r.Spend, err = a.Store.SpendByRoute(ctx, a.Store.DayStart(time.Now())); err != nil {
+			return err
+		}
+		r.DailyCap, r.RouteCaps = a.Cfg.Analysis.Budget.DailyUSD, map[string]float64{}
+		for name, rc := range a.Cfg.Analysis.Routes {
+			if rc.DailyUSD > 0 {
+				r.RouteCaps[name] = rc.DailyUSD
+			}
+		}
 		u := a.Cfg.Analysis.Urgent
 		r.HotAccounts, r.Watchlists = len(u.HotAccounts)+len(u.Sources), u.Watchlists
 		return printStats(os.Stdout, r, *since)
@@ -149,6 +158,25 @@ func printRequests(b *strings.Builder, r store.PlatformReport) {
 	}
 	fmt.Fprintf(b, "real-time lane rules: %d hot accounts in the config; %s; %d entities tracked\n",
 		r.HotAccounts, watch, r.Urgent.TrackedEntities)
+	if len(r.Spend) > 0 {
+		var total float64
+		for _, s := range r.Spend {
+			total += s.Counted
+		}
+		capText := "no daily cap"
+		if r.DailyCap > 0 {
+			capText = fmt.Sprintf("of $%.2f", r.DailyCap)
+		}
+		fmt.Fprintf(b, "spend today (Iraq day, as the budget counts it): $%.2f %s\n", total, capText)
+		for _, s := range r.Spend {
+			routeCap := ""
+			if c := r.RouteCaps[s.Route]; c > 0 {
+				routeCap = fmt.Sprintf(" of $%.2f", c)
+			}
+			fmt.Fprintf(b, "  %s: $%.2f%s (answered $%.2f; $%.2f estimated in flight, counted at %.2f of its estimate)\n",
+				s.Route, s.Counted, routeCap, s.Done, s.InFlight, s.Ratio)
+		}
+	}
 	for _, q := range r.Tries {
 		fmt.Fprintf(b, "queue now, %s route, by tries counted: %d none, %d one, %d two, %d three or more; %d last failed on their own answer (sent alone)\n",
 			q.Route, q.None, q.One, q.Two, q.ThreeOrMore, q.ItemFaults)

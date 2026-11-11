@@ -335,3 +335,17 @@
     - the top-up takes those too;
     - `stats` shows the queue by tries and why entries came back.
     - Expected: 3–10 items a request at first, $0.05–0.07 per 1,000 comments instead of $0.113.
+- **11 Nov, 20:15 Iraq time: no comment or post batches for an hour.**
+  - **The reading** (the master, `stats 1h` at 17:02Z on `9df9e1e`): no comment or post batch requests in the hour.
+    - The comment queue was 827k never tried (so retries weren't why requests carried one item), and the top-up added nothing.
+    - 1,112 posts went alone after cut-off answers.
+  - **Causes:**
+    1. **The route caps by estimate.** In-flight batch requests count at their estimate, about 3.6× their real cost for one-item comment requests. So the $30 comment cap was reached with real spend far below it, and rounds held everything until batches returned. A held round also built and released every group one by one.
+    2. **One item a request:** a claim takes the oldest 10,000 of about 880k items, and a page's or thread's items are spread across the whole backlog. So each claim holds about one item per page or thread. The top-up fills comment threads; short posts (grouped by page) aren't topped up yet.
+    3. **Cut-off answers:** max_tokens 6,000 (comments) and 2,000 (posts) were too small for full groups.
+  - **In review (the master asked for a fix):**
+    - in-flight requests counted at the route's measured ratio of real to estimate (0.25–1);
+    - a held round releases at once, and a spent route claims nothing;
+    - today's spend per route in `stats`;
+    - max_tokens 16,000 for comment and post.
+  - **Proposed next:** a page top-up for short posts. It needs the page on the queue entry, a new column and a migration.

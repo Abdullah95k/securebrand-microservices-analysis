@@ -93,6 +93,13 @@ func TestProductionConfig(t *testing.T) {
 	if bp := a.Backpressure; bp.MaxQueue != 200000 || bp.MaxQueuePosts < 5*bp.MaxQueue || bp.ResumeQueuePosts >= bp.MaxQueuePosts {
 		t.Errorf("backpressure %+v: want comments at 200k, posts at 5 times that or more", bp)
 	}
+	// A full group's answer fits: up to grouping.max_items comments (about
+	// 150 output tokens each) or long posts (about 300).
+	for _, r := range []string{"comment", "post"} {
+		if mt := a.Routes[r].MaxTokens; mt < a.Grouping.MaxItems*300 {
+			t.Errorf("routes.%s.max_tokens %d is below %d items × 300 tokens: full groups get cut off", r, mt, a.Grouping.MaxItems)
+		}
+	}
 	// 10% of comments, every platform (the owner's D-053, 11 Nov).
 	if a.Comments.SampleShare != 0.10 {
 		t.Errorf("comments.sample_share %v, want 0.10 (D-053)", a.Comments.SampleShare)

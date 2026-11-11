@@ -182,3 +182,52 @@ func TestTopUpTakesRetriesBackForOtherReasons(t *testing.T) {
 		t.Fatal("the comment missing from its answer was topped up")
 	}
 }
+
+// TestBudgetHeldRoundReleasesAtOnce: when the route's cap stops a round,
+// the group that didn't fit and every group not built yet go back in one
+// release, counted in budget_held_items_total; nothing is sent.
+func TestBudgetHeldRoundReleasesAtOnce(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) {
+		rc := c.Routes[core.RouteComment]
+		rc.DailyUSD = 0.0000001
+		c.Routes[core.RouteComment] = rc
+		c.Batch.TopUpItems = 0
+		c.Pricing["claude-haiku-5-5"] = config.ModelPrice{Input: 1, Output: 1}
+	})
+	threadComments(t, e, 0, 3)
+	threadComments(t, e, 1, 3)
+	before := testutil.ToFloat64(ametrics.BudgetHeld.WithLabelValues(core.RouteComment))
+	if err := e.p.SubmitBatches(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_requests`); n != 0 {
+		t.Fatalf("%d requests started over the cap", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE attempts = 0 AND not_before > now() AND lease_until IS NULL`); n != 6 {
+		t.Fatalf("%d of 6 released for later without a try", n)
+	}
+	if d := testutil.ToFloat64(ametrics.BudgetHeld.WithLabelValues(core.RouteComment)) - before; d != 6 {
+		t.Fatalf("budget_held_items_total rose by %v, want 6", d)
+	}
+}
+
+// TestBudgetSpentRouteClaimsNothing: a route whose day is already spent
+// doesn't claim at all, so a round costs the queue nothing.
+func TestBudgetSpentRouteClaimsNothing(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) {
+		rc := c.Routes[core.RouteComment]
+		rc.DailyUSD = 1
+		c.Routes[core.RouteComment] = rc
+	})
+	threadComments(t, e, 0, 3)
+	if _, err := e.s.DB.Exec(context.Background(), `INSERT INTO analysis.provider_requests (request_id, route, lane, provider, model, items,
+		status, est_cost_usd, cost_usd) VALUES (gen_random_uuid(), 'comment', 'batch', 'primary', 'claude-haiku-5-5', 1, 'done', 1, 1.5)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.SubmitBatches(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE attempts = 0 AND lease_until IS NULL AND not_before <= now()`); n != 3 {
+		t.Fatalf("%d of 3 untouched; a spent route claimed", n)
+	}
+}

@@ -11,8 +11,9 @@ import (
 
 // Budget caps spend per day (in the store's timezone), globally and per
 // route. Spend comes from provider_requests (actual cost, or the estimate
-// of requests still in flight), refreshed every 30 seconds, plus what this
-// process added since.
+// of requests still in flight times the route's measured ratio of actual
+// to estimate: store.SpendByRoute), refreshed every 30 seconds, plus what
+// this process added since.
 type Budget struct {
 	Store        *store.Store
 	DailyUSD     float64
@@ -120,20 +121,15 @@ func (b *Budget) refresh(ctx context.Context) error {
 	if fresh {
 		return nil
 	}
-	total, err := b.Store.SpentSince(ctx, start, "")
+	spend, err := b.Store.SpendByRoute(ctx, start)
 	if err != nil {
 		return err
 	}
+	var total float64
 	routes := map[string]float64{}
-	for r, cap := range b.RouteUSD {
-		if cap <= 0 {
-			continue
-		}
-		v, err := b.Store.SpentSince(ctx, start, r)
-		if err != nil {
-			return err
-		}
-		routes[r] = v
+	for _, r := range spend {
+		total += r.Counted
+		routes[r.Route] = r.Counted
 	}
 	b.mu.Lock()
 	b.day, b.refreshed, b.spent, b.route = start, now, total, routes
