@@ -30,7 +30,9 @@ func TestStatsCountsPerPlatform(t *testing.T) {
 		{ContentID: "tt:comment:1", Platform: "tiktok", Kind: core.KindComment, SourceID: "tt:account:1", ThreadID: "tt:post:1",
 			ParentID: "tt:post:1", CreatedAt: now, ObservedAt: now, Text: "synthetic", Status: core.StatusVisible, Version: 1},
 	}
-	plan := func(*core.Item) store.Plan { return store.Plan{Route: core.RouteComment, Lane: core.LaneBatch, Priority: core.PriorityNormal} }
+	plan := func(*core.Item) store.Plan {
+		return store.Plan{Route: core.RouteComment, Lane: core.LaneBatch, Priority: core.PriorityNormal}
+	}
 	if _, err := s.Ingest(ctx, items, plan); err != nil {
 		t.Fatal(err)
 	}
@@ -84,5 +86,77 @@ func TestStatsCountsPerPlatform(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("output lacks %q:\n%s", want, text)
 		}
+	}
+}
+
+// sb-analysis stats: the provider requests by route and lane (how full,
+// how many re-sent, tokens and cost per request), and what the real-time
+// lane's rules have to work with. Counts only.
+func TestStatsRequestsAndUrgentSetup(t *testing.T) {
+	db := testenv.Postgres(t)
+	ctx := context.Background()
+	if err := store.Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	s := store.New(db, time.UTC)
+	// Comment route, batch lane: a 3-item request and two 1-item ones
+	// done, the second sending c1 again (a retry); one failed; one in
+	// flight. A post request in real time. One request from before the
+	// window, which isn't counted.
+	for _, q := range []string{
+		`INSERT INTO analysis.provider_requests (request_id, route, lane, provider, model, items, content_ids, status,
+			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd) VALUES
+			(gen_random_uuid(), 'comment', 'batch', 'anthropic', 'claude-haiku-5-5', 3, '{c1,c2,c3}', 'done', 600, 450, 7000, 0, 0.0002),
+			(gen_random_uuid(), 'comment', 'batch', 'anthropic', 'claude-haiku-5-5', 1, '{c1}', 'done', 200, 150, 7000, 7000, 0.0001),
+			(gen_random_uuid(), 'comment', 'batch', 'anthropic', 'claude-haiku-5-5', 1, '{c4}', 'done', 200, 150, 7000, 0, 0.0001),
+			(gen_random_uuid(), 'comment', 'batch', 'anthropic', 'claude-haiku-5-5', 2, '{c5,c6}', 'failed', NULL, NULL, NULL, NULL, NULL),
+			(gen_random_uuid(), 'comment', 'batch', 'anthropic', 'claude-haiku-5-5', 2, '{c7,c8}', 'submitted', NULL, NULL, NULL, NULL, NULL),
+			(gen_random_uuid(), 'post', 'realtime', 'anthropic', 'claude-haiku-5-5', 1, '{p1}', 'done', 900, 300, 6000, 0, 0.0004)`,
+		`INSERT INTO analysis.provider_requests (request_id, route, lane, provider, model, items, content_ids, status, created_at)
+			VALUES (gen_random_uuid(), 'comment', 'batch', 'anthropic', 'claude-haiku-5-5', 1, '{c2}', 'done', now() - interval '2 days')`,
+		`INSERT INTO analysis.clients (client_id, name) VALUES ('client-1', 'Client 1'), ('client-2', 'Client 2')`,
+		`INSERT INTO analysis.client_sources (client_id, source_id) VALUES ('client-1', 'fb:page:1'), ('client-2', 'fb:page:1'), ('client-2', 'tt:account:2')`,
+		`INSERT INTO analysis.entities (entity_id, name, type) VALUES ('brand-a', 'A', 'brand')`,
+		`INSERT INTO analysis.client_entities (client_id, entity_id) VALUES ('client-1', 'brand-a'), ('client-2', 'brand-a')`,
+	} {
+		if _, err := db.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	since := time.Now().Add(-24 * time.Hour)
+	r := store.PlatformReport{HotAccounts: 1, Watchlists: true}
+	var err error
+	if r.Requests, r.Resent, err = s.RequestCounts(ctx, since); err != nil {
+		t.Fatal(err)
+	}
+	if r.Urgent, err = s.UrgentCounts(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := printStats(&out, r, 24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	for _, want := range []string{
+		"requests, comment route, batch lane: 5 sent (3 done, 1 failed, 1 in flight), 9 items, 1.80 items a request, 2 with one item (40%)",
+		"  per done request: 333 input, 7000 cache read, 2333 cache write, 250 output tokens; $0.00 in all, $0.080 per 1,000 items",
+		"requests, post route, realtime lane: 1 sent (1 done, 0 failed, 0 in flight), 1 items, 1.00 items a request, 1 with one item (100%)",
+		"re-sent, comment route: 1 items sent more than once (1 extra sends)",
+		"real-time lane rules: 1 hot accounts in the config; 2 accounts monitored by 2 clients; 1 entities tracked",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("output lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "re-sent, post route") {
+		t.Errorf("post route shown as re-sent:\n%s", text)
+	}
+	r.Watchlists = false
+	out.Reset()
+	if err := printStats(&out, r, 24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "watchlists not counted (urgent.watchlists off)") {
+		t.Errorf("watchlists off not said:\n%s", out.String())
 	}
 }

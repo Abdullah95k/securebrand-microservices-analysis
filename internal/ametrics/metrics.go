@@ -20,6 +20,7 @@ var (
 	Refusals          = metrics.AnalysisRefusals
 	RateFallback      = metrics.AnalysisRateFallback
 	FollowUps         = metrics.AnalysisFollowUps
+	ToppedUp          = metrics.AnalysisToppedUp
 	Deduplicated      = metrics.AnalysisDeduplicated
 	DeadLetters       = metrics.AnalysisDeadLetters
 	QueueDepth        = metrics.AnalysisQueueDepth

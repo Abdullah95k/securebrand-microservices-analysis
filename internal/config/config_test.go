@@ -62,6 +62,27 @@ func TestValidateSASL(t *testing.T) {
 	}
 }
 
+// batch.top_up_items as a quoted string, as a gitops values file may set
+// it: "0" turns the top-up off.
+func TestTopUpItemsQuoted(t *testing.T) {
+	for _, c := range []struct {
+		yaml string
+		want int
+	}{{`"0"`, 0}, {`"10000"`, 10000}, {`0`, 0}} {
+		f := filepath.Join(t.TempDir(), "c.yaml")
+		if err := os.WriteFile(f, []byte("analysis:\n  batch:\n    top_up_items: "+c.yaml+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(f)
+		if err != nil {
+			t.Fatalf("top_up_items %s: %v", c.yaml, err)
+		}
+		if cfg.Analysis.Batch.TopUpItems != c.want {
+			t.Errorf("top_up_items %s read as %d, want %d", c.yaml, cfg.Analysis.Batch.TopUpItems, c.want)
+		}
+	}
+}
+
 func TestAnalysisPrivacyDefaults(t *testing.T) {
 	c, err := Load("")
 	if err != nil {

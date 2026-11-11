@@ -131,6 +131,56 @@ func (p *Pipeline) SubmitBatches(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
+// topUp adds to a round's claim each claimed thread's other waiting
+// comments, up to grouping.max_items a thread and batch.top_up_items in
+// all: a claim of the oldest items holds one or two comments of most
+// threads, and Groups packs only what was claimed. Posts and items being
+// retried (sent alone) don't take part.
+func (p *Pipeline) topUp(ctx context.Context, route string, claimed []store.Claimed) ([]store.Claimed, error) {
+	limit, perThread := p.Cfg.Batch.TopUpItems, p.Cfg.Grouping.MaxItems
+	if limit <= 0 || perThread <= 1 || route == core.RoutePost {
+		return claimed, nil
+	}
+	have := map[string]int{}
+	var order []string
+	for _, c := range claimed {
+		t := c.Item.ThreadID
+		if t == "" || c.Item.Kind == core.KindPost || c.Attempts >= 2 {
+			continue
+		}
+		if have[t] == 0 {
+			order = append(order, t)
+		}
+		have[t]++
+	}
+	var threads []string
+	var room []int
+	for _, t := range order {
+		if n := perThread - have[t]; n > 0 {
+			threads, room = append(threads, t), append(room, n)
+		}
+	}
+	more, err := p.Store.ClaimThreads(ctx, core.LaneBatch, route, threads, room, limit, p.submitLease())
+	if err != nil {
+		return claimed, err
+	}
+	if len(more) > 0 {
+		ametrics.ToppedUp.WithLabelValues(route).Add(float64(len(more)))
+		slog.Info("analysis: batch round topped up its threads", "route", route, "claimed", len(claimed), "added", len(more),
+			"threads", len(threads))
+	}
+	return append(claimed, more...), nil
+}
+
+// claimedItems are the claimed entries' items.
+func claimedItems(cs []store.Claimed) []core.Item {
+	out := make([]core.Item, len(cs))
+	for i, c := range cs {
+		out[i] = c.Item
+	}
+	return out
+}
+
 // submitLease is how long claimed batch items stay leased until their
 // batch is sent (batch.submit_lease); SetBatchID then leases them for the
 // batch's lifetime (batch.lease).
@@ -146,6 +196,10 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 	claimed, err := p.Store.Claim(ctx, core.LaneBatch, route, p.Cfg.Batch.MaxItems, p.submitLease(), 0)
 	if err != nil || len(claimed) == 0 {
 		return err
+	}
+	if claimed, err = p.topUp(ctx, route, claimed); err != nil {
+		// What was claimed goes back now rather than waiting for its lease.
+		return errors.Join(err, p.Store.ReleaseUnsent(context.WithoutCancel(ctx), ids(claimedItems(claimed)), route, 0))
 	}
 	groups := p.Groups(route, claimed)
 	realtime := func() error {

@@ -18,16 +18,27 @@ import (
 // statsCmd prints, per platform, what came in and what came out over the
 // last --since: items ingested, analysed, waiting and failed; media files
 // announced, analysed, skipped (by reason) and failed, and how many were
-// acknowledged to their collector; and the outbox waiting to be published.
-// Read-only; counts only, no content.
+// acknowledged to their collector; the outbox waiting to be published; the
+// provider requests by route and lane (how full, re-sent, tokens and cost);
+// and what the real-time lane's rules have to work with. Read-only; counts
+// only, no content.
 func statsCmd(args []string) error {
 	fs := flag.NewFlagSet("stats", flag.ExitOnError)
 	since := fs.Duration("since", 24*time.Hour, "count what happened this long ago or later")
 	return withApp("stats", args, fs, func(ctx context.Context, a *app.App) error {
-		r, err := a.Store.PlatformCounts(ctx, time.Now().Add(-*since), adapter.PlatformName)
+		from := time.Now().Add(-*since)
+		r, err := a.Store.PlatformCounts(ctx, from, adapter.PlatformName)
 		if err != nil {
 			return err
 		}
+		if r.Requests, r.Resent, err = a.Store.RequestCounts(ctx, from); err != nil {
+			return err
+		}
+		if r.Urgent, err = a.Store.UrgentCounts(ctx); err != nil {
+			return err
+		}
+		u := a.Cfg.Analysis.Urgent
+		r.HotAccounts, r.Watchlists = len(u.HotAccounts)+len(u.Sources), u.Watchlists
 		return printStats(os.Stdout, r, *since)
 	})
 }
@@ -79,8 +90,56 @@ func printStats(w io.Writer, r store.PlatformReport, since time.Duration) error 
 		parts = []string{"empty"}
 	}
 	fmt.Fprintf(&b, "outbox (waiting to be published): %s; %d held after a failed publish\n", strings.Join(parts, ", "), r.OutboxHeld)
+	printRequests(&b, r)
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// printRequests adds the provider requests by route and lane, and the
+// real-time lane's setup.
+func printRequests(b *strings.Builder, r store.PlatformReport) {
+	if len(r.Requests) == 0 {
+		b.WriteString("requests: none\n")
+	}
+	per := func(n, of int64) int64 {
+		if of == 0 {
+			return 0
+		}
+		return (n + of/2) / of
+	}
+	for _, q := range r.Requests {
+		itemsPer, onePct := 0.0, int64(0)
+		if q.Requests > 0 {
+			itemsPer = float64(q.Items) / float64(q.Requests)
+			onePct = per(100*q.OneItem, q.Requests)
+		}
+		fmt.Fprintf(b, "requests, %s route, %s lane: %d sent (%d done, %d failed, %d in flight), %d items, %.2f items a request, %d with one item (%d%%)\n",
+			q.Route, q.Lane, q.Requests, q.Done, q.Failed, q.InFlight, q.Items, itemsPer, q.OneItem, onePct)
+		if q.Done > 0 {
+			per1k := 0.0
+			if q.DoneItems > 0 {
+				per1k = q.CostUSD / float64(q.DoneItems) * 1000
+			}
+			fmt.Fprintf(b, "  per done request: %d input, %d cache read, %d cache write, %d output tokens; $%.2f in all, $%.3f per 1,000 items\n",
+				per(q.InputTokens, q.Done), per(q.CacheReadTokens, q.Done), per(q.CacheWriteTokens, q.Done), per(q.OutputTokens, q.Done),
+				q.CostUSD, per1k)
+		}
+	}
+	routes := make([]string, 0, len(r.Resent))
+	for route := range r.Resent {
+		routes = append(routes, route)
+	}
+	sort.Strings(routes)
+	for _, route := range routes {
+		rs := r.Resent[route]
+		fmt.Fprintf(b, "re-sent, %s route: %d items sent more than once (%d extra sends)\n", route, rs.Items, rs.ExtraSends)
+	}
+	watch := "watchlists not counted (urgent.watchlists off)"
+	if r.Watchlists {
+		watch = fmt.Sprintf("%d accounts monitored by %d clients", r.Urgent.MonitoredSources, r.Urgent.Clients)
+	}
+	fmt.Fprintf(b, "real-time lane rules: %d hot accounts in the config; %s; %d entities tracked\n",
+		r.HotAccounts, watch, r.Urgent.TrackedEntities)
 }
 
 // countsByCount formats counts largest first (then by name): "a 9, b 2".

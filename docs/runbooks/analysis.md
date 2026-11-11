@@ -62,12 +62,24 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
   - requests recorded but never given a batch, older than `batch.submit_lease`, are marked failed, so their estimates stop counting against the day's budget;
   - items leased long but not in a sent batch are released.
   - Before 11 Nov a round leased its items for 26 h before sending, and claimed up to 100,000 items into batches of 5,000 requests (over 100 MB each). A crash then held them for 26 h, with their estimates counted against the budget.
+- **A round fills its threads** (since 11 Nov; the platform agreed): after claiming the oldest `batch.max_items` items, a round also claims each claimed thread's other waiting comments, up to `grouping.max_items` (40) a thread and `batch.top_up_items` (10,000) in all.
+  - **Why:** a claim of the oldest items held one or two comments of most threads, so most requests carried one or two comments. The cached prompt and schema (most of a comment's cost) were read once for each.
+  - **What it changes:** only how full requests are. The prompt, the grouping by thread and its limits are as before. Comments being retried after a failure aren't taken; they still go alone.
+  - **To watch:** `sb_analysis_items_topped_up_total{route}`, the `analysis: batch round topped up its threads` log line, and in `sb-analysis stats` the items per request and the cost per 1,000 items. Also `sb_analysis_output_repairs_total` (`duplicate_item`, `unexpected_item`), in case fuller requests answer less cleanly.
+  - **To turn it off:** set `batch.top_up_items: 0` and restart. The thread index it uses (`analysis_queue_thread_idx`, migration 00008) is built concurrently, without locking the queue.
 - **Per platform:** `sb-analysis stats [--since 24h]`, run in the analysis pod, prints for each platform:
   - items ingested, analysed (refused among them), waiting in the queue now, and in the dead letters;
   - media files announced, analysed, and their states now (pending, done, skipped, failed, gone), with how many were acknowledged to their collector (done, skipped and failed are; gone ones aren't owed an ack) and why files were skipped (`policy:image/thumbnail` and so on);
   - the files pending now by time to their deadline (past it, within 12 h, 12-24 h, 24-48 h, later or none), and how many of them wait for their post (since 11 Nov);
   - files waiting to be tried again after a failure (now), and why files are retrying or failed (failed in the window), by kind, largest first. A reason is the error's first 100 characters with digits shown as `#`, so the same failure on different addresses counts together. Errors name a file at most, never its content (since 11 Nov);
-  - the outbox waiting to be published, by topic.
+  - the outbox waiting to be published, by topic;
+  - the provider requests sent in the window, by route and lane (since 11 Nov):
+    - how many were done, failed and still in flight;
+    - the items they carried, items per request, and how many carried one item;
+    - per done request: input, cache-read, cache-write and output tokens, and the real cost per 1,000 items;
+    - per route, the items sent in more than one request (a retry after a failure, an errored or expired batch request) and the extra sends;
+    - the cache-read tokens per request are the cached prompt and schema itself;
+  - what the real-time lane's rules have to work with: hot accounts in the config, the accounts clients monitor (when `urgent.watchlists` is on) and by how many clients, and the entities clients track. With none, every item takes the batch lane.
 
   It is read-only and prints counts only. `sb_analysis_items_ingested_total{platform}` counts each item under its own platform; before 11 Nov a batch mixing collectors counted under its first item's platform.
 - **To see the open batches:** `sb-analysis batches [--since 24h]`, run in the analysis pod. It prints each open or recent batch with its requests here (submitted, done, failed) and the provider's status and counts (processing, succeeded, errored, canceled, expired), with when it was sent and when it expires. It is read-only and prints no content.
