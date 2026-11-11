@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 11 November 2026, 22:10 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 11 November 2026, 22:50 (Iraq time).*
 
 ## Where it stands
 
@@ -381,3 +381,7 @@
   - **fbs switched** at 21:45 (the master, #110): fbs `3af55b0` publishes its posts and comments on `content.*`, and sb-analysis reads `[content, fb-media]`. Facebook items now come from `content.*`.
   - **In review:** `values-production.yaml` set to `[content, fb-media]` (the master agreed), so a deploy from the repository doesn't read both paths again.
   - **Next:** the master's 19:20Z reading (the real cost per 1,000 comments on the new code); fbs's backfill (fbs #84), which the master will announce.
+- **11 Nov, 22:50 Iraq time: no batches sent since 21:18; fixed in review.**
+  - **The reading** (the master, 19:21–19:35Z): no `batch submitted` line after 18:18Z, and no comment or post request in the hour. Polls kept collecting (`batch collected` about every 6 minutes). Nothing wrong with the budget ($24.93 of $60). The fbs switch pod (about 21:50) sent nothing either.
+  - **The cause (code):** the batch lane collected and sent in one loop. A poll checks up to 10 finished batches, and collecting one of 1,000 results takes about 6 minutes, so a poll held back every round for most of an hour. A new pod polls before its first round, so with about 11 batches waiting it never sent. No item was lost: they waited in the queue.
+  - **The fix (in review):** sending and collecting in two loops of their own; a poll claims one batch at a time; a log line for every round, every collection's duration, and every change of the provider's circuit. A test holds a collection open and checks that a new batch is still sent; it fails on the old loop.

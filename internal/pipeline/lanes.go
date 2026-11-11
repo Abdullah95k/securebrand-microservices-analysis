@@ -77,35 +77,35 @@ func (p *Pipeline) RealtimeOnce(ctx context.Context) (int, error) {
 }
 
 // RunBatch submits batch-lane items at start and then every
-// batch.submit_every, and polls open batches every batch.poll_every, until
-// ctx ends.
+// batch.submit_every, and collects finished batches at start and then every
+// batch.poll_every, in two loops of their own, until ctx ends. Collecting a
+// batch can take minutes (its results are written a request at a time):
+// with both in one loop, a poll collecting several batches held back every
+// submission, and on 11 Nov no batch was sent for over an hour.
 func (p *Pipeline) RunBatch(ctx context.Context) error {
-	submit := time.NewTicker(p.Cfg.Batch.SubmitEvery)
-	poll := time.NewTicker(p.Cfg.Batch.PollEvery)
-	defer submit.Stop()
-	defer poll.Stop()
-	// The first round runs at start, not one submit_every later: a restart
-	// then delays the queue by a round's build time only.
-	if err := p.PollBatches(ctx); err != nil && ctx.Err() == nil {
-		slog.Warn("analysis: batch poll", "err", err)
-	}
-	if err := p.SubmitBatches(ctx); err != nil && ctx.Err() == nil {
-		slog.Warn("analysis: batch submit", "err", err)
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-submit.C:
-			if err := p.SubmitBatches(ctx); err != nil && ctx.Err() == nil {
-				slog.Warn("analysis: batch submit", "err", err)
+	var wg sync.WaitGroup
+	loop := func(name string, every time.Duration, fn func(context.Context) error) {
+		defer wg.Done()
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			// The first run is at start, not one interval later: a restart
+			// then delays the queue by a round's build time only.
+			if err := fn(ctx); err != nil && ctx.Err() == nil {
+				slog.Warn("analysis: "+name, "err", err)
 			}
-		case <-poll.C:
-			if err := p.PollBatches(ctx); err != nil && ctx.Err() == nil {
-				slog.Warn("analysis: batch poll", "err", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
 			}
 		}
 	}
+	wg.Add(2)
+	go loop("batch submit", p.Cfg.Batch.SubmitEvery, p.SubmitBatches)
+	go loop("batch poll", p.Cfg.Batch.PollEvery, p.PollBatches)
+	wg.Wait()
+	return nil
 }
 
 // SubmitBatches claims batch-lane items per route and sends them through
@@ -235,9 +235,21 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 		return nil
 	}
 	claimed, err := p.Store.Claim(ctx, core.LaneBatch, route, p.Cfg.Batch.MaxItems, p.submitLease(), 0)
-	if err != nil || len(claimed) == 0 {
+	if err != nil {
 		return err
 	}
+	if len(claimed) == 0 {
+		slog.Info("analysis: batch round: nothing to claim", "route", route)
+		return nil
+	}
+	// One line a round says what it did, so a round that sends nothing is
+	// seen.
+	start, first := p.now(), len(claimed)
+	var sentRequests, batches int
+	defer func() {
+		slog.Info("analysis: batch round", "route", route, "claimed", first, "items", len(claimed),
+			"requests_sent", sentRequests, "batches", batches, "seconds", int(p.now().Sub(start).Seconds()))
+	}()
 	if claimed, err = p.topUp(ctx, route, claimed); err != nil {
 		// What was claimed goes back now rather than waiting for its lease.
 		return errors.Join(err, p.Store.ReleaseUnsent(context.WithoutCancel(ctx), ids(claimedItems(claimed)), route, 0))
@@ -268,6 +280,8 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 			return realtime()
 		}
 		p.markDown(prov)
+		slog.Warn("analysis: batch provider unavailable (circuit open); the round's items wait 5 minutes",
+			"route", route, "provider", prov, "items", len(claimed))
 		return p.Store.ReleaseUnsent(ctx, ids(flatten(groups)), route, 5*time.Minute)
 	}
 
@@ -368,6 +382,7 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 			return true, errors.Join(err, releaseRest())
 		}
 		ametrics.Requests.WithLabelValues(prov, model, core.LaneBatch, "submitted").Add(float64(len(chunk)))
+		sentRequests, batches = sentRequests+len(chunk), batches+1
 		slog.Info("analysis: batch submitted", "route", route, "model", model, "batch", id, "requests", len(chunk))
 		return false, nil
 	}
@@ -421,55 +436,82 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 	return err
 }
 
-// PollBatches collects the results of finished batches.
+// pollMax is the most open batches one poll checks.
+const pollMax = 10
+
+// collectLease is how long a batch stays claimed for its collection: a
+// thousand results took about 6 minutes in production on 11 Nov.
+const collectLease = 30 * time.Minute
+
+// PollBatches checks up to pollMax open batches, oldest first, and collects
+// the finished ones. Each is claimed as it is checked, so the lease covers
+// its own collection; the ones not finished are released when the poll
+// ends, for the next poll.
 func (p *Pipeline) PollBatches(ctx context.Context) error {
-	open, err := p.Store.ClaimOpenBatches(ctx, 10, 5*time.Minute)
-	if err != nil {
-		return err
+	if n, err := p.Store.OpenBatchCount(ctx); err == nil {
+		ametrics.OpenBatches.Set(float64(n))
 	}
-	ametrics.OpenBatches.Set(float64(len(open)))
 	var errs []error
-	for _, b := range open {
-		if err := p.collect(ctx, b); err != nil {
+	var waiting []string
+	for range pollMax {
+		open, err := p.Store.ClaimOpenBatches(ctx, 1, collectLease)
+		if err != nil {
+			errs = append(errs, err)
+			break
+		}
+		if len(open) == 0 {
+			break
+		}
+		b := open[0]
+		done, err := p.collect(ctx, b)
+		switch {
+		case err != nil:
 			errs = append(errs, err)
 			_ = p.Store.ReleaseBatch(context.WithoutCancel(ctx), b.ID)
+		case !done:
+			waiting = append(waiting, b.ID)
+		}
+	}
+	for _, id := range waiting {
+		if err := p.Store.ReleaseBatch(context.WithoutCancel(ctx), id); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
 }
 
-func (p *Pipeline) collect(ctx context.Context, b store.OpenBatch) error {
+// collect collects a batch if it has finished, and reports whether it had.
+func (p *Pipeline) collect(ctx context.Context, b store.OpenBatch) (bool, error) {
 	batcher, ok := p.Providers.Batcher(b.Provider)
 	if !ok {
-		return p.Store.EndBatch(ctx, b.ID, "failed", "provider "+b.Provider+" has no batch API configured")
+		return true, p.Store.EndBatch(ctx, b.ID, "failed", "provider "+b.Provider+" has no batch API configured")
 	}
 	done, err := batcher.BatchDone(ctx, b.ID)
-	if err != nil {
-		return err
+	if err != nil || !done {
+		return false, err
 	}
-	if !done {
-		return p.Store.ReleaseBatch(ctx, b.ID)
-	}
+	start := p.now()
 	results, err := batcher.BatchResults(ctx, b.ID)
 	if err != nil {
-		return err
+		return true, err
 	}
 	for _, r := range results {
 		if err := p.collectOne(ctx, r); err != nil {
-			return err
+			return true, err
 		}
 	}
 	stale, err := p.Store.StaleRequests(ctx, b.ID)
 	if err != nil {
-		return err
+		return true, err
 	}
 	for _, id := range stale {
 		if err := p.Store.FailRequest(ctx, id, "no result in batch", p.Cfg.Limits.MaxAttempts); err != nil {
-			return err
+			return true, err
 		}
 	}
-	slog.Info("analysis: batch collected", "batch", b.ID, "results", len(results))
-	return p.Store.EndBatch(ctx, b.ID, "ended", "")
+	slog.Info("analysis: batch collected", "batch", b.ID, "route", b.Route, "results", len(results),
+		"seconds", int(p.now().Sub(start).Seconds()))
+	return true, p.Store.EndBatch(ctx, b.ID, "ended", "")
 }
 
 func (p *Pipeline) collectOne(ctx context.Context, r provider.BatchResult) error {
