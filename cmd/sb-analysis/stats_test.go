@@ -42,6 +42,26 @@ func TestStatsCountsPerPlatform(t *testing.T) {
 	if _, err := db.Exec(ctx, `UPDATE analysis.media_jobs SET state = 'skipped', last_error = 'policy:image/thumbnail' WHERE media_id = 'yt:media:1'`); err != nil {
 		t.Fatal(err)
 	}
+	// Two TikTok videos retrying after Whisper couldn't be reached (on two
+	// addresses: digits count together), and an image that failed.
+	var fails []*core.MediaJob
+	for _, id := range []string{"tt:media:1", "tt:media:2", "tt:media:3"} {
+		fails = append(fails, &core.MediaJob{MediaID: id, OwnerContentID: "tt:post:1", Platform: "tiktok", Kind: "video", Role: "content",
+			Bucket: "b", Key: id, AckFormat: core.AckContract})
+	}
+	fails[2].Kind = "image"
+	if _, err := s.InsertMediaJobs(ctx, fails, "sb-analysis"); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`UPDATE analysis.media_jobs SET tries = 1, last_error = 'transcribe: provider: no server reachable: dial tcp 10.244.3.17:8000' WHERE media_id = 'tt:media:1'`,
+		`UPDATE analysis.media_jobs SET tries = 2, last_error = 'transcribe: provider: no server reachable: dial tcp 10.244.9.2:8000' WHERE media_id = 'tt:media:2'`,
+		`UPDATE analysis.media_jobs SET state = 'failed', done_at = now(), last_error = 'media: undecodable image' WHERE media_id = 'tt:media:3'`,
+	} {
+		if _, err := db.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
 	r, err := s.PlatformCounts(ctx, now.Add(-time.Hour), adapter.PlatformName)
 	if err != nil {
 		t.Fatal(err)
@@ -56,6 +76,8 @@ func TestStatsCountsPerPlatform(t *testing.T) {
 		"media: 1 announced, 0 analysed; now 0 pending, 0 done, 1 skipped, 0 failed, 0 gone; 1 acknowledged",
 		"skipped because: policy:image/thumbnail 1",
 		"tiktok\n  items: 1 ingested",
+		"2 waiting to be tried again after a failure; failed or retrying because: " +
+			"video: transcribe: provider: no server reachable: dial tcp #.#.#.#: 2, image: media: undecodable image 1",
 		"outbox (waiting to be published): empty; 0 held",
 	} {
 		if !strings.Contains(text, want) {

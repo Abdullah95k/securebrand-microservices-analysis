@@ -64,6 +64,7 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
 - **Per platform:** `sb-analysis stats [--since 24h]`, run in the analysis pod, prints for each platform:
   - items ingested, analysed (refused among them), waiting in the queue now, and in the dead letters;
   - media files announced, analysed, and their states now (pending, done, skipped, failed, gone), with how many were acknowledged to their collector (done, skipped and failed are; gone ones aren't owed an ack) and why files were skipped (`policy:image/thumbnail` and so on);
+  - files waiting to be tried again after a failure (now), and why files are retrying or failed (failed in the window), by kind, largest first. A reason is the error's first 60 characters with digits shown as `#`, so the same failure on different addresses counts together. Errors name a file at most, never its content (since 11 Nov);
   - the outbox waiting to be published, by topic.
 
   It is read-only and prints counts only. `sb_analysis_items_ingested_total{platform}` counts each item under its own platform; before 11 Nov a batch mixing collectors counted under its first item's platform.

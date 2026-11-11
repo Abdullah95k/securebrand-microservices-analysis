@@ -19,6 +19,11 @@ type PlatformStats struct {
 	MediaAnalysed                                                                 int64
 	// Why files were skipped (their reason code), with counts.
 	MediaReasons map[string]int64
+	// Files waiting to be tried again after a failure (now, whenever they
+	// were announced), and why files are retrying or failed (failed since):
+	// "kind: reason", the error's start with digits as #, with counts.
+	MediaRetrying    int64
+	MediaFailReasons map[string]int64
 }
 
 // PlatformReport is the per-platform counts and the outbox's state.
@@ -36,7 +41,7 @@ func (s *Store) PlatformCounts(ctx context.Context, since time.Time, name func(c
 	by := map[string]*PlatformStats{}
 	get := func(p string) *PlatformStats {
 		if by[p] == nil {
-			by[p] = &PlatformStats{Platform: p, MediaReasons: map[string]int64{}}
+			by[p] = &PlatformStats{Platform: p, MediaReasons: map[string]int64{}, MediaFailReasons: map[string]int64{}}
 		}
 		return by[p]
 	}
@@ -111,6 +116,42 @@ func (s *Store) PlatformCounts(ctx context.Context, since time.Time, name func(c
 			reason = "(none)"
 		}
 		get(p).MediaReasons[reason] += n
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return PlatformReport{}, err
+	}
+
+	// Why files retry or failed: the error's start, digits (addresses,
+	// sizes, codes) as #, so like failures count together. An error message
+	// names a file at most, never its content.
+	rows, err = s.DB.Query(ctx, `SELECT platform, kind, state = 'pending',
+			regexp_replace(left(coalesce(last_error, ''), 80), '[0-9]+', '#', 'g'), count(*)
+		FROM analysis.media_jobs
+		WHERE (state = 'pending' AND tries > 0 AND last_error IS NOT NULL) OR (state = 'failed' AND done_at >= $1)
+		GROUP BY 1, 2, 3, 4`, since)
+	if err != nil {
+		return PlatformReport{}, err
+	}
+	for rows.Next() {
+		var p, kind, reason string
+		var retrying bool
+		var n int64
+		if err := rows.Scan(&p, &kind, &retrying, &reason, &n); err != nil {
+			rows.Close()
+			return PlatformReport{}, err
+		}
+		if len(reason) > 60 {
+			reason = reason[:60]
+		}
+		if reason == "" {
+			reason = "(none)"
+		}
+		m := get(p)
+		if retrying {
+			m.MediaRetrying += n
+		}
+		m.MediaFailReasons[kind+": "+reason] += n
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
