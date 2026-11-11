@@ -87,6 +87,19 @@ func (d Decoder) CommentTopics() []string {
 	return ts
 }
 
+// PostTopics are the topics of posts: they wait in Kafka only at the
+// queue's much higher post cap (analysis.backpressure.max_queue_posts).
+func (d Decoder) PostTopics() []string {
+	var ts []string
+	if d.FB {
+		ts = append(ts, topics.Post)
+	}
+	if d.Content {
+		ts = append(ts, topics.ContentPost)
+	}
+	return ts
+}
+
 // MediaTopics are the topics announcing media files to analyse, and the
 // contract's announcements of deleted files.
 func (d Decoder) MediaTopics() []string {

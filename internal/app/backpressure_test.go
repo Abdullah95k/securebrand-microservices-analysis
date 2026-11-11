@@ -66,8 +66,10 @@ func TestBackpressurePausesIngest(t *testing.T) {
 	}
 
 	gate := &ingest.Gate{Max: 4, Resume: 1, Every: 0, Depth: a.Store.QueueDepth}
+	postGate := &ingest.Gate{Max: 8, Resume: 1, Every: 0, Depth: a.Store.QueueDepth}
 	c, err := ingest.New(ingest.Config{Kafka: kc, Group: cfg.Analysis.ConsumerGroup, Decoder: adapter.NewDecoder([]string{"fb"}),
-		Store: a.Store, Plan: a.Pipeline.Plan, Consumer: cfg.Analysis.Media.Consumer, MaxBatch: 2, Linger: 200 * time.Millisecond, Gate: gate})
+		Store: a.Store, Plan: a.Pipeline.Plan, Consumer: cfg.Analysis.Media.Consumer, MaxBatch: 2, Linger: 200 * time.Millisecond,
+		Gate: gate, PostGate: postGate})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,20 +89,40 @@ func TestBackpressurePausesIngest(t *testing.T) {
 	if got := ingested(); got != held || held >= comments {
 		t.Fatalf("ingest went on while full: %d items, then %d (of %d)", held, got, comments)
 	}
-	// Posts keep flowing while comments wait.
-	post, err := prod.Record(topics.Post, "2", &fbv1.Post{Obs: obs, PostId: 2, PageId: 9, CreatedAt: timestamppb.New(now),
-		Text: "منشور جديد عن العروض"})
-	if err != nil {
-		t.Fatal(err)
+	// Posts keep flowing while comments wait, up to the post cap (8).
+	posted := 0
+	postOne := func() {
+		t.Helper()
+		posted++
+		id := int64(1 + posted)
+		rec, err := prod.Record(topics.Post, fmt.Sprint(id), &fbv1.Post{Obs: obs, PostId: id, PageId: 9, CreatedAt: timestamppb.New(now),
+			Text: fmt.Sprintf("منشور جديد رقم %d عن العروض", id)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := prod.ProduceSync(ctx, rec); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := prod.ProduceSync(ctx, post); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, ctx, func() bool {
-		return count(t, a, `SELECT count(*) FROM analysis.content_items WHERE content_id = 'fb:post:2'`) == 1
-	})
+	posts := func() int { return count(t, a, `SELECT count(*) FROM analysis.content_items WHERE kind = 'post'`) }
+	postOne()
+	waitFor(t, ctx, func() bool { return posts() == 1 })
 	if got := count(t, a, `SELECT count(*) FROM analysis.content_items WHERE kind <> 'post'`); got != held {
 		t.Fatalf("comments ingested while full: %d, were %d", got, held)
+	}
+	// At the post cap, posts wait too.
+	for testutil.ToFloat64(ametrics.IngestPostsPaused) == 0 {
+		if posted > 20 {
+			t.Fatal("posts never paused at the post cap")
+		}
+		postOne()
+		time.Sleep(300 * time.Millisecond)
+	}
+	before := posts()
+	postOne()
+	time.Sleep(2 * time.Second)
+	if got := posts(); got != before {
+		t.Fatalf("posts ingested at the post cap: %d, were %d", got, before)
 	}
 	// Erasures keep flowing while comments wait.
 	rec, err := prod.Record(topics.Erasure, "r1", &fbv1.ErasureEvent{EventId: "r1", RequestId: "r1",
@@ -115,7 +137,7 @@ func TestBackpressurePausesIngest(t *testing.T) {
 	// The analysis drains the queue (here: by hand); the rest comes in.
 	waitFor(t, ctx, func() bool {
 		_, _ = db.Exec(ctx, `DELETE FROM analysis.analysis_queue`)
-		return ingested() == comments+1
+		return ingested() == comments+posted
 	})
 	t.Logf("paused with %d of %d comments ingested; all %d after the queue drained", held, comments, comments)
 }

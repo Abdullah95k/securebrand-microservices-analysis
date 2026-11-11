@@ -258,4 +258,8 @@
   - **Merged and live** (pull request #41, `5d90a15`, with #40). Both whisper servers are Ready: 27 transcriptions ok and 0 errors in 10 minutes. media-retry: 19 videos matched, all in time, applied.
 - **11 Nov, 16:10 Iraq time: TikTok media over 5 days** (analysis-stats 120h): 105,461 announced, 822 analysed, 94,605 pending, 10,015 skipped by policy (audio covers, profile pictures).
   - **Why:** until 13:57 today the $10 cap held media most of each day; since 14:00 files wait for their posts; and the 200k pause held posts too.
-  - **In review:** the pause holds comments only, so posts flow and their media goes ahead with them. `sb-analysis stats` now shows pending media by time to deadline, and how many wait for their post.
+  - **Merged and live** (pull request #42, `661b17b`): the pause holds comments only; `sb-analysis stats` shows pending media by deadline.
+- **11 Nov, 17:15 Iraq time: after `661b17b`** (the master): media moving (449 analysed in 30 min, no holds for posts). But the queue jumped from about 201k to 537k in an hour: the posts' Kafka backlog came in at once (tiktok 279k, youtube 81k, facebook 39k, instagram's first 24k).
+  - My premise that posts were few was wrong: short posts queue on the comment route.
+  - Comments stay paused until the queue falls to 150k. Numbers for the owner's choice (raise the text caps for a few days, or a later backfill) are with the master.
+  - **In review (the master agreed):** a safety valve. Posts pause too, at 1,000,000 queued (resume at 900,000), with `sb_analysis_ingest_posts_paused` and `AnalysisIngestPostsPaused`.

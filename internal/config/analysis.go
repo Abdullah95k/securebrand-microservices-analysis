@@ -221,9 +221,14 @@ type ModelPrice struct {
 
 // AnalysisBackpressure caps the analysis queue's depth.
 type AnalysisBackpressure struct {
-	MaxQueue    int64         `koanf:"max_queue"`
-	ResumeQueue int64         `koanf:"resume_queue"`
-	CheckEvery  time.Duration `koanf:"check_every"`
+	// MaxQueue and ResumeQueue hold comments back; MaxQueuePosts and
+	// ResumeQueuePosts, much higher, hold posts back too (a safety valve
+	// against one collector's backfill; 0 = posts never wait).
+	MaxQueue         int64         `koanf:"max_queue"`
+	ResumeQueue      int64         `koanf:"resume_queue"`
+	MaxQueuePosts    int64         `koanf:"max_queue_posts"`
+	ResumeQueuePosts int64         `koanf:"resume_queue_posts"`
+	CheckEvery       time.Duration `koanf:"check_every"`
 }
 
 // AnalysisRateLimit shares the providers' rps limits through valkey.
@@ -423,6 +428,10 @@ func (a *Analysis) Validate() error {
 	}
 	if b := a.Backpressure; b.MaxQueue <= 0 || b.ResumeQueue < 0 || b.ResumeQueue >= b.MaxQueue || b.CheckEvery <= 0 {
 		errs = append(errs, errors.New("analysis.backpressure: max_queue must be > 0, resume_queue between 0 and below it, check_every > 0"))
+	}
+	if b := a.Backpressure; b.MaxQueuePosts < 0 || b.MaxQueuePosts > 0 && (b.MaxQueuePosts <= b.MaxQueue || b.ResumeQueuePosts < 0 ||
+		b.ResumeQueuePosts >= b.MaxQueuePosts) {
+		errs = append(errs, errors.New("analysis.backpressure: max_queue_posts must be 0 (off) or above max_queue, resume_queue_posts between 0 and below it"))
 	}
 	if a.Budget.DailyUSD < 0 {
 		errs = append(errs, errors.New("analysis.budget.daily_usd must be >= 0"))

@@ -114,6 +114,14 @@ groups:
           summary: "{{ $labels.provider }} requests are limited per pod: Valkey is unreachable"
           description: Each pod sends at its share of the rate (analysis.rate_limit.fallback_divisor); with more pods than that, the provider sees more than its limit.
           runbook_url: https://github.com/abdullah95k/securebrand-microservices-analysis/blob/main/docs/runbooks/analysis.md#rate-limits
+      - alert: AnalysisIngestPostsPaused
+        expr: max(sb_analysis_ingest_posts_paused) == 1
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: The analysis queue has been at its post cap for 30 minutes; new posts wait in Kafka too
+          description: Posts wait only at the much higher post cap (a collector's backfill, most likely), and their media waits for them. Kafka keeps 7 days. Check the queue's cause and the collectors' publishing.
+          runbook_url: https://github.com/abdullah95k/securebrand-microservices-analysis/blob/main/docs/runbooks/analysis.md#queue-backlog
       - alert: AnalysisIngestPaused
         expr: max(sb_analysis_ingest_paused) == 1
         for: 1h

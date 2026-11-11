@@ -86,7 +86,9 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
 4. **Real-time lane slow** at a burst: raise `analysis.realtime.workers`, or set `analysis.urgent.tracked_entities: false` to send fewer items there.
 
 **The queue's cap (backpressure):** at `analysis.backpressure.max_queue` items (200,000), ingest stops taking new comments: `sb_analysis_ingest_paused` is 1, and they wait in Kafka.
-- **Posts keep flowing** (since 11 Nov). They are few, and a post's media files wait for it (`analysis.media.owner_wait`), its captions included. Before, the pause held posts too, and tks's covers and videos waited behind them.
+- **Posts keep flowing** (since 11 Nov) until the much higher post cap, `max_queue_posts` (1,000,000; they resume at `resume_queue_posts`, 900,000). A post's media files wait for it (`analysis.media.owner_wait`), its captions included. Before, the pause held posts too, and tks's covers and videos waited behind them.
+  - Letting posts through brought in the posts' Kafka backlog at once: about 420k items in the first hour on 11 Nov. Short posts queue on the comment route, so the post route's depth undercounts them.
+  - At the post cap `sb_analysis_ingest_posts_paused` is 1, `AnalysisIngestPostsPaused` warns after 30 minutes, and the log says `new posts wait in Kafka too`. That is a safety valve against one collector's backfill.
 - Media announcements and erasures keep flowing too.
 - Ingest of comments resumes once the queue is down to `resume_queue` (150,000). The queue can pass the cap by one ingest batch, plus the posts.
 - **Kafka keeps 7 days.** Comments paused longer than that are gone from Kafka, and comes back only through a backfill from the permanent store. `AnalysisIngestPaused` warns after an hour paused.
