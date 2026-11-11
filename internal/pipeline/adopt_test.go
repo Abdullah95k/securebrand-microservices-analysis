@@ -173,3 +173,39 @@ func TestCutOverWithoutAnalysisIsAnEdit(t *testing.T) {
 		t.Fatalf("%d queue entries, want 1", n)
 	}
 }
+
+// TestCutOverUnchangedQueuedItemIsPublished: an item first read from
+// fbs's own topics and still waiting for analysis arrives through the
+// contract unchanged (same id, same hash): it isn't analysed twice, and
+// it becomes a contract item, so its one analysis is published on
+// analysis.result.v1.
+func TestCutOverUnchangedQueuedItemIsPublished(t *testing.T) {
+	e := setup(t, nil)
+	ctx := context.Background()
+	fb := adapter.FromFBPost(&fbv1.Post{PostId: 8, PageId: 9, CreatedAt: timestamppb.New(time.Now().Add(-time.Hour)), Text: "خبر قديم"})
+	e.ingest(t, fb)
+	contract := *fb
+	contract.Version = 1
+	st, err := e.s.Ingest(ctx, []*core.Item{&contract}, e.p.Plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unchanged != 1 || st.Edited != 0 || st.New != 0 {
+		t.Fatalf("stats %+v, want it unchanged", st)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.content_items WHERE content_id = 'fb:post:8' AND content_version = 1`); n != 1 {
+		t.Fatal("the contract copy didn't make it a contract item")
+	}
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_requests`); n != 1 {
+		t.Fatalf("%d requests, want one analysis", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.outbox WHERE topic = $1 AND key = 'fb:post:8'`, topics.AnalysisResult); n != 1 {
+		t.Fatalf("%d results published, want 1", n)
+	}
+}

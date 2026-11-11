@@ -3,6 +3,7 @@ package pipeline_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -10,6 +11,7 @@ import (
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/ametrics"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/config"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/pipeline"
 )
 
 // threadComments are n comments on thread (a post of fb:page:1), enqueued
@@ -229,5 +231,61 @@ func TestBudgetSpentRouteClaimsNothing(t *testing.T) {
 	}
 	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE attempts = 0 AND lease_until IS NULL AND not_before <= now()`); n != 3 {
 		t.Fatalf("%d of 3 untouched; a spent route claimed", n)
+	}
+}
+
+// TestEstimatePricesMeasuredOutput: a batch request is estimated with
+// its output at the route's measured tokens per item and its prompt at the
+// route's measured share read from the cache; without a measure, at
+// DefaultOutPerItem and as a cache miss. Its worst case, the prompt
+// written to the cache, is recorded with it.
+func TestEstimatePricesMeasuredOutput(t *testing.T) {
+	e := setup(t, nil)
+	ctx := context.Background()
+	est := func(id string) (float64, float64) {
+		t.Helper()
+		var v, max float64
+		if err := e.s.DB.QueryRow(ctx, `SELECT est_cost_usd::float8, est_max_usd::float8 FROM analysis.provider_requests
+			WHERE $1 = ANY(content_ids)`, id).Scan(&v, &max); err != nil {
+			t.Fatal(err)
+		}
+		return v, max
+	}
+	threadComments(t, e, 0, 1)
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first, firstMax := est("fb:comment:0-0")
+	if first <= 0 || first != firstMax {
+		t.Fatalf("without a measure: estimate $%v, worst case $%v; want both the cache miss", first, firstMax)
+	}
+	// 100 one-comment requests answered with 2,000 output tokens each, 3
+	// in 4 of them reading the prompt from the cache: the route's measure,
+	// read by a fresh budget.
+	if _, err := e.s.DB.Exec(ctx, `INSERT INTO analysis.provider_requests (request_id, route, lane, provider, model, items, status,
+			output_tokens, cache_read_tokens, cache_write_tokens, cost_usd)
+		SELECT gen_random_uuid(), 'comment', 'batch', 'primary', 'claude-haiku-5-5', 1, 'done', 2000,
+			CASE WHEN g % 4 = 0 THEN 0 ELSE 13000 END, CASE WHEN g % 4 = 0 THEN 13000 ELSE 0 END, 0 FROM generate_series(1, 100) g`); err != nil {
+		t.Fatal(err)
+	}
+	e.p.Budget = &pipeline.Budget{Store: e.s}
+	if m := e.p.Budget.Measure(ctx, core.RouteComment); m.OutPerItem != 2000 || m.CacheHit != 0.75 {
+		t.Fatalf("measure %+v, want 2000 tokens an item, 75%% read from the cache", m)
+	}
+	threadComments(t, e, 1, 1)
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	second, secondMax := est("fb:comment:1-0")
+	// The worst case rose by (2000 − 150) output tokens at the batch price
+	// of $0.25 a million.
+	if d := secondMax - firstMax; math.Abs(d-1850*0.25/1e6) > 1e-6 {
+		t.Fatalf("worst case rose by $%v with the measure, want $%v", d, 1850*0.25/1e6)
+	}
+	// 75% of the prompt at the cache-read price ($0.005 a million in a
+	// batch) instead of the write price ($0.0625): about 13,000 tokens.
+	prompt := (secondMax - second) / (0.75 * (0.0625 - 0.005) / 1e6)
+	if prompt < 10000 || prompt > 20000 {
+		t.Fatalf("estimate $%v against the worst case $%v: %.0f prompt tokens priced as cached, want about 13,000", second, secondMax, prompt)
 	}
 }

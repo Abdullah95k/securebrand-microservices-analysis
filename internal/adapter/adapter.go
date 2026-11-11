@@ -31,6 +31,13 @@ type Event struct {
 type Decoder struct {
 	FB      bool
 	Content bool
+	// FBMedia (input "fb-media"): of fbs's own topics, only its media
+	// announcements (fb.media.ready.v1, acknowledged on
+	// fb.media.processed.v1) and erasures (fb.erasure.v1). fbs's posts and
+	// comments come through the contract (REQ-018): read on both paths,
+	// one with a different hash (link titles, media names) would be
+	// analysed again on every re-scrape. FB includes all of these.
+	FBMedia bool
 }
 
 // NewDecoder enables the adapters named in inputs: "fb" (fbs's own topics)
@@ -41,6 +48,8 @@ func NewDecoder(inputs []string) Decoder {
 		switch in {
 		case "fb":
 			d.FB = true
+		case "fb-media":
+			d.FBMedia = true
 		case "content":
 			d.Content = true
 		}
@@ -51,8 +60,11 @@ func NewDecoder(inputs []string) Decoder {
 // ItemTopics are the topics carrying content items and erasures (ingest).
 func (d Decoder) ItemTopics() []string {
 	var ts []string
-	if d.FB {
+	switch {
+	case d.FB:
 		ts = append(ts, topics.Post, topics.Comment, topics.Erasure)
+	case d.FBMedia:
+		ts = append(ts, topics.Erasure)
 	}
 	if d.Content {
 		ts = append(ts, topics.ContentPost, topics.ContentComment)
@@ -104,7 +116,7 @@ func (d Decoder) PostTopics() []string {
 // contract's announcements of deleted files.
 func (d Decoder) MediaTopics() []string {
 	var ts []string
-	if d.FB {
+	if d.FB || d.FBMedia {
 		ts = append(ts, topics.MediaReady)
 	}
 	if d.Content {

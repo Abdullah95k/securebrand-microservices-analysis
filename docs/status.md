@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 11 November 2026 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 11 November 2026, 20:35 (Iraq time).*
 
 ## Where it stands
 
@@ -349,3 +349,14 @@
     - today's spend per route in `stats`;
     - max_tokens 16,000 for comment and post.
   - **Proposed next:** a page top-up for short posts. It needs the page on the queue entry, a new column and a migration.
+- **11 Nov, 20:35 Iraq time: the estimate made accurate, in place of the ratio.**
+  - **The master (17:16Z):** the cap must stay a true ceiling ("up to 60 usd"), so no discount on in-flight work: make the estimate itself accurate, and show the worst case.
+  - **Merged before that answer arrived** (pull request #48, `a249332`): the ratio, the held round released at once, the spent route claiming nothing, max_tokens 16,000. **Not to be pinned:** it is replaced in pull request #49.
+  - **In review (pull request #49, with the fb-media input):**
+    - no ratio: in-flight requests count at their estimate;
+    - the estimate prices the prompt at the route's measured share read from the cache (last day), the rest as cache writes, and output at the route's measured tokens per item; without a measure, 150 tokens an item and the prompt as a miss;
+    - the prompt's size at 1.75 bytes a token, as measured (the old 3 read it as about 7,700 tokens instead of 13,238);
+    - a one-comment request: about $0.000115 estimated against $0.000113 paid (was $0.00041);
+    - every request's worst case (its prompt written to the cache) stored in `provider_requests.est_max_usd` (migration 00010, a nullable column: no rewrite);
+    - `stats` prints the worst case per route and for the day, and what new requests are priced at.
+  - **Then:** the page top-up for short posts (the master agreed), as its own pull request.

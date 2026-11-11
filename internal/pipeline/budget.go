@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -10,10 +11,11 @@ import (
 )
 
 // Budget caps spend per day (in the store's timezone), globally and per
-// route. Spend comes from provider_requests (actual cost, or the estimate
-// of requests still in flight times the route's measured ratio of actual
-// to estimate: store.SpendByRoute), refreshed every 30 seconds, plus what
-// this process added since.
+// route. Spend comes from provider_requests (actual cost, or the expected
+// cost of requests still in flight: store.SpendByRoute), refreshed every
+// 30 seconds, plus what this process added since. It also keeps each
+// route's measure (output per item, prefix cache hits), which the
+// estimate prices requests at.
 type Budget struct {
 	Store        *store.Store
 	DailyUSD     float64
@@ -26,6 +28,54 @@ type Budget struct {
 	spent     float64
 	route     map[string]float64
 	now       func() time.Time
+
+	measuredAt time.Time
+	measures   map[string]store.RouteMeasure
+}
+
+// DefaultOutPerItem is the output tokens a request is estimated at per
+// item while its route has no measure (fewer than store.MinMeasuredRequests
+// answered in the last day): one-comment requests answered with 148 on
+// 11 Nov. Without a measure the prefix is estimated as a cache miss.
+const DefaultOutPerItem = 150
+
+// measureEvery is how often the routes' measures are read again; they
+// are over the last day, so they move slowly.
+const measureEvery = 10 * time.Minute
+
+// Measure is what the estimate prices the route's requests at: its
+// output tokens per item and the share of its prefix read from the cache,
+// over the last day's answered requests (store.RouteMeasures, read every
+// 10 minutes). Without a measure: DefaultOutPerItem, and the prefix
+// missing the cache. If the measures can't be read, the last ones stand.
+func (b *Budget) Measure(ctx context.Context, route string) store.RouteMeasure {
+	def := store.RouteMeasure{OutPerItem: DefaultOutPerItem}
+	if b == nil || b.Store == nil {
+		return def
+	}
+	now := b.clock()
+	b.mu.Lock()
+	stale := b.measuredAt.IsZero() || now.Sub(b.measuredAt) >= measureEvery
+	if stale {
+		b.measuredAt = now // one reader at a time
+	}
+	b.mu.Unlock()
+	if stale {
+		m, err := b.Store.RouteMeasures(ctx, now.Add(-24*time.Hour))
+		if err != nil {
+			slog.Warn("analysis: route measures not read, the last ones stand", "err", err)
+		} else {
+			b.mu.Lock()
+			b.measures = m
+			b.mu.Unlock()
+		}
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if m, ok := b.measures[route]; ok && m.OutPerItem > 0 {
+		return m
+	}
+	return def
 }
 
 func (b *Budget) clock() time.Time {

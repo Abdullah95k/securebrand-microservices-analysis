@@ -229,16 +229,19 @@ type RequestRow struct {
 	ContentIDs []string
 	// InputHashes are the items' input hashes when sent, in ContentIDs order.
 	InputHashes [][]byte
-	EstCostUSD  float64
+	// EstCostUSD is the expected cost; EstMaxUSD the worst case (the
+	// prefix missing the cache), at least EstCostUSD (0: EstCostUSD).
+	EstCostUSD, EstMaxUSD float64
 }
 
 // StartRequest records a provider request and ties its queue entries to it.
 func (s *Store) StartRequest(ctx context.Context, r RequestRow) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `INSERT INTO analysis.provider_requests (request_id, batch_id, route, lane, provider, model,
-			items, content_ids, input_hashes, status, fallback, est_cost_usd)
-			VALUES ($1, NULLIF($2,''), $3, $4, $5, $6, $7, $8, $9, 'submitted', $10, $11)`,
-			r.ID, r.BatchID, r.Route, r.Lane, r.Provider, r.Model, len(r.ContentIDs), r.ContentIDs, r.InputHashes, r.Fallback, r.EstCostUSD); err != nil {
+			items, content_ids, input_hashes, status, fallback, est_cost_usd, est_max_usd)
+			VALUES ($1, NULLIF($2,''), $3, $4, $5, $6, $7, $8, $9, 'submitted', $10, $11, $12)`,
+			r.ID, r.BatchID, r.Route, r.Lane, r.Provider, r.Model, len(r.ContentIDs), r.ContentIDs, r.InputHashes, r.Fallback,
+			r.EstCostUSD, max(r.EstMaxUSD, r.EstCostUSD)); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, `UPDATE analysis.analysis_queue SET request_id = $1 WHERE content_id = ANY($2) AND route = $3`,
@@ -427,40 +430,29 @@ func (s *Store) SpentSince(ctx context.Context, t time.Time, route string) (floa
 // RouteSpend is a route's spend since a time, as the budget counts it.
 type RouteSpend struct {
 	Route string
-	// Done is the actual cost of answered requests; InFlight the estimate
-	// of those still in flight.
-	Done, InFlight float64
-	// Ratio is actual ÷ estimate over the route's answered requests of the
-	// last day, between MinSpendRatio and 1 (1 with fewer than 100 of
-	// them). Counted is Done + InFlight × Ratio.
-	Ratio, Counted float64
+	// Done is the actual cost of answered requests. InFlight is the
+	// expected cost of the Requests still in flight, InFlightMax their
+	// worst case (each prefix missing the cache; est_cost_usd for
+	// requests recorded before est_max_usd).
+	Done, InFlight, InFlightMax float64
+	Requests                    int64
+	// Counted is what the budget counts: Done + InFlight. Worst is
+	// Done + InFlightMax, the most the route's spend can come to once
+	// every request in flight is answered (with output as expected).
+	Counted, Worst float64
 }
 
-// MinSpendRatio is the least share of its estimate an in-flight request
-// counts for. Batch estimates price the cached prompt as plain input, so
-// on 11 Nov a one-item comment request was estimated at $0.00041 and cost
-// $0.000113: 26,000 in flight counted for about $10.7 of the comment
-// route's $30 while they would cost about $3, and the route stopped
-// sending for hours. Counting them at the measured ratio frees that room;
-// the floor and the cap at 1 keep an estimate from counting for less than
-// a quarter of itself or more than itself.
-const MinSpendRatio = 0.25
-
 // SpendByRoute is the spend since t by route: actual cost where known,
-// and requests still in flight at their estimate times the route's
-// measured actual-to-estimate ratio. Failed requests (no answer) cost
-// nothing.
+// and requests still in flight at their expected cost (their worst case
+// alongside). Failed requests (no answer) cost nothing.
 func (s *Store) SpendByRoute(ctx context.Context, t time.Time) ([]RouteSpend, error) {
-	rows, err := s.DB.Query(ctx, `WITH ratio AS (
-			SELECT route, least(1, greatest($2::float8, sum(cost_usd) / nullif(sum(est_cost_usd), 0)))::float8 AS r
-			FROM analysis.provider_requests
-			WHERE created_at >= $1::timestamptz - interval '1 day' AND status = 'done' AND cost_usd IS NOT NULL AND est_cost_usd > 0
-			GROUP BY route HAVING count(*) >= 100)
-		SELECT p.route, coalesce(sum(p.cost_usd), 0)::float8,
-			coalesce(sum(p.est_cost_usd) FILTER (WHERE p.cost_usd IS NULL), 0)::float8, coalesce(max(ratio.r), 1)::float8
-		FROM analysis.provider_requests p LEFT JOIN ratio ON ratio.route = p.route
-		WHERE p.created_at >= $1 AND p.status <> 'failed'
-		GROUP BY p.route ORDER BY 1`, t, MinSpendRatio)
+	rows, err := s.DB.Query(ctx, `SELECT route, coalesce(sum(cost_usd), 0)::float8,
+			coalesce(sum(est_cost_usd) FILTER (WHERE cost_usd IS NULL), 0)::float8,
+			coalesce(sum(coalesce(est_max_usd, est_cost_usd)) FILTER (WHERE cost_usd IS NULL), 0)::float8,
+			count(*) FILTER (WHERE cost_usd IS NULL)
+		FROM analysis.provider_requests
+		WHERE created_at >= $1 AND status <> 'failed'
+		GROUP BY route ORDER BY 1`, t)
 	if err != nil {
 		return nil, err
 	}
@@ -468,11 +460,54 @@ func (s *Store) SpendByRoute(ctx context.Context, t time.Time) ([]RouteSpend, er
 	var out []RouteSpend
 	for rows.Next() {
 		var r RouteSpend
-		if err := rows.Scan(&r.Route, &r.Done, &r.InFlight, &r.Ratio); err != nil {
+		if err := rows.Scan(&r.Route, &r.Done, &r.InFlight, &r.InFlightMax, &r.Requests); err != nil {
 			return nil, err
 		}
-		r.Counted = r.Done + r.InFlight*r.Ratio
+		r.Counted, r.Worst = r.Done+r.InFlight, r.Done+r.InFlightMax
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// MinMeasuredRequests is the least number of answered requests a route
+// needs since a time before RouteMeasures gives its measure.
+const MinMeasuredRequests = 100
+
+// RouteMeasure is what a route's answered requests cost in tokens, which
+// the estimate prices new requests at.
+type RouteMeasure struct {
+	// Requests is how many were answered.
+	Requests int64
+	// OutPerItem is their output tokens per item.
+	OutPerItem float64
+	// CacheHit is the share of their cached prefix read from the cache
+	// (cache-read tokens over cache-read and cache-write tokens), 0 when
+	// none was recorded.
+	CacheHit float64
+}
+
+// RouteMeasures is, by route, the measure of the requests answered since
+// t, for routes with at least MinMeasuredRequests of them (routes with
+// fewer are left out).
+func (s *Store) RouteMeasures(ctx context.Context, t time.Time) (map[string]RouteMeasure, error) {
+	rows, err := s.DB.Query(ctx, `SELECT route, count(*), sum(output_tokens)::float8 / sum(items),
+			coalesce(sum(coalesce(cache_read_tokens, 0))::float8 /
+				nullif(sum(coalesce(cache_read_tokens, 0) + coalesce(cache_write_tokens, 0)), 0), 0)::float8
+		FROM analysis.provider_requests
+		WHERE created_at >= $1 AND status = 'done' AND output_tokens IS NOT NULL AND items > 0
+		GROUP BY route HAVING count(*) >= $2`, t, MinMeasuredRequests)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]RouteMeasure{}
+	for rows.Next() {
+		var route string
+		var m RouteMeasure
+		if err := rows.Scan(&route, &m.Requests, &m.OutPerItem, &m.CacheHit); err != nil {
+			return nil, err
+		}
+		out[route] = m
 	}
 	return out, rows.Err()
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/adapter"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/app"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/pipeline"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/store"
 )
 
@@ -46,6 +47,10 @@ func statsCmd(args []string) error {
 		if r.Spend, err = a.Store.SpendByRoute(ctx, a.Store.DayStart(time.Now())); err != nil {
 			return err
 		}
+		if r.Measures, err = a.Store.RouteMeasures(ctx, time.Now().Add(-24*time.Hour)); err != nil {
+			return err
+		}
+		r.DefaultOutPerItem = pipeline.DefaultOutPerItem
 		r.DailyCap, r.RouteCaps = a.Cfg.Analysis.Budget.DailyUSD, map[string]float64{}
 		for name, rc := range a.Cfg.Analysis.Routes {
 			if rc.DailyUSD > 0 {
@@ -159,22 +164,30 @@ func printRequests(b *strings.Builder, r store.PlatformReport) {
 	fmt.Fprintf(b, "real-time lane rules: %d hot accounts in the config; %s; %d entities tracked\n",
 		r.HotAccounts, watch, r.Urgent.TrackedEntities)
 	if len(r.Spend) > 0 {
-		var total float64
+		var total, worst float64
 		for _, s := range r.Spend {
 			total += s.Counted
+			worst += s.Worst
 		}
 		capText := "no daily cap"
 		if r.DailyCap > 0 {
 			capText = fmt.Sprintf("of $%.2f", r.DailyCap)
 		}
-		fmt.Fprintf(b, "spend today (Iraq day, as the budget counts it): $%.2f %s\n", total, capText)
+		fmt.Fprintf(b, "spend today (Iraq day, as the budget counts it): $%.2f %s; worst case $%.2f (every request in flight missing the cache)\n",
+			total, capText, worst)
 		for _, s := range r.Spend {
 			routeCap := ""
 			if c := r.RouteCaps[s.Route]; c > 0 {
 				routeCap = fmt.Sprintf(" of $%.2f", c)
 			}
-			fmt.Fprintf(b, "  %s: $%.2f%s (answered $%.2f; $%.2f estimated in flight, counted at %.2f of its estimate)\n",
-				s.Route, s.Counted, routeCap, s.Done, s.InFlight, s.Ratio)
+			priced := fmt.Sprintf("output at %.0f tokens an item and the prompt as a cache miss (the defaults: under %d answered in the last day)",
+				r.DefaultOutPerItem, store.MinMeasuredRequests)
+			if m, ok := r.Measures[s.Route]; ok {
+				priced = fmt.Sprintf("output at %.0f tokens an item and the prompt %.0f%% read from the cache (measured over the last day's %d answered)",
+					m.OutPerItem, 100*m.CacheHit, m.Requests)
+			}
+			fmt.Fprintf(b, "  %s: $%.2f%s (answered $%.2f; %d requests in flight expected at $%.2f, $%.2f at worst); worst case $%.2f; new requests priced with %s\n",
+				s.Route, s.Counted, routeCap, s.Done, s.Requests, s.InFlight, s.InFlightMax, s.Worst, priced)
 		}
 	}
 	for _, q := range r.Tries {

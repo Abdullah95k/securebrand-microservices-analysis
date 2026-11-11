@@ -108,6 +108,26 @@ func TestTopUpItemsQuoted(t *testing.T) {
 	}
 }
 
+// analysis.inputs: fb, fb-media and content; fb and fb-media not together.
+func TestAnalysisInputs(t *testing.T) {
+	c, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ok := range [][]string{{"content", "fb"}, {"content", "fb-media"}, {"fb"}, {"content"}} {
+		c.Analysis.Inputs = ok
+		if err := c.Validate(); err != nil {
+			t.Errorf("inputs %v refused: %v", ok, err)
+		}
+	}
+	for _, bad := range [][]string{{"fb", "fb-media"}, {"content", "x"}} {
+		c.Analysis.Inputs = bad
+		if c.Validate() == nil {
+			t.Errorf("inputs %v accepted", bad)
+		}
+	}
+}
+
 func TestAnalysisPrivacyDefaults(t *testing.T) {
 	c, err := Load("")
 	if err != nil {

@@ -455,7 +455,7 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	if transcript != "" {
 		spoken = len(transcript)
 	}
-	est := w.P.Pricing.Estimate(rc.Model, len(system), len(postText)+spoken, len(images), 250, false) + speechCost
+	est := w.P.Pricing.Estimate(rc.Model, len(system), len(postText)+spoken, len(images), 250, false).HitUSD + speechCost
 	if ok, err := w.P.Budget.Allow(ctx, route, est, false); err != nil || !ok {
 		if err == nil {
 			err = errBudget
