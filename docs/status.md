@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 12 November 2026, 01:40 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 12 November 2026, 01:55 (Iraq time).*
 
 ## Where it stands
 
@@ -407,3 +407,6 @@
     - **ig: queue order.** A round claimed the oldest items of all platforms, and ig's (from 11 Nov) sat behind about a million older ones. Nothing is switched off; no code treats ig differently.
     - **fb: by design.** Results of items read from fbs's own topics stay in Postgres (decision 17); only contract items are published, since 21:45. The production backfill publishes every adopted item's stored analysis once.
   - **In review:** each round gives every platform waiting an equal share of its oldest live items, then the rest oldest first (live before backfill). Migration 00012 adds an index on the content ID's platform code, built concurrently. `stats` shows each platform's oldest waiting item.
+- **12 Nov, 01:55 Iraq time: fair share merged; captions-only versions.**
+  - **Merged:** `f06aaab` (the claim shared across platforms, migration 00012), in the master's platform #118.
+  - **fbs's video captions (D-056):** a new version of a post whose only change is its captions is already unchanged (captions aren't part of the input hash): no new analysis, nothing paid. The captions are stored for the video's transcript. **In review:** such a version's number is now stored too, so an older reading after it stays stale.
