@@ -215,6 +215,13 @@ func (s *Store) Ingest(ctx context.Context, items []*core.Item, plan Planner) (I
 						author_id = coalesce($5, author_id), last_seen_at = $6
 						WHERE created_at = $1 AND content_id = $2`,
 						ex.createdAt, it.ContentID, it.Version, it.Depth, nilIfEmpty(it.AuthorID), now)
+				} else if it.FromContract() && it.Version > ex.version {
+					// A newer reading with the same text (only its captions,
+					// say, changed): nothing to analyse, but its version is
+					// kept, so an older reading arriving later is stale.
+					b.Queue(`UPDATE analysis.content_items SET content_version = $3, last_seen_at = $4
+						WHERE created_at = $1 AND content_id = $2 AND content_version < $3`,
+						ex.createdAt, it.ContentID, it.Version, now)
 				}
 				if it.Captions != "" {
 					// Same text, captions added or changed: kept for the

@@ -102,3 +102,46 @@ func TestOlderReadingKeepsDeletions(t *testing.T) {
 		t.Fatalf("deletion: stats %+v, %v", st, err)
 	}
 }
+
+// TestCaptionsOnlyVersionIsNotAnalysed: a newer version of a post whose
+// only change is its captions (fbs adds a video's captions later) is
+// unchanged: not queued or paid for again; its captions are kept for the
+// video's transcript, and its version too, so an older reading after it is
+// stale.
+func TestCaptionsOnlyVersionIsNotAnalysed(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	at := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	post := func(version int64, captions string) *core.Item {
+		return &core.Item{ContentID: "fb:post:77", Platform: "facebook", Kind: core.KindPost, SourceID: "fb:page:1",
+			CreatedAt: at, ObservedAt: at, Text: "فيديو العرض الجديد", MediaIDs: []string{"fb:media:1"}, Status: core.StatusVisible,
+			Version: version, Captions: captions, CaptionsLang: "ar", CaptionsSource: "platform_asr"}
+	}
+	if _, err := s.Ingest(ctx, []*core.Item{post(1_731_300_000_000_000, "")}, plan); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB.Exec(ctx, `DELETE FROM analysis.analysis_queue`); err != nil { // analysed meanwhile
+		t.Fatal(err)
+	}
+	st, err := s.Ingest(ctx, []*core.Item{post(1_731_300_600_000_000, "مرحبا بكم في العرض الجديد")}, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Unchanged != 1 || st.Edited != 0 {
+		t.Fatalf("captions-only version: stats %+v, want unchanged", st)
+	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.analysis_queue`); n != 0 {
+		t.Fatal("a captions-only version was queued for analysis")
+	}
+	if n := count(t, s, `SELECT count(*) FROM analysis.content_items WHERE content_id = 'fb:post:77'
+		AND captions = 'مرحبا بكم في العرض الجديد' AND content_version = 1731300600000000`); n != 1 {
+		t.Fatal("the captions or the newer version weren't kept")
+	}
+	// A reading between the two, with other text, is older than the stored
+	// version: stale.
+	older := post(1_731_300_300_000_000, "")
+	older.Text = "نص قديم"
+	if st, err := s.Ingest(ctx, []*core.Item{older}, plan); err != nil || st.Stale != 1 {
+		t.Fatalf("older reading after the captions version: stats %+v, %v", st, err)
+	}
+}
