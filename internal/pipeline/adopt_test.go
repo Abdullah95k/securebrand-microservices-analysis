@@ -2,6 +2,7 @@ package pipeline_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -207,5 +208,65 @@ func TestCutOverUnchangedQueuedItemIsPublished(t *testing.T) {
 	}
 	if n := e.count(t, `SELECT count(*) FROM analysis.outbox WHERE topic = $1 AND key = 'fb:post:8'`, topics.AnalysisResult); n != 1 {
 		t.Fatalf("%d results published, want 1", n)
+	}
+}
+
+// TestCutOverAdoptsAnalysedCommentOutsideSample: fbs's backfill re-sends,
+// through the contract, comments already analysed from fb.comment.v1 (the
+// same ID): one outside the 10% sample is adopted all the same, with no
+// AI call, and its result is published once; sent again unchanged, nothing
+// happens. A comment never seen and outside the sample is counted, not
+// stored.
+func TestCutOverAdoptsAnalysedCommentOutsideSample(t *testing.T) {
+	e := setup(t, nil)
+	ctx := context.Background()
+	at := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
+	// IDs outside a 10% sample.
+	var out []string
+	for i := 0; len(out) < 2; i++ {
+		if id := fmt.Sprintf("fb:comment:%d", 500+i); !core.InSample(id, 0.10) {
+			out = append(out, id)
+		}
+	}
+	fb := &core.Item{ContentID: out[0], Platform: "facebook", Kind: core.KindComment, SourceID: "fb:page:1", ThreadID: "fb:post:1",
+		ParentID: "fb:post:1", AuthorKey: []byte("a"), CreatedAt: at, ObservedAt: at, Text: "خدمة الانترنت ضعيفة اليوم", Status: core.StatusVisible}
+	e.ingest(t, fb) // before the sample: every fb comment was stored
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before := e.count(t, `SELECT count(*) FROM analysis.provider_requests`)
+	if before == 0 {
+		t.Fatal("the fb comment wasn't analysed")
+	}
+	// The sample is now 10% (D-053); the backfill sends the contract copies.
+	e.s.CommentShare = 0.10
+	contract := *fb
+	contract.Version, contract.Backfill, contract.AuthorID = 1, true, "fb:account:5"
+	never := contract
+	never.ContentID = out[1]
+	for range 2 {
+		c, n := contract, never
+		st, err := e.s.Ingest(ctx, []*core.Item{&c, &n}, e.p.Plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.NotSampled != 1 {
+			t.Fatalf("stats %+v, want the never-seen comment counted outside the sample", st)
+		}
+	}
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_requests`); n != before {
+		t.Fatalf("%d requests, were %d: the adopted comment was analysed again", n, before)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.outbox WHERE topic = $1 AND key = $2`, topics.AnalysisResult, out[0]); n != 1 {
+		t.Fatalf("%d results published for the adopted comment, want 1", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.content_index WHERE content_id = $1`, out[1]); n != 0 {
+		t.Fatal("the never-seen comment outside the sample was stored")
 	}
 }

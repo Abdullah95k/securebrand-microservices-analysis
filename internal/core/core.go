@@ -80,6 +80,10 @@ type Item struct {
 	Captions       string
 	CaptionsLang   string
 	CaptionsSource string
+	// Backfill: the collector sent it from a backfill (the contract's
+	// provenance.mode CRAWL_MODE_BACKFILL), not as live work, so it is
+	// analysed behind live items (Pipeline.Plan). Not stored.
+	Backfill bool
 }
 
 // PlatformCode is the contract's platform code of a contract ID

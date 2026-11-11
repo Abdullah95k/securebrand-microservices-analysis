@@ -127,7 +127,9 @@ func (p *Pipeline) Entities() *entities.Registry { return p.entities.Load() }
 // go to the real-time lane (results within minutes): those from a hot-tier
 // account (HotAccounts), and those mentioning an entity a client tracks.
 // Everything else takes its route's lane: the half-price batch lane for
-// posts and comments.
+// posts and comments. A collector's backfill (core.Item.Backfill) is never
+// urgent: it takes the batch lane at background priority, so a claim takes
+// every live item waiting before it (the master, 11 Nov: live first).
 func (p *Pipeline) Plan(it *core.Item) store.Plan {
 	route := core.RouteFor(it, p.Cfg.Grouping.PostShortChars)
 	lane := p.Cfg.Routes[route].Lane
@@ -135,7 +137,10 @@ func (p *Pipeline) Plan(it *core.Item) store.Plan {
 		lane = core.LaneBatch
 	}
 	pl := store.Plan{Route: route, Lane: lane, Priority: core.PriorityNormal}
-	if p.hot.Hot(it.SourceID) || (p.Cfg.Urgent.TrackedEntities && p.trackedHit(it.Text)) {
+	switch {
+	case it.Backfill:
+		pl.Lane, pl.Priority = core.LaneBatch, core.PriorityBackground
+	case p.hot.Hot(it.SourceID) || (p.Cfg.Urgent.TrackedEntities && p.trackedHit(it.Text)):
 		pl.Lane, pl.Priority = core.LaneRealtime, core.PriorityUrgent
 	}
 	return pl

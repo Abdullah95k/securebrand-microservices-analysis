@@ -350,3 +350,35 @@ func TestTopUpThreadsBeforePages(t *testing.T) {
 		t.Fatalf("requests of %v items, want 6 (thread 0) and 1 (page 1)", got)
 	}
 }
+
+// TestBackfillGoesBehindLive: a collector's backfill item takes the batch
+// lane at background priority, even from a hot account, so a claim takes
+// every live item before it, however long it has waited.
+func TestBackfillGoesBehindLive(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) {
+		c.Batch.MaxItems, c.Batch.TopUpItems = 1, 0
+		c.Urgent.HotAccounts = []string{"fb:page:7"}
+	})
+	ctx := context.Background()
+	old := comment(1, "تعليق قديم من النسخ الاحتياطي")
+	old.ContentID, old.ThreadID, old.ParentID, old.SourceID, old.Backfill = "fb:comment:old", "fb:post:8", "fb:post:8", "fb:page:7", true
+	if pl := e.p.Plan(old); pl.Lane != core.LaneBatch || pl.Priority != core.PriorityBackground {
+		t.Fatalf("a hot account's backfill item planned %+v, want the batch lane at background priority", pl)
+	}
+	live := comment(2, "تعليق جديد")
+	live.ContentID, live.ThreadID, live.ParentID = "fb:comment:live", "fb:post:9", "fb:post:9"
+	e.ingest(t, old, live)
+	// The backfill item waited an hour longer.
+	if _, err := e.s.DB.Exec(ctx, `UPDATE analysis.analysis_queue SET enqueued_at = now() - interval '2 hours' WHERE content_id = 'fb:comment:old'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE content_id = 'fb:comment:live' AND request_id IS NOT NULL`); n != 1 {
+		t.Fatal("the live comment wasn't claimed first")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE content_id = 'fb:comment:old' AND request_id IS NULL AND priority = 2`); n != 1 {
+		t.Fatal("the backfill comment was claimed before the live one, or not queued at background priority")
+	}
+}

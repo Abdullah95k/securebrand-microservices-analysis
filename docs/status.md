@@ -367,3 +367,5 @@
     - A round now also claims each claimed page's other waiting short posts, after the threads, within the same `batch.top_up_items`.
     - A short post's queue entry carries its page: migration 00011 adds `analysis_queue.source_id` (nullable, no rewrite), an index built concurrently, and `analysis.backfills`.
     - Entries queued before it get their page from a throttled backfill in the `rollup` role: 10,000 entries a pass, a 2-second pause, its place kept across restarts. `stats` prints its progress.
+  - **Also in review: live first for fbs's backfill** (the master, 17:46Z). A contract post or comment marked `provenance.mode = CRAWL_MODE_BACKFILL` takes the batch lane at background priority, so claims take every live item before it.
+  - **Confirmed for the master** (tested): a comment already analysed from `fb.*` and sent again through the contract is adopted with no AI call, even outside the 10% sample, and published once. Sent again unchanged, nothing happens. A comment never seen is kept only in the sample.

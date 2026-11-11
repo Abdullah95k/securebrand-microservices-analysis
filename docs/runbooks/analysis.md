@@ -356,7 +356,12 @@ fbs moves from its own `fb.*` topics to the contract's `content.*` (REQ-018, fro
   - What's left unread on `fb.post.v1` and `fb.comment.v1` arrives through fbs's backfill on `content.*` with the same IDs. The comment sample is by ID, so the same 10% is kept.
   - If fbs also announces media on `content.media.ready.v1`, one path must go: then `fb-media` would read each file twice.
 - **Media:** a re-announced file whose SHA-256 was analysed before is reused at no cost, so fbs should send `sha256` on `content.media.ready.v1`.
-- **The backfill:** adopted and unchanged items aren't queued, so the 200k ingest pause doesn't hold them. Each costs a few database writes: a pace of up to about 200 items a second is fine.
+- **The backfill:** adopted and unchanged items aren't queued, so the ingest pause doesn't hold them. Each costs a few database writes: a pace of up to about 200 items a second is fine.
+  - **Comments under the sample:** a comment already stored (every `fb.*` comment from before D-053) is kept, and adopted if analysed. One never seen is kept only if it is in the 10% sample. Backfilled comments count in `comment_sample_daily` on the day they arrive, so that day's received and sampled counts include them.
+  - **Live first** (since 11 Nov, the master): a post or comment whose `provenance.mode` is `CRAWL_MODE_BACKFILL` takes the batch lane at background priority (2), even from a hot account or naming a tracked entity. A claim takes every live item waiting (priority 1, or 0 for urgent ones) before it, however long it has waited.
+    - A live copy of the same item lowers its priority to the live one's (the queue keeps the lower of the two).
+    - A round's thread and page top-up still takes the backfill items of the threads and pages it claimed, so they ride along in live requests. That costs less than sending them alone later, but it is spend from the same daily caps.
+    - With a large live queue, backfill items wait until it is drained, within the day's caps.
 
 ## Re-analysis
 
