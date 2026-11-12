@@ -120,3 +120,32 @@ func TestClaimSharedOnePlatform(t *testing.T) {
 		t.Fatalf("platforms %v %v", codes, err)
 	}
 }
+
+// TestPlatformCountsWaitingSplit: each platform's waiting items say how
+// many are in a request in flight and how many are backfill, and how long
+// the oldest not in flight has waited.
+func TestPlatformCountsWaitingSplit(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	queueComments(t, s, "ig", 3, time.Now().Add(-2*time.Hour), core.PriorityNormal)
+	queueComments(t, s, "fb", 2, time.Now().Add(-5*time.Hour), core.PriorityBackground)
+	// ig's oldest is in a request in flight; its next waits 2 h less a second.
+	if _, err := s.DB.Exec(ctx, `UPDATE analysis.analysis_queue SET request_id = gen_random_uuid() WHERE content_id = 'ig:comment:0'`); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.PlatformCounts(ctx, time.Now().Add(-24*time.Hour), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]PlatformStats{}
+	for _, p := range r.Platforms {
+		got[p.Platform] = p
+	}
+	ig, fb := got["ig"], got["fb"]
+	if ig.Waiting != 3 || ig.InFlight != 1 || ig.Backfill != 0 || ig.OldestWaiting < 119*time.Minute || ig.OldestWaiting > 121*time.Minute {
+		t.Fatalf("ig %+v, want 3 waiting, 1 in flight, the oldest not sent about 2 h", ig)
+	}
+	if fb.Waiting != 2 || fb.InFlight != 0 || fb.Backfill != 2 {
+		t.Fatalf("fb %+v, want 2 waiting, both backfill", fb)
+	}
+}

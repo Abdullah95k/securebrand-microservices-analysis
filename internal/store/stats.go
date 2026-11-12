@@ -3,7 +3,10 @@ package store
 import (
 	"context"
 	"sort"
+	"strconv"
 	"time"
+
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
 )
 
 // PlatformStats are one platform's counts since a time: no content.
@@ -12,9 +15,12 @@ type PlatformStats struct {
 	// Items: first seen since, analyses written since (refused among
 	// them), waiting in the queue now, and in the dead letters since.
 	Ingested, Analysed, Refused, Waiting, DeadLetters int64
-	// OldestWaiting is how long the platform's oldest queue entry has
-	// waited (0 with none).
-	OldestWaiting time.Duration
+	// Of the waiting: InFlight are in a request sent and not answered yet;
+	// Backfill are a collector's backfill (background priority: claimed
+	// after every live item). OldestWaiting is how long the oldest entry
+	// not in flight has waited (0 with none).
+	InFlight, Backfill int64
+	OldestWaiting      time.Duration
 	// Media files announced since, by state now; analyses written since.
 	// Each done, skipped or failed file has been acknowledged to its
 	// collector (gone ones are not: their file was deleted first).
@@ -90,11 +96,14 @@ func (s *Store) PlatformCounts(ctx context.Context, since time.Time, name func(c
 		{`SELECT platform, count(*) FROM analysis.content_items WHERE first_seen_at >= $1 GROUP BY 1`, func(p string, n []int64) { get(p).Ingested = n[0] }, false, 1},
 		{`SELECT platform, count(*), count(*) FILTER (WHERE refused) FROM analysis.analyses WHERE analyzed_at >= $1 GROUP BY 1`,
 			func(p string, n []int64) { get(p).Analysed, get(p).Refused = n[0], n[1] }, false, 2},
-		{`SELECT split_part(content_id, ':', 1), count(*), greatest(extract(epoch FROM now() - min(enqueued_at)), 0)::bigint
+		{`SELECT split_part(content_id, ':', 1), count(*),
+				coalesce(greatest(extract(epoch FROM now() - min(enqueued_at) FILTER (WHERE request_id IS NULL)), 0), 0)::bigint,
+				count(*) FILTER (WHERE request_id IS NOT NULL), count(*) FILTER (WHERE priority >= ` + strconv.Itoa(core.PriorityBackground) + `)
 			FROM analysis.analysis_queue WHERE $1::timestamptz IS NOT NULL GROUP BY 1`,
 			func(p string, n []int64) {
-				get(p).Waiting, get(p).OldestWaiting = n[0], time.Duration(n[1])*time.Second
-			}, true, 2},
+				m := get(p)
+				m.Waiting, m.OldestWaiting, m.InFlight, m.Backfill = n[0], time.Duration(n[1])*time.Second, n[2], n[3]
+			}, true, 4},
 		{`SELECT split_part(content_id, ':', 1), count(*) FROM analysis.dead_letters WHERE failed_at >= $1 GROUP BY 1`,
 			func(p string, n []int64) { get(p).DeadLetters = n[0] }, true, 1},
 		{`SELECT platform, count(*),

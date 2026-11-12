@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 12 November 2026, 01:55 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 12 November 2026, 03:05 (Iraq time).*
 
 ## Where it stands
 
@@ -410,3 +410,8 @@
 - **12 Nov, 01:55 Iraq time: fair share merged; captions-only versions.**
   - **Merged:** `f06aaab` (the claim shared across platforms, migration 00012), in the master's platform #118.
   - **fbs's video captions (D-056):** a new version of a post whose only change is its captions is already unchanged (captions aren't part of the input hash): no new analysis, nothing paid. The captions are stored for the video's transcript. **In review:** such a version's number is now stored too, so an older reading after it stays stale.
+- **12 Nov, 03:05 Iraq time: Instagram still 0 an hour after fair share.**
+  - **The reading** (the master, 23:49Z): ig 72,600 waiting, 0 analysed; no comment batch answered in the hour on any platform (12,198 requests in flight); spend $19.48 of $60.
+  - **Two possible causes:** batch latency (ig items in batches not yet answered), or igs marking its items as backfill, which fair share leaves out and which go after every live item. The master is checking `sb-analysis batches` and igs's provenance mode.
+  - **In review:** `stats` splits each platform's waiting items into in flight and backfill, and gives the oldest not yet sent.
+  - **`57P01` (connection terminated by the server)** at about 15:59Z and 23:47Z: comes from `pg_terminate_backend` or a server restart, not from any timeout of ours; rounds fail and retry, nothing paid. For the platform to check on DigitalOcean.
