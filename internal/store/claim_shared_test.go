@@ -229,4 +229,20 @@ func TestClaimSharedRecentFirst(t *testing.T) {
 	if fmt.Sprint(order) != "[fb:comment:0 fb:comment:1 fb:comment:2]" {
 		t.Fatalf("with recent_first off claimed %v, want the 3 oldest", order)
 	}
+
+	// One platform: its recent ones, then its oldest.
+	s3 := testStore(t)
+	queueCommentsAt(t, s3, "fb", 0, 3, old, old, core.PriorityNormal)
+	queueCommentsAt(t, s3, "fb", 3, 3, now.Add(-time.Hour), now.Add(-50*time.Minute), core.PriorityNormal)
+	got, err = s3.ClaimShared(ctx, core.LaneBatch, core.RouteComment, 4, time.Minute, 48*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids = map[string]bool{}
+	for _, c := range got {
+		ids[c.Item.ContentID] = true
+	}
+	if len(got) != 4 || !ids["fb:comment:3"] || !ids["fb:comment:4"] || !ids["fb:comment:5"] || !ids["fb:comment:0"] {
+		t.Fatalf("one platform claimed %v, want its 3 recent ones and its oldest", ids)
+	}
 }

@@ -148,7 +148,9 @@ func (s *Store) ClaimShared(ctx context.Context, lane, route string, limit int, 
 			}
 		}
 	}
-	if rest := limit - len(out); rest > 0 && recent > 0 {
+	// With one platform, its share was the whole limit: no recent entry is
+	// left to take.
+	if rest := limit - len(out); rest > 0 && recent > 0 && len(codes) > 1 {
 		room := make([]int, len(codes))
 		for i := range room {
 			room[i] = rest
