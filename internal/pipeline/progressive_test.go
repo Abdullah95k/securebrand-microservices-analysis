@@ -351,3 +351,65 @@ func TestCollectGoesOnPastAStuckResult(t *testing.T) {
 		t.Fatal("the batch didn't end once every result was stored")
 	}
 }
+
+// TestBatchRoundWaitsForCollection: no round is sent while more than
+// batch.max_open batches are open; once they are collected, rounds go out
+// again (12 Nov: sending outran collection).
+func TestBatchRoundWaitsForCollection(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) { c.Batch.MaxOpen = 2 })
+	ctx := context.Background()
+	for i := range 4 {
+		c := comment(i+1, "تعليق")
+		c.ThreadID, c.ParentID = fmt.Sprintf("fb:post:%d", i+70), fmt.Sprintf("fb:post:%d", i+70)
+		e.ingest(t, c)
+		if err := e.p.SubmitBatches(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The third round went out with 2 open; the fourth waited with 3.
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches`); n != 3 {
+		t.Fatalf("%d batches sent, want 3 (the fourth round waits for collection)", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analysis_queue WHERE request_id IS NULL`); n != 1 {
+		t.Fatalf("%d items left waiting, want the fourth round's 1", n)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches`); n != 4 {
+		t.Fatalf("%d batches sent after collection, want 4", n)
+	}
+}
+
+// TestCollectStoresResultsInParallel: a batch's results stored by several
+// workers at once are all stored, and the batch ends.
+func TestCollectStoresResultsInParallel(t *testing.T) {
+	e := setup(t, func(c *config.Analysis) { c.Batch.CollectWorkers = 4 })
+	ctx := context.Background()
+	for i := range 6 {
+		c := comment(i+1, "تعليق")
+		c.ThreadID, c.ParentID = fmt.Sprintf("fb:post:%d", i+80), fmt.Sprintf("fb:post:%d", i+80)
+		e.ingest(t, c)
+	}
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_requests WHERE status = 'submitted'`); n != 6 {
+		t.Fatalf("%d requests sent, want 6 (one a thread)", n)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_requests WHERE status = 'done'`); n != 6 {
+		t.Fatalf("%d of 6 results stored", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses`); n != 6 {
+		t.Fatalf("%d of 6 analyses stored", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'ended'`); n != 1 {
+		t.Fatal("the batch didn't end")
+	}
+}

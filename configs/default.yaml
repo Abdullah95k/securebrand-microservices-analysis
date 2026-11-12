@@ -87,6 +87,13 @@ analysis:
     # thread's comments, or a page's short posts, together instead of one or
     # two each.
     top_up_items: 10000
+    # A finished batch's results stored at once, each with its own database
+    # connection: keep below postgres.max_conns (production: 4).
+    collect_workers: 2
+    # No round is sent while more batches than this are open (sent, not
+    # collected): answers aren't paid for faster than they are collected
+    # (0 = no limit). About 15-25 are open when collection keeps up.
+    max_open: 30
     # Live items published within this long are claimed first, within each
     # platform's share; older ones after them, oldest queued first, so the
     # backlog drains whenever fewer recent ones wait (0 = off). Off until the

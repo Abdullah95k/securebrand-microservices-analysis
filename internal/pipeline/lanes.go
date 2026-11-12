@@ -119,6 +119,17 @@ func (p *Pipeline) SubmitBatches(ctx context.Context) error {
 	} else if reqs > 0 || items > 0 {
 		slog.Warn("analysis: released batch work that was claimed but never sent", "requests", reqs, "items", items)
 	}
+	// Collection behind (12 Nov: one batch collected every 22 minutes while
+	// a round sent up to three every ten): no new batch until it catches
+	// up, so answers aren't paid for faster than they are taken in.
+	if limit := p.Cfg.Batch.MaxOpen; limit > 0 {
+		if n, err := p.Store.OpenBatchCount(ctx); err != nil {
+			return err
+		} else if n > int64(limit) {
+			slog.Warn("analysis: batch round skipped: too many batches open, collection behind", "open", n, "max_open", limit)
+			return nil
+		}
+	}
 	var errs []error
 	for _, route := range routeOrder {
 		rc, ok := p.Cfg.Routes[route]
@@ -539,31 +550,53 @@ func (p *Pipeline) collect(ctx context.Context, b store.OpenBatch) (bool, error)
 	}
 	slog.Info("analysis: batch collecting", "batch", b.ID, "route", b.Route, "results", len(results),
 		"download_seconds", int(p.now().Sub(start).Seconds()))
-	var failed, tried int
-	var first error
-	for _, r := range results {
-		if ctx.Err() != nil {
-			break
-		}
-		rctx, cancel := context.WithTimeout(ctx, resultTimeout)
-		err := p.collectOne(rctx, r)
-		cancel()
-		tried++
-		if err != nil {
-			failed++
-			if first == nil {
-				first = fmt.Errorf("result %s: %w", r.ID, err)
+	// batch.collect_workers results are stored at once, each in its own
+	// transaction (results are independent: one request each).
+	var (
+		mu            sync.Mutex
+		next          int
+		failed, tried int
+		first         error
+		wg            sync.WaitGroup
+	)
+	workers := max(1, min(p.Cfg.Batch.CollectWorkers, len(results)))
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				mu.Lock()
+				if next >= len(results) || ctx.Err() != nil {
+					mu.Unlock()
+					return
+				}
+				r := results[next]
+				next++
+				mu.Unlock()
+				rctx, cancel := context.WithTimeout(ctx, resultTimeout)
+				err := p.collectOne(rctx, r)
+				cancel()
+				mu.Lock()
+				tried++
+				if err != nil {
+					failed++
+					if first == nil {
+						first = fmt.Errorf("result %s: %w", r.ID, err)
+					}
+					if failed <= 3 {
+						slog.Warn("analysis: batch result not stored; left for the batch's next try", "batch", b.ID, "route", b.Route,
+							"request", r.ID, "err", err)
+					}
+				}
+				if tried%progressEvery == 0 {
+					slog.Info("analysis: batch collecting", "batch", b.ID, "route", b.Route, "tried", tried, "of", len(results),
+						"not_stored", failed, "seconds", int(p.now().Sub(start).Seconds()))
+				}
+				mu.Unlock()
 			}
-			if failed <= 3 {
-				slog.Warn("analysis: batch result not stored; left for the batch's next try", "batch", b.ID, "route", b.Route,
-					"request", r.ID, "err", err)
-			}
-		}
-		if tried%progressEvery == 0 {
-			slog.Info("analysis: batch collecting", "batch", b.ID, "route", b.Route, "tried", tried, "of", len(results),
-				"not_stored", failed, "seconds", int(p.now().Sub(start).Seconds()))
-		}
+		}()
 	}
+	wg.Wait()
 	if tried < len(results) {
 		return true, fmt.Errorf("stopped after %d of %d results (%d not stored): %w", tried, len(results), failed, ctx.Err())
 	}

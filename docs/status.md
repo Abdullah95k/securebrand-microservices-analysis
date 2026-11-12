@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 12 November 2026, 04:00 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 12 November 2026, 04:30 (Iraq time).*
 
 ## Where it stands
 
@@ -434,3 +434,12 @@
   - **The test:** two requests in one batch, one item's row locked by another transaction: the other result is stored, the batch is held, and the next try stores the first and ends the batch. Giving up at the first result (as before) fails it.
   - **Recent items first ships off** (`batch.recent_first: 0`), as the collector fix shares its branch; turning it on, once the owner confirms, is a one-line change.
   - **Asked of the master:** the WARN when the 25-minute limit ended the stuck collection, and any database session of user `analysis` waiting on a lock or idle in a transaction.
+- **12 Nov, 04:30 Iraq time: not stuck but slow; collection made faster.**
+  - **The reading** (the master's Loki, 00:56Z): the first collection after `74d06b2` ended at 00:51Z: 1,000 results in 1,333 s (1.3 s each). Rounds meanwhile sent 1–3 batches every 5–12 minutes. At one batch every 22 minutes, the ~20 ended batches would take about 7 hours, with more ending all the time.
+  - **Where the time went:** database round trips. A result is a request of about 8 items, and each item took about 11 statements, one round trip each: about 100 a result, at about 13 ms each through PgBouncer.
+  - **The fix (building, with the above):**
+    - **Pipelining:** each result's writes go in one round trip; only the reads that decide them go alone. That's about 25 round trips a result instead of about 100.
+    - **Two results at a time** (`batch.collect_workers`), below the pool of 4.
+    - **Sending waits** while more than 30 batches are open (`batch.max_open`), so answers aren't paid for faster than they're collected.
+    - **Expected:** 1,000 results in about 3 minutes instead of 22.
+  - **The budget** counts at send time: a request in flight counts at its expected cost, and its actual cost replaces it once collected. So the uncollected answers are already in today's spend.
