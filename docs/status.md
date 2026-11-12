@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 12 November 2026, 03:15 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 12 November 2026, 04:30 (Iraq time).*
 
 ## Where it stands
 
@@ -415,10 +415,31 @@
   - **Two possible causes:** batch latency (ig items in batches not yet answered), or igs marking its items as backfill, which fair share leaves out and which go after every live item. The master is checking `sb-analysis batches` and igs's provenance mode.
   - **In review:** `stats` splits each platform's waiting items into in flight and backfill, and gives the oldest not yet sent.
   - **`57P01` (connection terminated by the server)** at about 15:59Z and 23:47Z: comes from `pg_terminate_backend` or a server restart, not from any timeout of ours; rounds fail and retry, nothing paid. For the platform to check on DigitalOcean.
-- **12 Nov, 03:30 Iraq time: finished batches not collected; fixed in review.**
+- **12 Nov, 03:30 Iraq time: finished batches not collected; fixed.**
   - **The reading** (the master, `analysis-batches 4h` at 23:59Z): about 20 batches ended at the provider between 02:10 and 02:51 (about 18,000 answers), still "in progress, done 0" here. That, not provider latency, is why no comment request was answered in the hour and Instagram showed 0 analysed.
   - **The cause (my bug, from `7f61d47`):** a poll checks up to 10 open batches, oldest first, and gave the ones still running back as they were, so every poll checked the same 10 oldest. With those still running at the provider, no newer batch was ever checked, the ended ones included. No check failed, so nothing was logged (the master's Loki: no `batch poll` line in 30 minutes). Before `7f61d47`, a checked batch stayed claimed for 5 minutes, so the following polls moved on.
   - **My first reading was wrong:** I took it for one failing batch claimed again by every check. The master's logs showed no failures at all.
-  - **The fix (in review, PR #58):** a poll takes the batches never checked first, then those checked longest ago, and puts the running ones back behind the others, so every open batch has its turn. Also: a failing batch is held back 10 minutes while the others are collected; each collection has a 25-minute limit; errors name the batch; two gauges show when the collector last polled and last collected.
+  - **The fix (merged, PR #58, `74d06b2`; the platform pinned it in #126 at 00:30Z):** a poll takes the batches never checked first, then those checked longest ago, and puts the running ones back behind the others, so every open batch has its turn. Also: a failing batch is held back 10 minutes while the others are collected; each collection has a 25-minute limit; errors name the batch; two gauges show when the collector last polled and last collected.
   - **The test:** 12 open batches, the 10 oldest still running, the 2 newest ended: two polls collect both (0 with the old order).
   - **A restart** (PR #125 on the platform) doesn't help: the same 10 oldest come first. Nothing is lost: ended batches stay at the provider for 29 days.
+- **12 Nov, 03:35 Iraq time: recent items first (CLIENT-REQ-018), built, waiting for the owner's confirmation.**
+  - **The ask** (the master, 00:32Z): the owner said yes in the client session; the master asks them to confirm it directly this morning and asked for it built meanwhile. The PR stays unmerged until then, so `main` keeps shipping only fixes.
+  - **The rule** (`batch.recent_first`, 48 h, 0 = off): within each platform's share, live items published within the window come before its older ones. What is left of a round takes the recent live items of all platforms, then the oldest of all. Priority first, as before: backfill never comes before a live item. Among recent items, the oldest queued go first, so the backlog still drains whenever fewer recent items wait than a round claims.
+  - **No migration:** an item can't be queued before it was published, so the recent ones are read from the existing platform index by queue time since the window's start. On a synthetic queue of 1.17M entries (a million old), claiming 10,000 recent ones read about 10,700 buffers, in 150 ms including the leases.
+  - **Stats:** each platform's waiting line adds `N published in the last 48 h not sent yet`.
+  - **The test:** recent items claimed before older ones within a platform's share, and before older ones across platforms for what is left; a recent backfill item still after every live one; the older backlog, oldest first, once no recent item waits; off (0) gives the oldest first. A claim that ignores the window fails it.
+- **12 Nov, 04:00 Iraq time: the collector stuck inside one collection; fix building.**
+  - **The reading** (the master, 00:54Z, after `74d06b2` rolled at 00:31Z): one poll at about 00:29Z, then none for 21 minutes; no batch collected; every ended batch still "done 0". So the first collection, of the oldest ended batch, waited before storing its first result. The provider calls have a 120-second limit each, so the wait is in the database: the result writes lock their item's row and may take the partition lock, neither with a lock timeout.
+  - **The fix (building):** each result is stored within 2 minutes or left for the batch's next try, and the batch's other results are stored meanwhile; the batch ends once every result is stored. The writes stop waiting for a lock after 30 seconds. Each step names itself in its errors, and a collection logs its progress.
+  - **The test:** two requests in one batch, one item's row locked by another transaction: the other result is stored, the batch is held, and the next try stores the first and ends the batch. Giving up at the first result (as before) fails it.
+  - **Recent items first ships off** (`batch.recent_first: 0`), as the collector fix shares its branch; turning it on, once the owner confirms, is a one-line change.
+  - **Asked of the master:** the WARN when the 25-minute limit ended the stuck collection, and any database session of user `analysis` waiting on a lock or idle in a transaction.
+- **12 Nov, 04:30 Iraq time: not stuck but slow; collection made faster.**
+  - **The reading** (the master's Loki, 00:56Z): the first collection after `74d06b2` ended at 00:51Z: 1,000 results in 1,333 s (1.3 s each). Rounds meanwhile sent 1–3 batches every 5–12 minutes. At one batch every 22 minutes, the ~20 ended batches would take about 7 hours, with more ending all the time.
+  - **Where the time went:** database round trips. A result is a request of about 8 items, and each item took about 11 statements, one round trip each: about 100 a result, at about 13 ms each through PgBouncer.
+  - **The fix (building, with the above):**
+    - **Pipelining:** each result's writes go in one round trip; only the reads that decide them go alone. That's about 25 round trips a result instead of about 100.
+    - **Two results at a time** (`batch.collect_workers`), below the pool of 4.
+    - **Sending waits** while more than 30 batches are open (`batch.max_open`), so answers aren't paid for faster than they're collected.
+    - **Expected:** 1,000 results in about 3 minutes instead of 22.
+  - **The budget** counts at send time: a request in flight counts at its expected cost, and its actual cost replaces it once collected. So the uncollected answers are already in today's spend.

@@ -123,6 +123,15 @@ func TestProductionConfig(t *testing.T) {
 	if a.Postgres.MaxConns < 1 || a.Postgres.MaxConns > 4 {
 		t.Errorf("analysis pool of %d connections, want 1 to 4", a.Postgres.MaxConns)
 	}
+	// A batch's results are stored by collect_workers connections at once:
+	// fewer than the pool, so the other loops keep one.
+	if a.Batch.CollectWorkers < 1 || int32(a.Batch.CollectWorkers) >= a.Postgres.MaxConns {
+		t.Errorf("%d collect workers with a pool of %d, want 1 to %d", a.Batch.CollectWorkers, a.Postgres.MaxConns, a.Postgres.MaxConns-1)
+	}
+	// Sending waits for collection when it falls behind.
+	if a.Batch.MaxOpen <= 0 {
+		t.Errorf("batch.max_open %d: want a limit, so answers aren't paid for faster than they are collected", a.Batch.MaxOpen)
+	}
 	// An idle queue is polled by one worker, less and less often, up to at
 	// least 10 seconds apart (the master, 7 November 2026: idle polls every
 	// second kept the shared database's connections busy). A real-time item

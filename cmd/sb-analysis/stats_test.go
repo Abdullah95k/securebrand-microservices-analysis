@@ -64,7 +64,7 @@ func TestStatsCountsPerPlatform(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	r, err := s.PlatformCounts(ctx, now.Add(-time.Hour), adapter.PlatformName)
+	r, err := s.PlatformCounts(ctx, now.Add(-time.Hour), 48*time.Hour, adapter.PlatformName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestStatsCountsPerPlatform(t *testing.T) {
 	}
 	text := out.String()
 	for _, want := range []string{
-		"youtube\n  items: 1 ingested, 0 analysed (0 refused), 1 waiting (0 in flight, 0 backfill; the oldest not sent for 0 min), 0 in dead letters",
+		"youtube\n  items: 1 ingested, 0 analysed (0 refused), 1 waiting (0 in flight, 0 backfill, 1 published in the last 48 h not sent yet; the oldest not sent for 0 min), 0 in dead letters",
 		"media: 1 announced, 0 analysed; now 0 pending, 0 done, 1 skipped, 0 failed, 0 gone; 1 acknowledged",
 		"skipped because: policy:image/thumbnail 1",
 		"tiktok\n  items: 1 ingested",

@@ -92,49 +92,71 @@ func (s *Store) Claim(ctx context.Context, lane, route string, limit int, lease,
 // others and backfill entries still come after every live one. Claiming
 // only the oldest held a new collector's items behind a backlog of older
 // ones for days (Instagram, 11 Nov).
-func (s *Store) ClaimShared(ctx context.Context, lane, route string, limit int, lease time.Duration) ([]Claimed, error) {
+//
+// With recent > 0, live entries published within recent of now come first
+// (CLIENT-REQ-018, 12 Nov): each platform's share takes its recent entries
+// before its older ones, and what is left takes the recent entries of all
+// platforms before the oldest of all. Recent entries go oldest queued
+// first among themselves, and an entry stops counting as recent once its
+// item is older than recent, so the backlog still drains, oldest first,
+// whenever fewer recent entries wait than a round claims.
+func (s *Store) ClaimShared(ctx context.Context, lane, route string, limit int, lease, recent time.Duration) ([]Claimed, error) {
 	codes, err := s.queuePlatforms(ctx, lane, route)
-	if err != nil {
+	if err != nil || len(codes) == 0 {
 		return nil, err
 	}
 	var out []Claimed
-	if len(codes) > 1 {
-		share := max(1, limit/len(codes))
-		rows, err := s.DB.Query(ctx, `
-			WITH c AS (
-				SELECT x.content_id, x.route FROM unnest($3::text[]) AS p(code)
-				CROSS JOIN LATERAL (
-					SELECT content_id, route FROM analysis.analysis_queue
-					WHERE lane = $1 AND route = $2 AND split_part(content_id, ':', 1) = p.code AND priority <= $6
-					  AND not_before <= now() AND (lease_until IS NULL OR lease_until < now())
-					ORDER BY priority, enqueued_at
-					LIMIT $4 FOR UPDATE SKIP LOCKED) x),
-			u AS (
-				UPDATE analysis.analysis_queue q SET lease_until = now() + make_interval(secs => $5), attempts = q.attempts + 1
-				FROM c WHERE q.content_id = c.content_id AND q.route = c.route
-				RETURNING q.content_id, q.created_at, q.route, q.lane, q.priority, q.reason, q.attempts, q.enqueued_at, q.last_error)
-			SELECT content_id, created_at, route, lane, priority, reason, attempts, coalesce(last_error, '') FROM u
-			ORDER BY priority, enqueued_at, content_id`,
-			lane, route, codes, share, lease.Seconds(), core.PriorityNormal)
+	take := func(cs []Claimed, err error) error {
 		if err != nil {
-			return nil, err
+			return err
 		}
-		for rows.Next() {
-			var c Claimed
-			if err := rows.Scan(&c.Item.ContentID, &c.Item.CreatedAt, &c.Route, &c.Lane, &c.Priority, &c.Reason, &c.Attempts, &c.LastError); err != nil {
-				rows.Close()
-				return nil, err
+		if len(cs) > 0 {
+			if cs, err = s.loadClaimed(ctx, cs); err != nil {
+				return err
 			}
-			out = append(out, c)
 		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, err
+		out = append(out, cs...)
+		return nil
+	}
+	var cutoff time.Time
+	if recent > 0 {
+		cutoff = time.Now().Add(-recent)
+	}
+	if len(codes) > 1 || recent > 0 {
+		share := max(1, limit/len(codes))
+		room := make([]int, len(codes))
+		for i := range room {
+			room[i] = share
 		}
-		if len(out) > 0 {
-			if out, err = s.loadClaimed(ctx, out); err != nil {
-				return nil, err
+		if recent > 0 {
+			if err := take(s.claimRecent(ctx, lane, route, codes, room, share*len(codes), lease, cutoff)); err != nil {
+				return out, err
 			}
+			at := map[string]int{}
+			for i, c := range codes {
+				at[c] = i
+			}
+			for _, c := range out {
+				if i, ok := at[core.PlatformCode(c.Item.ContentID)]; ok {
+					room[i]--
+				}
+			}
+		}
+		if len(codes) > 1 {
+			if err := take(s.claimOldestLive(ctx, lane, route, codes, room, lease)); err != nil {
+				return out, err
+			}
+		}
+	}
+	// With one platform, its share was the whole limit: no recent entry is
+	// left to take.
+	if rest := limit - len(out); rest > 0 && recent > 0 && len(codes) > 1 {
+		room := make([]int, len(codes))
+		for i := range room {
+			room[i] = rest
+		}
+		if err := take(s.claimRecent(ctx, lane, route, codes, room, rest, lease, cutoff)); err != nil {
+			return out, err
 		}
 	}
 	if rest := limit - len(out); rest > 0 {
@@ -145,6 +167,85 @@ func (s *Store) ClaimShared(ctx context.Context, lane, route string, limit int, 
 		out = append(out, more...)
 	}
 	return out, nil
+}
+
+// livePriorities are the priorities a recent claim takes, in order.
+var livePriorities = []int{core.PriorityUrgent, core.PriorityNormal}
+
+// claimRecent leases up to room[i] live entries of platform codes[i]
+// published at or after cutoff, at most limit in all: by priority, then
+// oldest queued first. An item can't be queued before it was published, so
+// an entry published at or after cutoff was queued at or after it too:
+// that bound lets each platform and priority read only its entries queued
+// since cutoff from analysis_queue_platform_idx, not its whole backlog.
+func (s *Store) claimRecent(ctx context.Context, lane, route string, codes []string, room []int, limit int, lease time.Duration, cutoff time.Time) ([]Claimed, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	return s.claimRows(ctx, `
+		WITH c AS (
+			SELECT x.content_id, x.route FROM unnest($3::text[], $4::int[]) AS p(code, n)
+			CROSS JOIN LATERAL (
+				SELECT y.content_id, y.route, y.priority, y.enqueued_at FROM unnest($8::int[]) WITH ORDINALITY AS r(pri, o)
+				CROSS JOIN LATERAL (
+					SELECT content_id, route, priority, enqueued_at FROM analysis.analysis_queue
+					WHERE lane = $1 AND route = $2 AND split_part(content_id, ':', 1) = p.code AND priority = r.pri
+					  AND enqueued_at >= $7 AND created_at >= $7
+					  AND not_before <= now() AND (lease_until IS NULL OR lease_until < now())
+					ORDER BY enqueued_at
+					LIMIT p.n FOR UPDATE SKIP LOCKED) y
+				WHERE p.n > 0
+				ORDER BY r.o, y.enqueued_at
+				LIMIT p.n) x
+			ORDER BY x.priority, x.enqueued_at
+			LIMIT $5),
+		u AS (
+			UPDATE analysis.analysis_queue q SET lease_until = now() + make_interval(secs => $6), attempts = q.attempts + 1
+			FROM c WHERE q.content_id = c.content_id AND q.route = c.route
+			RETURNING q.content_id, q.created_at, q.route, q.lane, q.priority, q.reason, q.attempts, q.enqueued_at, q.last_error)
+		SELECT content_id, created_at, route, lane, priority, reason, attempts, coalesce(last_error, '') FROM u
+		ORDER BY priority, enqueued_at, content_id`,
+		lane, route, codes, room, limit, lease.Seconds(), cutoff, livePriorities)
+}
+
+// claimOldestLive leases up to room[i] of the oldest live entries of
+// platform codes[i] (priority normal or urgent, not background).
+func (s *Store) claimOldestLive(ctx context.Context, lane, route string, codes []string, room []int, lease time.Duration) ([]Claimed, error) {
+	return s.claimRows(ctx, `
+		WITH c AS (
+			SELECT x.content_id, x.route FROM unnest($3::text[], $4::int[]) AS p(code, n)
+			CROSS JOIN LATERAL (
+				SELECT content_id, route FROM analysis.analysis_queue
+				WHERE lane = $1 AND route = $2 AND split_part(content_id, ':', 1) = p.code AND priority <= $6
+				  AND not_before <= now() AND (lease_until IS NULL OR lease_until < now())
+				ORDER BY priority, enqueued_at
+				LIMIT greatest(p.n, 0) FOR UPDATE SKIP LOCKED) x),
+		u AS (
+			UPDATE analysis.analysis_queue q SET lease_until = now() + make_interval(secs => $5), attempts = q.attempts + 1
+			FROM c WHERE q.content_id = c.content_id AND q.route = c.route
+			RETURNING q.content_id, q.created_at, q.route, q.lane, q.priority, q.reason, q.attempts, q.enqueued_at, q.last_error)
+		SELECT content_id, created_at, route, lane, priority, reason, attempts, coalesce(last_error, '') FROM u
+		ORDER BY priority, enqueued_at, content_id`,
+		lane, route, codes, room, lease.Seconds(), core.PriorityNormal)
+}
+
+// claimRows runs a claim query returning content_id, created_at, route,
+// lane, priority, reason, attempts and last_error, in its order.
+func (s *Store) claimRows(ctx context.Context, sql string, args ...any) ([]Claimed, error) {
+	rows, err := s.DB.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Claimed
+	for rows.Next() {
+		var c Claimed
+		if err := rows.Scan(&c.Item.ContentID, &c.Item.CreatedAt, &c.Route, &c.Lane, &c.Priority, &c.Reason, &c.Attempts, &c.LastError); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // queuePlatforms lists the platform codes waiting in a lane and route,

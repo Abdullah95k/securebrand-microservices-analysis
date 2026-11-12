@@ -72,9 +72,17 @@ func (s *Store) WriteResults(ctx context.Context, results []ItemResult, out Requ
 		return st, err
 	}
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, setLockTimeout); err != nil {
+			return err
+		}
 		st = WriteStats{}
+		// The reads that decide what to write go one by one; the writes of
+		// every item and the request's own update go together, in one round
+		// trip (on 12 Nov, a statement a round trip made a batch result of
+		// about 8 items take 1.3 s, about 100 round trips).
+		var w pendingWrites
 		for i := range results {
-			ok, dup, err := s.writeOne(ctx, tx, &results[i], out.ID)
+			ok, dup, err := s.writeOne(ctx, tx, &results[i], out.ID, &w)
 			if err != nil {
 				return fmt.Errorf("write %s: %w", results[i].Item.ContentID, err)
 			}
@@ -88,14 +96,17 @@ func (s *Store) WriteResults(ctx context.Context, results []ItemResult, out Requ
 			}
 		}
 		if out.ID != uuid.Nil {
-			if _, err := tx.Exec(ctx, `UPDATE analysis.provider_requests SET status = 'done', completed_at = now(),
+			w.queue("request", `UPDATE analysis.provider_requests SET status = 'done', completed_at = now(),
 				input_tokens = $2, output_tokens = $3, cache_read_tokens = $4, cache_write_tokens = $5, cost_usd = $6,
 				latency_ms = $7, error = NULLIF(left($8, 500), ''), provider = coalesce(NULLIF($9, ''), provider),
 				model = coalesce(NULLIF($10, ''), model), fallback = fallback OR $11 WHERE request_id = $1`,
 				out.ID, out.Usage[0], out.Usage[1], out.Usage[2], out.Usage[3], out.CostUSD, out.LatencyMS, out.Reason,
-				out.Provider, out.Model, out.Fallback); err != nil {
-				return err
-			}
+				out.Provider, out.Model, out.Fallback)
+		}
+		if err := w.send(ctx, tx); err != nil {
+			return err
+		}
+		if out.ID != uuid.Nil {
 			if len(out.Failed) > 0 {
 				if err := releaseTx(ctx, tx, out.ID, out.Failed, out.Reason, out.MaxAttempts); err != nil {
 					return err
@@ -107,7 +118,9 @@ func (s *Store) WriteResults(ctx context.Context, results []ItemResult, out Requ
 	return st, err
 }
 
-func (s *Store) writeOne(ctx context.Context, tx pgx.Tx, r *ItemResult, req uuid.UUID) (written, duplicate bool, err error) {
+// writeOne decides an item result's writes, reading what it needs, and
+// queues them on w (sent once for the whole request: WriteResults).
+func (s *Store) writeOne(ctx context.Context, tx pgx.Tx, r *ItemResult, req uuid.UUID, w *pendingWrites) (written, duplicate bool, err error) {
 	it := &r.Item
 	var (
 		textHash, analyzedHash []byte
@@ -117,14 +130,14 @@ func (s *Store) writeOne(ctx context.Context, tx pgx.Tx, r *ItemResult, req uuid
 	err = tx.QueryRow(ctx, `SELECT text_hash, analyzed_hash, analyzed_route, analysis_version FROM analysis.content_index
 		WHERE content_id = $1 FOR UPDATE`, it.ContentID).Scan(&textHash, &analyzedHash, &analyzedRoute, &version)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, false, s.dequeue(ctx, tx, it.ContentID, r.Route, req)
+		return false, false, dequeue(w, it.ContentID, r.Route, req)
 	}
 	if err != nil {
 		return false, false, err
 	}
 	if !bytes.Equal(textHash, r.InputHash) {
 		// Edited meanwhile: the queue entry was reset by the edit, keep it.
-		return false, false, s.dequeue(ctx, tx, it.ContentID, r.Route, req)
+		return false, false, dequeue(w, it.ContentID, r.Route, req)
 	}
 	if r.Audit {
 		var exists bool
@@ -133,7 +146,7 @@ func (s *Store) writeOne(ctx context.Context, tx pgx.Tx, r *ItemResult, req uuid
 			return false, false, err
 		}
 		if exists {
-			return false, true, s.dequeue(ctx, tx, it.ContentID, r.Route, req)
+			return false, true, dequeue(w, it.ContentID, r.Route, req)
 		}
 	} else if bytes.Equal(analyzedHash, r.InputHash) && analyzedRoute != nil {
 		dup, err := s.duplicate(ctx, tx, r, *analyzedRoute)
@@ -141,7 +154,7 @@ func (s *Store) writeOne(ctx context.Context, tx pgx.Tx, r *ItemResult, req uuid
 			return false, false, err
 		}
 		if dup {
-			return false, true, s.dequeue(ctx, tx, it.ContentID, r.Route, req)
+			return false, true, dequeue(w, it.ContentID, r.Route, req)
 		}
 	}
 	version++
@@ -152,9 +165,9 @@ func (s *Store) writeOne(ctx context.Context, tx pgx.Tx, r *ItemResult, req uuid
 	purpose := "current"
 	if r.Audit {
 		purpose = "audit"
-	} else if _, err := tx.Exec(ctx, `UPDATE analysis.analyses SET is_current = false WHERE created_at = $1 AND content_id = $2 AND is_current`,
-		it.CreatedAt, it.ContentID); err != nil {
-		return false, false, err
+	} else {
+		w.queue(it.ContentID, `UPDATE analysis.analyses SET is_current = false WHERE created_at = $1 AND content_id = $2 AND is_current`,
+			it.CreatedAt, it.ContentID)
 	}
 	p := r.Prov
 	var reqID *uuid.UUID
@@ -162,7 +175,7 @@ func (s *Store) writeOne(ctx context.Context, tx pgx.Tx, r *ItemResult, req uuid
 		reqID = &req
 	}
 	x := r.Result
-	if _, err := tx.Exec(ctx, `INSERT INTO analysis.analyses (created_at, content_id, version, is_current, purpose, platform, source_id, kind,
+	w.queue(it.ContentID, `INSERT INTO analysis.analyses (created_at, content_id, version, is_current, purpose, platform, source_id, kind,
 		route, lane, provider, model, prompt_version, taxonomy_version, schema_version, input_hash, fallback, analyzed_at, request_id,
 		lang, dialect, script, code_switch, sentiment, sentiment_score, confidence, calibrated_confidence, intent, emotion, toxicity,
 		spam, sarcasm, urgent, topics, keywords, private_person_mentions, refused, result, cost_usd, ad_type, legal, author_key)
@@ -172,36 +185,24 @@ func (s *Store) writeOne(ctx context.Context, tx pgx.Tx, r *ItemResult, req uuid
 		r.Route, p.Lane, p.Provider, p.Model, p.PromptVersion, p.TaxonomyVersion, p.SchemaVersion, r.InputHash, p.Fallback, p.AnalyzedAt, reqID,
 		x.Lang, x.Dialect, x.Script, x.CodeSwitch, x.Sentiment, x.Score, x.Confidence, x.CalibratedConfidence, x.Intent, x.Emotion, x.Toxicity,
 		x.Spam, x.Sarcasm, x.Urgent, x.Topics, x.Keywords, x.PrivatePersonMentions, x.Refused, res, r.CostUSD,
-		x.AdType, nilIfNone(x.Legal), nilIfEmptyBytes(it.AuthorKey)); err != nil {
-		return false, false, err
-	}
+		x.AdType, nilIfNone(x.Legal), nilIfEmptyBytes(it.AuthorKey))
 	if r.Audit {
-		if _, err := tx.Exec(ctx, `UPDATE analysis.content_index SET analysis_version = $2, updated_at = now() WHERE content_id = $1`,
-			it.ContentID, version); err != nil {
-			return false, false, err
-		}
-		return true, false, s.dequeue(ctx, tx, it.ContentID, r.Route, req)
+		w.queue(it.ContentID, `UPDATE analysis.content_index SET analysis_version = $2, updated_at = now() WHERE content_id = $1`,
+			it.ContentID, version)
+		return true, false, dequeue(w, it.ContentID, r.Route, req)
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM analysis.entity_mentions WHERE created_at = $1 AND content_id = $2`, it.CreatedAt, it.ContentID); err != nil {
-		return false, false, err
-	}
+	w.queue(it.ContentID, `DELETE FROM analysis.entity_mentions WHERE created_at = $1 AND content_id = $2`, it.CreatedAt, it.ContentID)
 	day := s.Day(it.CreatedAt)
 	for ord, e := range x.Entities {
-		if _, err := tx.Exec(ctx, `INSERT INTO analysis.entity_mentions (created_at, content_id, version, ord, day, platform, source_id, kind,
+		w.queue(it.ContentID, `INSERT INTO analysis.entity_mentions (created_at, content_id, version, ord, day, platform, source_id, kind,
 			author_key, entity_id, name, entity_type, sentiment, score, confidence, aspect, origin, topics, lang, intent)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
 			it.CreatedAt, it.ContentID, version, ord, day, it.Platform, it.SourceID, it.Kind, nilIfEmptyBytes(it.AuthorKey),
-			e.ID, e.Name, e.Type, e.Sentiment, e.Score, e.Confidence, e.Aspect, orDefault(e.Origin, "text"), x.Topics, x.Lang, x.Intent); err != nil {
-			return false, false, err
-		}
+			e.ID, e.Name, e.Type, e.Sentiment, e.Score, e.Confidence, e.Aspect, orDefault(e.Origin, "text"), x.Topics, x.Lang, x.Intent)
 	}
-	if _, err := tx.Exec(ctx, `UPDATE analysis.content_index SET analysis_version = $2, analyzed_hash = $3, analyzed_route = $4,
-		state = 'analyzed', updated_at = now() WHERE content_id = $1`, it.ContentID, version, r.InputHash, r.Route); err != nil {
-		return false, false, err
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO analysis.rollup_dirty (day) VALUES ($1) ON CONFLICT (day) DO UPDATE SET marked_at = now()`, day); err != nil {
-		return false, false, err
-	}
+	w.queue(it.ContentID, `UPDATE analysis.content_index SET analysis_version = $2, analyzed_hash = $3, analyzed_route = $4,
+		state = 'analyzed', updated_at = now() WHERE content_id = $1`, it.ContentID, version, r.InputHash, r.Route)
+	w.queue(it.ContentID, `INSERT INTO analysis.rollup_dirty (day) VALUES ($1) ON CONFLICT (day) DO UPDATE SET marked_at = now()`, day)
 	// Only items read through the platform's contract are published: their
 	// results carry contract IDs and the analysed envelope.version. Results
 	// of items from fbs's own topics stay in Postgres.
@@ -210,18 +211,16 @@ func (s *Store) writeOne(ctx context.Context, tx pgx.Tx, r *ItemResult, req uuid
 		if ev.AuthorBot, err = authorBot(ctx, tx, it.Platform, it.AuthorKey); err != nil {
 			return false, false, err
 		}
-		if err := outbox(ctx, tx, topics.AnalysisResult, it.ContentID, ev); err != nil {
+		if err := w.outbox(it.ContentID, topics.AnalysisResult, it.ContentID, ev); err != nil {
 			return false, false, err
 		}
 	}
 	for _, fu := range r.FollowUps {
-		if _, err := tx.Exec(ctx, `INSERT INTO analysis.analysis_queue (content_id, route, created_at, thread_id, source_id, lane, priority, reason)
+		w.queue(it.ContentID, `INSERT INTO analysis.analysis_queue (content_id, route, created_at, thread_id, source_id, lane, priority, reason)
 			VALUES ($1,$2,$3,NULLIF($4,''),$7,'batch',$5,$6) ON CONFLICT (content_id, route) DO NOTHING`,
-			it.ContentID, fu, it.CreatedAt, it.ThreadID, core.PriorityBackground, fu, QueueSource(*it, fu)); err != nil {
-			return false, false, err
-		}
+			it.ContentID, fu, it.CreatedAt, it.ThreadID, core.PriorityBackground, fu, QueueSource(*it, fu))
 	}
-	return true, false, s.dequeue(ctx, tx, it.ContentID, r.Route, req)
+	return true, false, dequeue(w, it.ContentID, r.Route, req)
 }
 
 // duplicate reports whether a result for an already analysed input adds
@@ -248,15 +247,54 @@ func (s *Store) duplicate(ctx context.Context, tx pgx.Tx, r *ItemResult, curRout
 	return model == r.Prov.Model && promptV == r.Prov.PromptVersion && taxV == r.Prov.TaxonomyVersion, nil
 }
 
-// dequeue removes the item's queue entry of this request. An entry reset by
-// an edit (request id cleared) stays.
-func (s *Store) dequeue(ctx context.Context, tx pgx.Tx, id, route string, req uuid.UUID) error {
+// dequeue queues the removal of the item's queue entry of this request. An
+// entry reset by an edit (request id cleared) stays.
+func dequeue(w *pendingWrites, id, route string, req uuid.UUID) error {
 	if req == uuid.Nil {
-		_, err := tx.Exec(ctx, `DELETE FROM analysis.analysis_queue WHERE content_id = $1 AND route = $2 AND request_id IS NULL`, id, route)
+		w.queue(id, `DELETE FROM analysis.analysis_queue WHERE content_id = $1 AND route = $2 AND request_id IS NULL`, id, route)
+		return nil
+	}
+	w.queue(id, `DELETE FROM analysis.analysis_queue WHERE content_id = $1 AND route = $2 AND request_id = $3`, id, route, req)
+	return nil
+}
+
+// pendingWrites are writes queued to go to the database together, in one
+// round trip, each labelled with what it is for (its item) for errors.
+type pendingWrites struct {
+	b      pgx.Batch
+	labels []string
+}
+
+func (w *pendingWrites) queue(label, sql string, args ...any) {
+	w.b.Queue(sql, args...)
+	w.labels = append(w.labels, label)
+}
+
+// outbox queues a record for the outbox (as outbox does).
+func (w *pendingWrites) outbox(label, topic, key string, msg proto.Message) error {
+	b, err := proto.Marshal(msg)
+	if err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `DELETE FROM analysis.analysis_queue WHERE content_id = $1 AND route = $2 AND request_id = $3`, id, route, req)
-	return err
+	w.queue(label, `INSERT INTO analysis.outbox (topic, key, type, payload) VALUES ($1, $2, $3, $4)`,
+		topic, key, string(proto.MessageName(msg)), b)
+	return nil
+}
+
+// send runs the queued writes in order, in one round trip, and returns
+// the first failure, naming what it was for.
+func (w *pendingWrites) send(ctx context.Context, tx pgx.Tx) error {
+	if w.b.Len() == 0 {
+		return nil
+	}
+	br := tx.SendBatch(ctx, &w.b)
+	for _, label := range w.labels {
+		if _, err := br.Exec(); err != nil {
+			_ = br.Close()
+			return fmt.Errorf("write %s: %w", label, err)
+		}
+	}
+	return br.Close()
 }
 
 // Producer names sb-analysis in every record's provenance; ProducerVersion

@@ -122,6 +122,17 @@ type BatchLane struct {
 	// one or two of most threads, so without it most requests carry one or
 	// two comments and the cached prompt is read once for each.
 	TopUpItems int `koanf:"top_up_items"`
+	// CollectWorkers: a batch's results stored at once, each in its own
+	// transaction (and database connection), when it is collected.
+	CollectWorkers int `koanf:"collect_workers"`
+	// MaxOpen: a round isn't sent while more than this many batches are
+	// open (sent, not collected), so answers aren't paid for faster than
+	// they are collected (0 = no limit).
+	MaxOpen int `koanf:"max_open"`
+	// RecentFirst: live items published within this long of now are
+	// claimed before older ones, within each platform's share
+	// (store.ClaimShared; 0 = off, oldest queued first).
+	RecentFirst time.Duration `koanf:"recent_first"`
 	// SubmitLease is how long claimed items stay leased while their
 	// batch is built and sent: a process that dies or fails before sending
 	// gives them back within it.
