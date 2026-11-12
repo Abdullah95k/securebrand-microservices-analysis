@@ -710,6 +710,14 @@ func (s *Store) ReleaseBatch(ctx context.Context, id string) error {
 	return err
 }
 
+// HoldBatch keeps a batch out of polls for d (its collection failed: it
+// is tried again then, and the others are collected meanwhile).
+func (s *Store) HoldBatch(ctx context.Context, id string, d time.Duration) error {
+	_, err := s.DB.Exec(ctx, `UPDATE analysis.provider_batches SET lease_until = now() + make_interval(secs => $2) WHERE batch_id = $1`,
+		id, d.Seconds())
+	return err
+}
+
 // EndBatch marks a batch ended (or failed with a reason).
 func (s *Store) EndBatch(ctx context.Context, id, status, reason string) error {
 	_, err := s.DB.Exec(ctx, `UPDATE analysis.provider_batches SET status = $2, ended_at = now(), lease_until = NULL,

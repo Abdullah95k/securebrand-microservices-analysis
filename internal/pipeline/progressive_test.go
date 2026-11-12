@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -205,5 +206,41 @@ func TestPollChecksEachBatchOnce(t *testing.T) {
 	}
 	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'ended'`); n != 3 {
 		t.Fatalf("%d batches collected after the next poll, want 3", n)
+	}
+}
+
+// TestPollGoesOnPastAFailingBatch: a batch whose collection fails (here the
+// provider doesn't know it) is held back, and the poll goes on to collect
+// the others. On 12 Nov the failing batch, released at once and the
+// oldest, was claimed again by every check of every poll, and no other
+// finished batch was collected for hours.
+func TestPollGoesOnPastAFailingBatch(t *testing.T) {
+	e := setup(t, nil)
+	ctx := context.Background()
+	for i := range 3 {
+		c := comment(i+1, "تعليق")
+		c.ThreadID, c.ParentID = fmt.Sprintf("fb:post:%d", i+20), fmt.Sprintf("fb:post:%d", i+20)
+		e.ingest(t, c)
+		if err := e.p.SubmitBatches(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The oldest batch now fails every check: the provider doesn't know it.
+	if _, err := e.s.DB.Exec(ctx, `UPDATE analysis.provider_batches SET batch_id = 'fakebatch_gone' WHERE batch_id = 'fakebatch_1'`); err != nil {
+		t.Fatal(err)
+	}
+	err := e.p.PollBatches(ctx)
+	if err == nil || !strings.Contains(err.Error(), "fakebatch_gone") {
+		t.Fatalf("poll error %v, want one naming the failing batch", err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'ended'`); n != 2 {
+		t.Fatalf("%d batches collected past the failing one, want 2", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE batch_id = 'fakebatch_gone' AND lease_until > now() + interval '5 minutes'`); n != 1 {
+		t.Fatal("the failing batch wasn't held back")
+	}
+	// Held back: the next poll doesn't try it again yet.
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatalf("the held batch was tried again at once: %v", err)
 	}
 }

@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 12 November 2026, 03:05 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 12 November 2026, 03:30 (Iraq time).*
 
 ## Where it stands
 
@@ -415,3 +415,7 @@
   - **Two possible causes:** batch latency (ig items in batches not yet answered), or igs marking its items as backfill, which fair share leaves out and which go after every live item. The master is checking `sb-analysis batches` and igs's provenance mode.
   - **In review:** `stats` splits each platform's waiting items into in flight and backfill, and gives the oldest not yet sent.
   - **`57P01` (connection terminated by the server)** at about 15:59Z and 23:47Z: comes from `pg_terminate_backend` or a server restart, not from any timeout of ours; rounds fail and retry, nothing paid. For the platform to check on DigitalOcean.
+- **12 Nov, 03:30 Iraq time: finished batches not collected; fixed in review.**
+  - **The reading** (the master, `analysis-batches 4h` at 23:59Z): about 20 batches ended at the provider between 02:10 and 02:51 (about 18,000 answers), still "in progress, done 0" here. That, not provider latency, is why no comment request was answered in the hour and Instagram showed 0 analysed.
+  - **The cause (my bug, from `7f61d47`):** a poll released a batch whose collection failed at once, and its next check claimed the oldest open batch again: the same one. One batch that kept failing took every check of every poll.
+  - **The fix (in review):** a failing batch is held back 10 minutes while the others are collected; each collection has a 25-minute limit; errors name the batch; two gauges show when the collector last polled and last collected.

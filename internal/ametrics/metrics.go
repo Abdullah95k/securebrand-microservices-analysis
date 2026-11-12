@@ -30,6 +30,8 @@ var (
 	BudgetPaused      = metrics.AnalysisBudgetPaused
 	BudgetHeld        = metrics.AnalysisBudgetHeld
 	OpenBatches       = metrics.AnalysisOpenBatches
+	BatchLastPoll     = metrics.AnalysisBatchLastPoll
+	BatchLastCollect  = metrics.AnalysisBatchLastCollect
 	Media             = metrics.AnalysisMedia
 	MediaAtRisk       = metrics.AnalysisMediaAtRisk
 	MediaPending      = metrics.AnalysisMediaPending
