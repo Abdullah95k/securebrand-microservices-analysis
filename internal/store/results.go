@@ -72,6 +72,9 @@ func (s *Store) WriteResults(ctx context.Context, results []ItemResult, out Requ
 		return st, err
 	}
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, setLockTimeout); err != nil {
+			return err
+		}
 		st = WriteStats{}
 		for i := range results {
 			ok, dup, err := s.writeOne(ctx, tx, &results[i], out.ID)

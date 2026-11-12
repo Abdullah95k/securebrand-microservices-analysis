@@ -119,8 +119,17 @@ func (s *Store) EnsureWindow(ctx context.Context, now time.Time, monthsBack, mon
 	return s.EnsureMonths(ctx, ts...)
 }
 
+// setLockTimeout ends a transaction's wait for a lock after 30 seconds
+// (SQLSTATE 55P03), so a lock held elsewhere fails a write, to be tried
+// again, rather than holding its caller indefinitely. SET LOCAL lasts for
+// the transaction only, as PgBouncer's transaction pooling requires.
+const setLockTimeout = "SET LOCAL lock_timeout = '30s'"
+
 func (s *Store) createMonth(ctx context.Context, m time.Time) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, setLockTimeout); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", partitionLock); err != nil {
 			return err
 		}

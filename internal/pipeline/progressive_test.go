@@ -291,3 +291,63 @@ func TestPollReachesEveryOpenBatch(t *testing.T) {
 		t.Fatalf("%d of %d open batches checked in two polls", len(checked), pipeline.PollMax+2)
 	}
 }
+
+// TestCollectGoesOnPastAStuckResult: a batch result that can't be stored
+// in time (its item's row locked elsewhere) is left for the batch's next
+// try, and the batch's other results are stored meanwhile; the batch ends
+// once every result is stored (on 12 Nov one collection waited half an
+// hour before storing its first result).
+func TestCollectGoesOnPastAStuckResult(t *testing.T) {
+	e := setup(t, nil)
+	ctx := context.Background()
+	a, b := comment(1, "تعليق"), comment(2, "تعليق ثاني")
+	a.ThreadID, a.ParentID = "fb:post:60", "fb:post:60"
+	b.ThreadID, b.ParentID = "fb:post:61", "fb:post:61"
+	e.ingest(t, a, b)
+	if err := e.p.SubmitBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_requests WHERE status = 'submitted'`); n != 2 {
+		t.Fatalf("%d requests sent, want 2 (one a thread)", n)
+	}
+	defer pipeline.SetResultTimeout(500 * time.Millisecond)()
+	// Another transaction holds the first comment's row.
+	tx, err := e.s.DB.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM analysis.content_index WHERE content_id = $1 FOR UPDATE`, a.ContentID); err != nil {
+		t.Fatal(err)
+	}
+	err = e.p.PollBatches(ctx)
+	if err == nil || !strings.Contains(err.Error(), "1 of 2 results not stored") {
+		t.Fatalf("poll error %v, want one counting the result not stored", err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_requests WHERE status = 'done'`); n != 1 {
+		t.Fatalf("%d results stored past the stuck one, want 1", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.analyses WHERE content_id = $1`, b.ContentID); n != 1 {
+		t.Fatal("the other comment's analysis wasn't stored")
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'in_progress' AND lease_until > now() + interval '5 minutes'`); n != 1 {
+		t.Fatal("the batch was ended, or not held back, with a result not stored")
+	}
+	// The row is free again and the hold is over: the next try stores it
+	// and ends the batch.
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.DB.Exec(ctx, `UPDATE analysis.provider_batches SET lease_until = NULL`); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.p.PollBatches(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_requests WHERE status = 'done'`); n != 2 {
+		t.Fatalf("%d of 2 results stored after the retry", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'ended'`); n != 1 {
+		t.Fatal("the batch didn't end once every result was stored")
+	}
+}

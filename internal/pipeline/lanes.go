@@ -505,33 +505,78 @@ func (p *Pipeline) PollBatches(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
+// resultTimeout bounds the storing of one batch result. One that takes
+// longer (a lock held elsewhere, say) is left for the batch's next try and
+// the batch's other results are stored meanwhile: on 12 Nov one collection
+// waited half an hour before storing its first result, holding back the
+// other 999 and every batch after it.
+var resultTimeout = 2 * time.Minute
+
+// progressEvery is how many results a collection stores between progress
+// lines.
+const progressEvery = 250
+
 // collect collects a batch if it has finished, and reports whether it had.
+// A result that can't be stored is left for the next try (its request
+// stays submitted; one stored already is skipped then), the others are
+// stored, and the batch ends only once every result is stored.
 func (p *Pipeline) collect(ctx context.Context, b store.OpenBatch) (bool, error) {
 	batcher, ok := p.Providers.Batcher(b.Provider)
 	if !ok {
 		return true, p.Store.EndBatch(ctx, b.ID, "failed", "provider "+b.Provider+" has no batch API configured")
 	}
 	done, err := batcher.BatchDone(ctx, b.ID)
-	if err != nil || !done {
-		return false, err
+	if err != nil {
+		return false, fmt.Errorf("status: %w", err)
+	}
+	if !done {
+		return false, nil
 	}
 	start := p.now()
 	results, err := batcher.BatchResults(ctx, b.ID)
 	if err != nil {
-		return true, err
+		return true, fmt.Errorf("results download: %w", err)
 	}
+	slog.Info("analysis: batch collecting", "batch", b.ID, "route", b.Route, "results", len(results),
+		"download_seconds", int(p.now().Sub(start).Seconds()))
+	var failed, tried int
+	var first error
 	for _, r := range results {
-		if err := p.collectOne(ctx, r); err != nil {
-			return true, err
+		if ctx.Err() != nil {
+			break
 		}
+		rctx, cancel := context.WithTimeout(ctx, resultTimeout)
+		err := p.collectOne(rctx, r)
+		cancel()
+		tried++
+		if err != nil {
+			failed++
+			if first == nil {
+				first = fmt.Errorf("result %s: %w", r.ID, err)
+			}
+			if failed <= 3 {
+				slog.Warn("analysis: batch result not stored; left for the batch's next try", "batch", b.ID, "route", b.Route,
+					"request", r.ID, "err", err)
+			}
+		}
+		if tried%progressEvery == 0 {
+			slog.Info("analysis: batch collecting", "batch", b.ID, "route", b.Route, "tried", tried, "of", len(results),
+				"not_stored", failed, "seconds", int(p.now().Sub(start).Seconds()))
+		}
+	}
+	if tried < len(results) {
+		return true, fmt.Errorf("stopped after %d of %d results (%d not stored): %w", tried, len(results), failed, ctx.Err())
+	}
+	if failed > 0 {
+		return true, fmt.Errorf("%d of %d results not stored, left for the next try (first: %w)", failed, len(results), first)
 	}
 	stale, err := p.Store.StaleRequests(ctx, b.ID)
 	if err != nil {
-		return true, err
+		return true, fmt.Errorf("requests without a result: %w", err)
 	}
 	for _, id := range stale {
 		if err := p.Store.FailRequest(ctx, id, "no result in batch", p.Cfg.Limits.MaxAttempts); err != nil {
-			return true, err
+			return true, fmt.Errorf("request %s without a result: %w", id, err)
 		}
 	}
 	slog.Info("analysis: batch collected", "batch", b.ID, "route", b.Route, "results", len(results),

@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 12 November 2026, 03:35 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 12 November 2026, 04:00 (Iraq time).*
 
 ## Where it stands
 
@@ -428,3 +428,9 @@
   - **No migration:** an item can't be queued before it was published, so the recent ones are read from the existing platform index by queue time since the window's start. On a synthetic queue of 1.17M entries (a million old), claiming 10,000 recent ones read about 10,700 buffers, in 150 ms including the leases.
   - **Stats:** each platform's waiting line adds `N published in the last 48 h not sent yet`.
   - **The test:** recent items claimed before older ones within a platform's share, and before older ones across platforms for what is left; a recent backfill item still after every live one; the older backlog, oldest first, once no recent item waits; off (0) gives the oldest first. A claim that ignores the window fails it.
+- **12 Nov, 04:00 Iraq time: the collector stuck inside one collection; fix building.**
+  - **The reading** (the master, 00:54Z, after `74d06b2` rolled at 00:31Z): one poll at about 00:29Z, then none for 21 minutes; no batch collected; every ended batch still "done 0". So the first collection, of the oldest ended batch, waited before storing its first result. The provider calls have a 120-second limit each, so the wait is in the database: the result writes lock their item's row and may take the partition lock, neither with a lock timeout.
+  - **The fix (building):** each result is stored within 2 minutes or left for the batch's next try, and the batch's other results are stored meanwhile; the batch ends once every result is stored. The writes stop waiting for a lock after 30 seconds. Each step names itself in its errors, and a collection logs its progress.
+  - **The test:** two requests in one batch, one item's row locked by another transaction: the other result is stored, the batch is held, and the next try stores the first and ends the batch. Giving up at the first result (as before) fails it.
+  - **Recent items first ships off** (`batch.recent_first: 0`), as the collector fix shares its branch; turning it on, once the owner confirms, is a one-line change.
+  - **Asked of the master:** the WARN when the 25-minute limit ended the stuck collection, and any database session of user `analysis` waiting on a lock or idle in a transaction.

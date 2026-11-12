@@ -89,8 +89,9 @@ analysis:
     top_up_items: 10000
     # Live items published within this long are claimed first, within each
     # platform's share; older ones after them, oldest queued first, so the
-    # backlog drains whenever fewer recent ones wait (0 = off).
-    recent_first: 48h
+    # backlog drains whenever fewer recent ones wait (0 = off). Off until the
+    # owner confirms CLIENT-REQ-018; 48h then.
+    recent_first: 0s
     submit_lease: 15m      # claimed items are leased this long until their batch is sent...
     lease: 26h             # ...then this long: > the providers' 24h batch window
     fallback_after: 12h
