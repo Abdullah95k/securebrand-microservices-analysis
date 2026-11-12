@@ -28,7 +28,7 @@ func statsCmd(args []string) error {
 	since := fs.Duration("since", 24*time.Hour, "count what happened this long ago or later")
 	return withApp("stats", args, fs, func(ctx context.Context, a *app.App) error {
 		from := time.Now().Add(-*since)
-		r, err := a.Store.PlatformCounts(ctx, from, adapter.PlatformName)
+		r, err := a.Store.PlatformCounts(ctx, from, a.Cfg.Analysis.Batch.RecentFirst, adapter.PlatformName)
 		if err != nil {
 			return err
 		}
@@ -76,7 +76,11 @@ func printStats(w io.Writer, r store.PlatformReport, since time.Duration) error 
 		fmt.Fprintf(&b, "%s\n", p.Platform)
 		oldest := ""
 		if p.Waiting > 0 {
-			oldest = fmt.Sprintf(" (%d in flight, %d backfill; the oldest not sent for %s)", p.InFlight, p.Backfill, waited(p.OldestWaiting))
+			recent := ""
+			if r.RecentWindow > 0 {
+				recent = fmt.Sprintf(", %d published in the last %g h not sent yet", p.Recent, r.RecentWindow.Hours())
+			}
+			oldest = fmt.Sprintf(" (%d in flight, %d backfill%s; the oldest not sent for %s)", p.InFlight, p.Backfill, recent, waited(p.OldestWaiting))
 		}
 		fmt.Fprintf(&b, "  items: %d ingested, %d analysed (%d refused), %d waiting%s, %d in dead letters\n",
 			p.Ingested, p.Analysed, p.Refused, p.Waiting, oldest, p.DeadLetters)

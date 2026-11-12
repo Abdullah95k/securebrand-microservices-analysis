@@ -87,6 +87,10 @@ analysis:
     # thread's comments, or a page's short posts, together instead of one or
     # two each.
     top_up_items: 10000
+    # Live items published within this long are claimed first, within each
+    # platform's share; older ones after them, oldest queued first, so the
+    # backlog drains whenever fewer recent ones wait (0 = off).
+    recent_first: 48h
     submit_lease: 15m      # claimed items are leased this long until their batch is sent...
     lease: 26h             # ...then this long: > the providers' 24h batch window
     fallback_after: 12h

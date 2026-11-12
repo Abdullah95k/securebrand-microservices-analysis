@@ -236,8 +236,9 @@ func (p *Pipeline) submitRoute(ctx context.Context, route, prov, model string) e
 		return nil
 	}
 	// Shared across the platforms waiting, so a new collector's items
-	// aren't held behind an older backlog (store.ClaimShared).
-	claimed, err := p.Store.ClaimShared(ctx, core.LaneBatch, route, p.Cfg.Batch.MaxItems, p.submitLease())
+	// aren't held behind an older backlog, and the recently published first
+	// (store.ClaimShared).
+	claimed, err := p.Store.ClaimShared(ctx, core.LaneBatch, route, p.Cfg.Batch.MaxItems, p.submitLease(), p.Cfg.Batch.RecentFirst)
 	if err != nil {
 		return err
 	}

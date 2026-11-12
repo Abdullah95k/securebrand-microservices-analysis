@@ -21,6 +21,9 @@ type PlatformStats struct {
 	// not in flight has waited (0 with none).
 	InFlight, Backfill int64
 	OldestWaiting      time.Duration
+	// Recent: of the waiting not in flight, those published within the
+	// report's RecentWindow (claimed first: batch.recent_first).
+	Recent int64
 	// Media files announced since, by state now; analyses written since.
 	// Each done, skipped or failed file has been acknowledged to its
 	// collector (gone ones are not: their file was deleted first).
@@ -72,13 +75,22 @@ type PlatformReport struct {
 	DefaultOutPerItem float64
 	// The backfills and their progress (Backfills).
 	Backfills []Backfill
+	// RecentWindow is batch.recent_first, which PlatformStats.Recent counts
+	// by (0: off, not counted).
+	RecentWindow time.Duration
 }
 
 // PlatformCounts counts, per platform, what came in and what came out since t.
 // Tables without a platform column (the queue, the dead letters) are
 // grouped by the ID's platform code, which name turns into the stored
-// platform name ("yt" -> "youtube"). Read-only.
-func (s *Store) PlatformCounts(ctx context.Context, since time.Time, name func(code string) string) (PlatformReport, error) {
+// platform name ("yt" -> "youtube"). The waiting items published within
+// recent are counted too (0: not counted). Read-only.
+func (s *Store) PlatformCounts(ctx context.Context, since time.Time, recent time.Duration, name func(code string) string) (PlatformReport, error) {
+	recentSQL := "0"
+	if recent > 0 {
+		recentSQL = `count(*) FILTER (WHERE request_id IS NULL AND created_at >= now() - make_interval(secs => ` +
+			strconv.FormatInt(int64(recent/time.Second), 10) + `))`
+	}
 	by := map[string]*PlatformStats{}
 	get := func(p string) *PlatformStats {
 		if by[p] == nil {
@@ -98,12 +110,13 @@ func (s *Store) PlatformCounts(ctx context.Context, since time.Time, name func(c
 			func(p string, n []int64) { get(p).Analysed, get(p).Refused = n[0], n[1] }, false, 2},
 		{`SELECT split_part(content_id, ':', 1), count(*),
 				coalesce(greatest(extract(epoch FROM now() - min(enqueued_at) FILTER (WHERE request_id IS NULL)), 0), 0)::bigint,
-				count(*) FILTER (WHERE request_id IS NOT NULL), count(*) FILTER (WHERE priority >= ` + strconv.Itoa(core.PriorityBackground) + `)
+				count(*) FILTER (WHERE request_id IS NOT NULL), count(*) FILTER (WHERE priority >= ` + strconv.Itoa(core.PriorityBackground) + `),
+				` + recentSQL + `
 			FROM analysis.analysis_queue WHERE $1::timestamptz IS NOT NULL GROUP BY 1`,
 			func(p string, n []int64) {
 				m := get(p)
-				m.Waiting, m.OldestWaiting, m.InFlight, m.Backfill = n[0], time.Duration(n[1])*time.Second, n[2], n[3]
-			}, true, 4},
+				m.Waiting, m.OldestWaiting, m.InFlight, m.Backfill, m.Recent = n[0], time.Duration(n[1])*time.Second, n[2], n[3], n[4]
+			}, true, 5},
 		{`SELECT split_part(content_id, ':', 1), count(*) FROM analysis.dead_letters WHERE failed_at >= $1 GROUP BY 1`,
 			func(p string, n []int64) { get(p).DeadLetters = n[0] }, true, 1},
 		{`SELECT platform, count(*),
@@ -234,7 +247,7 @@ func (s *Store) PlatformCounts(ctx context.Context, since time.Time, name func(c
 		return PlatformReport{}, err
 	}
 
-	out := PlatformReport{Outbox: map[string]int64{}}
+	out := PlatformReport{Outbox: map[string]int64{}, RecentWindow: recent}
 	rows, err = s.DB.Query(ctx, `SELECT topic, count(*), count(*) FILTER (WHERE attempts > 0) FROM analysis.outbox GROUP BY 1`)
 	if err != nil {
 		return PlatformReport{}, err
