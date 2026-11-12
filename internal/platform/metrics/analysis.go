@@ -50,6 +50,10 @@ var (
 	AnalysisBudgetPaused = analysisGauge("budget_paused", "1 while the daily budget holds paid work back (urgent items too unless analysis.budget.urgent_exempt).")
 	AnalysisBudgetHeld   = analysisCounter("budget_held_items_total", "Batch items a round claimed and gave back because the route's or the day's cap was reached.", "route")
 	AnalysisOpenBatches  = analysisGauge("open_batches", "Provider batches in progress.")
+	// The batch collector's liveness: when a poll last ran, and when a
+	// batch was last collected (Unix seconds).
+	AnalysisBatchLastPoll    = analysisGauge("batch_last_poll_timestamp_seconds", "When the batch collector last polled (Unix seconds).")
+	AnalysisBatchLastCollect = analysisGauge("batch_last_collect_timestamp_seconds", "When a finished provider batch was last collected (Unix seconds).")
 
 	// Media.
 	AnalysisMedia          = analysisCounter("media_total", "Media jobs by kind and outcome (analyzed, reused, skipped, failed_retry, failed_permanent; waiting_for_post: put back until its post is stored; no_location: an announcement without a bucket or key, not queued).", "kind", "outcome")

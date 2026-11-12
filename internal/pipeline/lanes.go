@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -443,13 +444,28 @@ const pollMax = 10
 
 // collectLease is how long a batch stays claimed for its collection: a
 // thousand results took about 6 minutes in production on 11 Nov.
-const collectLease = 30 * time.Minute
+// collectTimeout ends a collection that runs longer (a stuck download),
+// before its lease runs out.
+const (
+	collectLease   = 30 * time.Minute
+	collectTimeout = 25 * time.Minute
+)
 
-// PollBatches checks up to pollMax open batches, oldest first, and collects
-// the finished ones. Each is claimed as it is checked, so the lease covers
-// its own collection; the ones not finished are released when the poll
-// ends, for the next poll.
+// failedHold is how long a batch whose collection failed is left out of
+// polls before it is tried again.
+const failedHold = 10 * time.Minute
+
+// PollBatches checks up to pollMax open batches, those checked longest ago
+// first (ClaimOpenBatches), and collects the finished ones. Each is claimed
+// as it is checked, so the lease covers its own collection; the ones not
+// finished go back when the poll ends, behind the others, so the next poll
+// checks the next ones: when they were given back as they were, every poll
+// checked the same ten oldest, and on 12 Nov, with those still running at
+// the provider, about twenty newer batches that had ended waited for hours.
+// One whose collection fails is held back for failedHold, so the others
+// are collected meanwhile.
 func (p *Pipeline) PollBatches(ctx context.Context) error {
+	ametrics.BatchLastPoll.SetToCurrentTime()
 	if n, err := p.Store.OpenBatchCount(ctx); err == nil {
 		ametrics.OpenBatches.Set(float64(n))
 	}
@@ -465,17 +481,23 @@ func (p *Pipeline) PollBatches(ctx context.Context) error {
 			break
 		}
 		b := open[0]
-		done, err := p.collect(ctx, b)
+		cctx, cancel := context.WithTimeout(ctx, collectTimeout)
+		done, err := p.collect(cctx, b)
+		cancel()
 		switch {
 		case err != nil:
-			errs = append(errs, err)
-			_ = p.Store.ReleaseBatch(context.WithoutCancel(ctx), b.ID)
+			errs = append(errs, fmt.Errorf("batch %s (%s): %w", b.ID, b.Route, err))
+			if herr := p.Store.HoldBatch(context.WithoutCancel(ctx), b.ID, failedHold); herr != nil {
+				errs = append(errs, herr)
+			}
 		case !done:
 			waiting = append(waiting, b.ID)
+		default:
+			ametrics.BatchLastCollect.SetToCurrentTime()
 		}
 	}
 	for _, id := range waiting {
-		if err := p.Store.ReleaseBatch(context.WithoutCancel(ctx), id); err != nil {
+		if err := p.Store.BatchChecked(context.WithoutCancel(ctx), id); err != nil {
 			errs = append(errs, err)
 		}
 	}
