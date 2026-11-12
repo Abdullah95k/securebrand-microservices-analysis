@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/config"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/pipeline"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/provider"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/provider/fake"
 )
@@ -193,7 +194,7 @@ func TestPollChecksEachBatchOnce(t *testing.T) {
 	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'ended'`); n != 2 {
 		t.Fatalf("%d batches collected, want the 2 finished", n)
 	}
-	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'in_progress' AND lease_until IS NULL`); n != 1 {
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'in_progress' AND lease_until <= now()`); n != 1 {
 		t.Fatal("the running batch wasn't released for the next poll")
 	}
 	if checks != 1 {
@@ -242,5 +243,51 @@ func TestPollGoesOnPastAFailingBatch(t *testing.T) {
 	// Held back: the next poll doesn't try it again yet.
 	if err := e.p.PollBatches(ctx); err != nil {
 		t.Fatalf("the held batch was tried again at once: %v", err)
+	}
+}
+
+// TestPollReachesEveryOpenBatch: with more open batches than one poll
+// checks, and the oldest still running at the provider, the next poll
+// checks the newer ones and collects those that ended (on 12 Nov every
+// poll checked the same ten oldest, and about twenty ended batches behind
+// them waited for hours).
+func TestPollReachesEveryOpenBatch(t *testing.T) {
+	e := setup(t, nil)
+	ctx := context.Background()
+	for i := range pipeline.PollMax + 2 {
+		c := comment(i+1, "تعليق")
+		c.ThreadID, c.ParentID = fmt.Sprintf("fb:post:%d", i+40), fmt.Sprintf("fb:post:%d", i+40)
+		e.ingest(t, c)
+		if err := e.p.SubmitBatches(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'in_progress'`); n != pipeline.PollMax+2 {
+		t.Fatalf("%d open batches, want %d", n, pipeline.PollMax+2)
+	}
+	// The pollMax oldest are still running at the provider; the two newest
+	// have ended.
+	var mu sync.Mutex
+	checked := map[string]int{}
+	e.primary.Unfinished = func(id string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		checked[id]++
+		var n int
+		_, _ = fmt.Sscanf(id, "fakebatch_%d", &n)
+		return n <= pipeline.PollMax
+	}
+	for range 2 {
+		if err := e.p.PollBatches(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := e.count(t, `SELECT count(*) FROM analysis.provider_batches WHERE status = 'ended'`); n != 2 {
+		t.Fatalf("%d of the 2 ended batches collected in two polls", n)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(checked) != pipeline.PollMax+2 {
+		t.Fatalf("%d of %d open batches checked in two polls", len(checked), pipeline.PollMax+2)
 	}
 }

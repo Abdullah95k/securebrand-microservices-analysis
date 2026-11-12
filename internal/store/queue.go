@@ -644,11 +644,18 @@ func (s *Store) OpenBatchCount(ctx context.Context) (int64, error) {
 	return n, err
 }
 
-// ClaimOpenBatches leases batches still in progress for polling.
+// ClaimOpenBatches leases batches still in progress for polling: those
+// never checked first (oldest first), then those checked longest ago. A
+// batch's lease_until, once past, is when it was last checked
+// (BatchChecked) or last failed to collect (HoldBatch), so every open
+// batch has its turn however many there are: on 12 Nov, a poll took the
+// ten oldest each time, still running at the provider, and the newer
+// batches that had ended were never checked.
 func (s *Store) ClaimOpenBatches(ctx context.Context, limit int, lease time.Duration) ([]OpenBatch, error) {
 	rows, err := s.DB.Query(ctx, `
 		WITH c AS (SELECT batch_id FROM analysis.provider_batches WHERE status = 'in_progress'
-		           AND (lease_until IS NULL OR lease_until < now()) ORDER BY submitted_at LIMIT $1 FOR UPDATE SKIP LOCKED)
+		           AND (lease_until IS NULL OR lease_until < now()) ORDER BY lease_until NULLS FIRST, submitted_at
+		           LIMIT $1 FOR UPDATE SKIP LOCKED)
 		UPDATE analysis.provider_batches b SET lease_until = now() + make_interval(secs => $2)
 		FROM c WHERE b.batch_id = c.batch_id
 		RETURNING b.batch_id, b.provider, b.model, b.route, b.submitted_at`, limit, lease.Seconds())
@@ -704,9 +711,11 @@ func (s *Store) RecentBatches(ctx context.Context, since time.Time) ([]BatchInfo
 	return out, rows.Err()
 }
 
-// ReleaseBatch drops the poll lease of a batch still running.
-func (s *Store) ReleaseBatch(ctx context.Context, id string) error {
-	_, err := s.DB.Exec(ctx, `UPDATE analysis.provider_batches SET lease_until = NULL WHERE batch_id = $1`, id)
+// BatchChecked gives a batch still running back to the polls, behind the
+// others: its lease ends now, which records when it was checked
+// (ClaimOpenBatches takes the batches checked longest ago first).
+func (s *Store) BatchChecked(ctx context.Context, id string) error {
+	_, err := s.DB.Exec(ctx, `UPDATE analysis.provider_batches SET lease_until = now() WHERE batch_id = $1`, id)
 	return err
 }
 

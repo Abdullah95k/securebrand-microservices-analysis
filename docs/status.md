@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 12 November 2026, 03:30 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 12 November 2026, 03:15 (Iraq time).*
 
 ## Where it stands
 
@@ -417,5 +417,8 @@
   - **`57P01` (connection terminated by the server)** at about 15:59Z and 23:47Z: comes from `pg_terminate_backend` or a server restart, not from any timeout of ours; rounds fail and retry, nothing paid. For the platform to check on DigitalOcean.
 - **12 Nov, 03:30 Iraq time: finished batches not collected; fixed in review.**
   - **The reading** (the master, `analysis-batches 4h` at 23:59Z): about 20 batches ended at the provider between 02:10 and 02:51 (about 18,000 answers), still "in progress, done 0" here. That, not provider latency, is why no comment request was answered in the hour and Instagram showed 0 analysed.
-  - **The cause (my bug, from `7f61d47`):** a poll released a batch whose collection failed at once, and its next check claimed the oldest open batch again: the same one. One batch that kept failing took every check of every poll.
-  - **The fix (in review):** a failing batch is held back 10 minutes while the others are collected; each collection has a 25-minute limit; errors name the batch; two gauges show when the collector last polled and last collected.
+  - **The cause (my bug, from `7f61d47`):** a poll checks up to 10 open batches, oldest first, and gave the ones still running back as they were, so every poll checked the same 10 oldest. With those still running at the provider, no newer batch was ever checked, the ended ones included. No check failed, so nothing was logged (the master's Loki: no `batch poll` line in 30 minutes). Before `7f61d47`, a checked batch stayed claimed for 5 minutes, so the following polls moved on.
+  - **My first reading was wrong:** I took it for one failing batch claimed again by every check. The master's logs showed no failures at all.
+  - **The fix (in review, PR #58):** a poll takes the batches never checked first, then those checked longest ago, and puts the running ones back behind the others, so every open batch has its turn. Also: a failing batch is held back 10 minutes while the others are collected; each collection has a 25-minute limit; errors name the batch; two gauges show when the collector last polled and last collected.
+  - **The test:** 12 open batches, the 10 oldest still running, the 2 newest ended: two polls collect both (0 with the old order).
+  - **A restart** (PR #125 on the platform) doesn't help: the same 10 oldest come first. Nothing is lost: ended batches stay at the provider for 29 days.

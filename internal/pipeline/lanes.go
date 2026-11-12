@@ -455,13 +455,15 @@ const (
 // polls before it is tried again.
 const failedHold = 10 * time.Minute
 
-// PollBatches checks up to pollMax open batches, oldest first, and collects
-// the finished ones. Each is claimed as it is checked, so the lease covers
-// its own collection; the ones not finished are released when the poll
-// ends, for the next poll. One whose collection fails is held back for
-// failedHold: released at once, it was claimed again by the same poll's
-// next check (it is the oldest), and on 12 Nov one such batch kept every
-// other finished batch from being collected for hours.
+// PollBatches checks up to pollMax open batches, those checked longest ago
+// first (ClaimOpenBatches), and collects the finished ones. Each is claimed
+// as it is checked, so the lease covers its own collection; the ones not
+// finished go back when the poll ends, behind the others, so the next poll
+// checks the next ones: when they were given back as they were, every poll
+// checked the same ten oldest, and on 12 Nov, with those still running at
+// the provider, about twenty newer batches that had ended waited for hours.
+// One whose collection fails is held back for failedHold, so the others
+// are collected meanwhile.
 func (p *Pipeline) PollBatches(ctx context.Context) error {
 	ametrics.BatchLastPoll.SetToCurrentTime()
 	if n, err := p.Store.OpenBatchCount(ctx); err == nil {
@@ -495,7 +497,7 @@ func (p *Pipeline) PollBatches(ctx context.Context) error {
 		}
 	}
 	for _, id := range waiting {
-		if err := p.Store.ReleaseBatch(context.WithoutCancel(ctx), id); err != nil {
+		if err := p.Store.BatchChecked(context.WithoutCancel(ctx), id); err != nil {
 			errs = append(errs, err)
 		}
 	}
