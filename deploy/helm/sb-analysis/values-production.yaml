@@ -19,8 +19,10 @@ components:
     # whisper servers' slots kept 2 of 4 busy and images had 2 (about
     # 34,000 a day). Now 2 for speech-to-text and 6 for images. 8 at
     # worker_memory_mib (384) after 256 MiB fit 3,584 MiB; /tmp holds 8
-    # videos at media.max_bytes (500 MiB) and their frames.
-    resources: {requests: {cpu: "1", memory: 1Gi}, limits: {memory: 3584Mi}}
+    # videos at media.max_bytes (500 MiB) and their frames. CPU 500m: the
+    # pod used 0.23 cores with 4 workers (the master, 13 Nov), and no node
+    # had a whole CPU of requests free.
+    resources: {requests: {cpu: 500m, memory: 1Gi}, limits: {memory: 3584Mi}}
     tmpSizeLimit: 5Gi
 
 # Speech in videos (the owner, 7 November 2026), transcribed inside the
