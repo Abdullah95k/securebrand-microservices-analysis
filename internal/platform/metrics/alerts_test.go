@@ -24,7 +24,8 @@ func registered(t *testing.T) map[string]bool {
 	for _, c := range []prometheus.Collector{AnalysisIngested, AnalysisUndecodable, AnalysisIngestPaused, AnalysisIngestPostsPaused, AnalysisAnalyzed, AnalysisItemsFailed,
 		AnalysisRequests, AnalysisRequestSecs, AnalysisTokens, AnalysisCostUSD, AnalysisFallbacks, AnalysisRepairs,
 		AnalysisRefusals, AnalysisFollowUps, AnalysisDeduplicated, AnalysisDeadLetters, AnalysisQueueDepth, AnalysisQueueAge,
-		AnalysisSpentToday, AnalysisBudgetUSD, AnalysisBudgetPaused, AnalysisOpenBatches, AnalysisMedia, AnalysisMediaAtRisk,
+		AnalysisSpentToday, AnalysisBudgetUSD, AnalysisBudgetPaused, AnalysisOpenBatches, AnalysisBatchLastPoll, AnalysisBatchLastCollect,
+		AnalysisMedia, AnalysisMediaAtRisk,
 		AnalysisMediaPending, AnalysisTranscriptions, AnalysisSTTDeferred,
 		AnalysisOutboxBacklog, AnalysisPublished, AnalysisPublishFailed, AnalysisOutboxHeld, AnalysisErasures, AnalysisRollupDays, AnalysisRateFallback,
 		KafkaProduce, KafkaCommitted, KafkaHandlerPanics} {

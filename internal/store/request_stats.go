@@ -25,7 +25,9 @@ type RequestStats struct {
 
 // Resends are a route's items sent in more than one request since a time
 // (a retry after a failure, an errored or expired batch request), and the
-// sends beyond each item's first.
+// sends beyond each item's first. A video's speech-to-text, logged as a
+// request of its own (done, no tokens), isn't a send: on 13 Nov it made
+// every transcribed video look sent twice.
 type Resends struct {
 	Items, ExtraSends int64
 }
@@ -96,7 +98,8 @@ func (s *Store) RequestCounts(ctx context.Context, since time.Time) ([]RequestSt
 	resent := map[string]Resends{}
 	rows, err = s.DB.Query(ctx, `SELECT route, count(*), coalesce(sum(n - 1), 0) FROM (
 			SELECT r.route, cid, count(*) AS n FROM analysis.provider_requests r, unnest(r.content_ids) AS cid
-			WHERE r.created_at >= $1 GROUP BY 1, 2 HAVING count(*) > 1) x
+			WHERE r.created_at >= $1 AND NOT (r.status = 'done' AND coalesce(r.input_tokens, 0) = 0 AND coalesce(r.output_tokens, 0) = 0)
+			GROUP BY 1, 2 HAVING count(*) > 1) x
 		GROUP BY 1`, since)
 	if err != nil {
 		return nil, nil, err

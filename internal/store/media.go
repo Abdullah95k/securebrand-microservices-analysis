@@ -65,18 +65,23 @@ func (s *Store) InsertMediaJobs(ctx context.Context, jobs []*core.MediaJob, cons
 }
 
 // ClaimMediaJobs leases pending jobs, nearest deadline first.
-func (s *Store) ClaimMediaJobs(ctx context.Context, limit int, lease time.Duration) ([]core.MediaJob, error) {
+//
+// With imagesOnly, videos are left out (core.MediaJob.IsVideo's kinds):
+// the worker asks for that while every speech-to-text slot is busy, so it
+// takes images instead of claiming a video only to put it back.
+func (s *Store) ClaimMediaJobs(ctx context.Context, limit int, lease time.Duration, imagesOnly bool) ([]core.MediaJob, error) {
 	rows, err := s.DB.Query(ctx, `
 		WITH c AS (
 			SELECT media_id FROM analysis.media_jobs
 			WHERE state = 'pending' AND not_before <= now() AND (lease_until IS NULL OR lease_until < now())
+			  AND NOT ($3 AND kind IN ('video', 'reel', 'comment_video'))
 			ORDER BY delete_after NULLS LAST, received_at LIMIT $1 FOR UPDATE SKIP LOCKED)
 		UPDATE analysis.media_jobs m SET lease_until = now() + make_interval(secs => $2), tries = m.tries + 1
 		FROM c WHERE m.media_id = c.media_id
 		RETURNING m.media_id, coalesce(m.owner_content_id, ''), m.platform, coalesce(m.source_id, ''), m.kind, m.bucket, m.key,
 		          coalesce(m.size_bytes, 0), coalesce(m.content_type, ''), coalesce(m.duration_ms, 0), coalesce(m.alt_text, ''),
 		          m.delete_after, m.ack_format, m.tries, coalesce(m.role, ''), coalesce(m.sha256, ''),
-		          m.attempt, m.received_at`, limit, lease.Seconds())
+		          m.attempt, m.received_at`, limit, lease.Seconds(), imagesOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -467,6 +472,17 @@ func (s *Store) HoldMediaForOwner(ctx context.Context, mediaID, ownerID string, 
 		not_before = CASE WHEN EXISTS (SELECT 1 FROM analysis.content_index WHERE content_id = $2) THEN now() ELSE $3 END
 		WHERE media_id = $1`, mediaID, ownerID, until)
 	return err
+}
+
+// WakeCommentMedia makes the comments' files that wait (for their comment,
+// for budget or for speech-to-text) due now, so each is looked at again:
+// since 13 Nov a file whose comment is outside the comment sample no
+// longer waits for it (it is never stored). It returns how many it woke.
+func (s *Store) WakeCommentMedia(ctx context.Context) (int64, error) {
+	tag, err := s.DB.Exec(ctx, `UPDATE analysis.media_jobs SET not_before = now()
+		WHERE state = 'pending' AND not_before > now() AND (lease_until IS NULL OR lease_until < now())
+		  AND owner_content_id LIKE '%:comment:%'`)
+	return tag.RowsAffected(), err
 }
 
 // WakeMediaOf makes the waiting jobs of these owner items due now: called

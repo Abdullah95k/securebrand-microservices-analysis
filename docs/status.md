@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 13 November 2026, 13:45 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 13 November 2026, 13:55 (Iraq time).*
 
 ## Where it stands
 
@@ -452,3 +452,21 @@
     - **`AnalysisBatchQueueStale`** (the oldest batch item waiting over 30 hours): the backlog's age, not a stall. The 560k comments include items queued over 30 hours ago and backfill, which goes after every live item. With collection keeping up (2 open, last collection 3 minutes before), it fires until the backlog's oldest are claimed. A stalled collector shows in `sb_analysis_batch_last_collect_timestamp_seconds` instead.
     - **`AnalysisTranscriptionsFailing`** (any speech-to-text error in 30 minutes): Whisper is failing some calls. The reasons are in `sb-analysis stats` (video failure reasons). Asked of the master.
   - **Media, asked by the owner** ("make sure all platforms media is being analyzed"): what's analysed by kind and what's skipped by policy, per platform, sent to the master. The counts come from the master's `analysis-stats 24h`.
+- **13 Nov, 13:55 Iraq time: media throughput; alerts.**
+  - **The reading** (the master's `analysis-stats 24h`, 10:42Z):
+    - TikTok: 10,836 announced, 18,143 analysed, 69,274 pending (35,919 due in 12–24 h), 8,612 waiting for their post.
+    - Facebook: 7,890 announced, 937 analysed, 17,968 pending, 4,954 waiting.
+    - Instagram: 4 announced. YouTube: none.
+    - Image and video spend $4 of their $30.
+  - **The cause:** workers, not money. One media process has 4 workers; videos come first by deadline. While one held the speech-to-text slot, the others kept claiming videos only to put them back. And files of comments outside the 10% sample waited up to 7 days for comments that are never stored.
+  - **The fix (in review):**
+    - while speech-to-text is busy, the workers claim images;
+    - a file of a comment outside the sample doesn't wait (analysed without its text);
+    - held comment files are woken at start.
+    - More needs a second media replica or more memory: the platform's call.
+  - **"Videos sent twice":** each transcribed video is logged as two requests (Whisper, $0, and Claude). Stats now leave the transcriptions out of "sent more than once", and count the acknowledgements sent in the window.
+  - **Alerts** (the master agreed):
+    - `AnalysisBatchQueueStale` is info: the backlog's age.
+    - The new `AnalysisBatchCollectorStalled` (warning): batches open and none collected for 2 hours, or no poll begun for 90 minutes.
+    - `AnalysisTranscriptionsFailing` counts every errored call, including ones whose video then succeeded and last tries analysed without a transcript, so it can fire with no reason left in the stats. Waiting for the whisper pods' state.
+  - **Caps proposed for the owner:** comment 40, post 3, image 14, video 8 (sum $65, total still $60). The master's numbers (image 8, video 5) would hold media near 25,000 a day. A separate PR, once the owner agrees.
