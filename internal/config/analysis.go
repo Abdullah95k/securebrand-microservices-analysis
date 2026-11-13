@@ -318,6 +318,11 @@ type AnalysisMedia struct {
 	// fit the container's memory limit.
 	WorkerMemoryMiB int `koanf:"worker_memory_mib"`
 	ImageMaxSide    int `koanf:"image_max_side"`
+	// HEIFConvert is libheif's heif-convert, which turns a HEIC or AVIF
+	// image (TikTok's, since 13 Nov) into a JPEG before it is analysed; it
+	// is in the media image (--target analysis-media). Not found, such
+	// images wait for it (media.ErrNotReadYet). "" = never converted.
+	HEIFConvert string `koanf:"heif_convert"`
 	// Poll is the wait after an empty poll; while the queue stays empty it
 	// doubles up to IdlePoll, and one worker polls for all of them.
 	Poll     time.Duration `koanf:"poll"`

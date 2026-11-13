@@ -6,12 +6,17 @@ package media
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 	// Decoders for the formats Facebook and other platforms serve.
 	_ "image/gif"
 	_ "image/png"
@@ -60,6 +65,46 @@ func Sniff(b []byte) (name string, image bool) {
 		return "tiff", true
 	}
 	return http.DetectContentType(b), false
+}
+
+// ErrNoConverter means heif-convert isn't installed: HEIC and AVIF images
+// then wait (ErrNotReadYet) rather than fail.
+var ErrNoConverter = errors.New("media: heif-convert not found (build the image with --target analysis-media)")
+
+// Convertible reports whether heif-convert reads a format Sniff named:
+// HEIC/HEIF and AVIF.
+func Convertible(name string) bool { return strings.HasPrefix(name, "heif-") || name == "avif" }
+
+// ConvertHEIF turns a HEIC or AVIF image into a JPEG with libheif's
+// heif-convert (bin), through a temporary directory in dir ("" = the
+// system's). A file holding several images gives the first.
+func ConvertHEIF(ctx context.Context, bin string, data []byte, dir string) ([]byte, error) {
+	path, err := exec.LookPath(bin)
+	if err != nil {
+		return nil, ErrNoConverter
+	}
+	tmp, err := os.MkdirTemp(dir, "heif-")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.RemoveAll(tmp) }()
+	in, out := filepath.Join(tmp, "in.heic"), filepath.Join(tmp, "out.jpg")
+	if err := os.WriteFile(in, data, 0o600); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	// #nosec G204 -- the configured converter, on our own temporary files
+	if b, err := exec.CommandContext(ctx, path, "-q", "90", in, out).CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("heif-convert: %w: %s", err, lastLine(b))
+	}
+	// One image is written as out.jpg; several as out-1.jpg, out-2.jpg...
+	for _, p := range []string{out, filepath.Join(tmp, "out-1.jpg")} {
+		if b, err := os.ReadFile(p); err == nil { // #nosec G304 -- our own temporary file
+			return b, nil
+		}
+	}
+	return nil, errors.New("heif-convert: no image written")
 }
 
 // undecodable wraps a decoding error; an unknown format names what the

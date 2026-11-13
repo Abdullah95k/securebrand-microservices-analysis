@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 13 November 2026, 21:20 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 13 November 2026, 21:40 (Iraq time).*
 
 ## Where it stands
 
@@ -525,3 +525,8 @@
   - **Next:** from the master's count by format and platform, a converter (libheif reads HEIC and AVIF; the image's ffmpeg 5.1 doesn't read HEIC) or a JPEG from the collector.
   - **Waiting for:** the master's count of the files kept for later, by format and platform, and of the permanent failures by platform. They pick between a converter in the media image and JPEG from the collector.
   - **Tonight:** the D-065 catch-up caps (image $39, total $78) go in as a settings-only change just after 21:00Z (midnight Iraq time), for 14 and 15 Nov, and come out just after 21:00Z on 15 Nov.
+- **13 Nov, 21:40 Iraq time: TikTok's HEIC photos converted (in review).**
+  - **The master's counts on e29e30a** (2 hours, counts only): 22 to 30 files kept for later, all `(heif-heic)` and all from TikTok; 1 permanent failure (a damaged file), against about 130 an hour before.
+  - **Why the rate fell from about 130 to about 12 to 15 an hour:** a permanent failure happened once per file, as does a hold every 6 hours, so the counts are of files in both cases. When newest first began (14:25Z) the workers went through the 6 hours of files already announced within about an hour, so the first hours' rate was that backlog; now they keep up, and the rate is TikTok's HEIC photos as they arrive.
+  - **The change** (the master left the choice to me): libheif's `heif-convert` in the media image (`libheif-examples`, Debian 12), which turns HEIC and AVIF into JPEG before analysis. The files kept since e29e30a are converted on their next try. Without the converter, or for a file that won't convert, the image waits as before. JPEG from tks isn't needed at this volume.
+  - **Tests:** a picture encoded to HEIC with `heif-enc` converts back to a JPEG of the same size, and a HEIC photo is analysed and acknowledged. The worker test fails without the conversion. The CI's image job sends a picture to HEIC and back inside the media image.

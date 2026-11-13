@@ -248,6 +248,9 @@ analysis:
     image_max_bytes: 33554432  # an image, read into memory (32 MiB)
     image_max_pixels: 40000000 # 40 megapixels: about 160 MiB decoded
     image_max_side: 1024
+    # HEIC and AVIF images (TikTok's) are turned into JPEG by libheif's
+    # heif-convert, in the media image (--target analysis-media).
+    heif_convert: heif-convert
     poll: 2s
     idle_poll: 30s         # as realtime.idle_poll: one worker polls an empty queue, less often
     lease: 10m

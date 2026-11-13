@@ -963,3 +963,78 @@ func TestUnreadFormatWaits(t *testing.T) {
 		t.Fatalf("AVIF due in 10 h acknowledged %v, want failed for good", a["near"])
 	}
 }
+
+// testHEIC encodes a picture as HEIC with libheif's heif-enc, or skips
+// without libheif's tools (the CI installs them; the media image has
+// heif-convert).
+func testHEIC(t *testing.T, w, h int) []byte {
+	t.Helper()
+	for _, bin := range []string{"heif-enc", "heif-convert"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not installed", bin)
+		}
+	}
+	dir := t.TempDir()
+	in, out := filepath.Join(dir, "in.png"), filepath.Join(dir, "out.heic")
+	if err := os.WriteFile(in, pngBytes(t, w, h), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := exec.Command("heif-enc", "-q", "50", in, "-o", out).CombinedOutput(); err != nil {
+		t.Skipf("cannot encode a test HEIC: %v %s", err, b)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// TestConvertHEIF: a HEIC image (TikTok's photos, 13 Nov) can't be read
+// directly, and heif-convert turns it into a JPEG of the same size. Without
+// the converter the error says so (the image then waits); bytes it can't
+// read are an error of their own.
+func TestConvertHEIF(t *testing.T) {
+	heic := testHEIC(t, 320, 240)
+	if name, img := media.Sniff(heic); !media.Convertible(name) || !img {
+		t.Fatalf("a HEIC named %q (image %v), want heif-*", name, img)
+	}
+	if _, err := media.Resize(heic, 1024, 0); !errors.Is(err, media.ErrNotReadYet) {
+		t.Fatalf("HEIC read directly: %v, want not read yet", err)
+	}
+	jpg, err := media.ConvertHEIF(context.Background(), "heif-convert", heic, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(jpg))
+	if err != nil || format != "jpeg" || cfg.Width != 320 || cfg.Height != 240 {
+		t.Fatalf("converted: %s %dx%d (%v), want a 320x240 JPEG", format, cfg.Width, cfg.Height, err)
+	}
+	if _, err := media.ConvertHEIF(context.Background(), "no-such-heif-convert", heic, ""); !errors.Is(err, media.ErrNoConverter) {
+		t.Fatalf("no converter: %v, want ErrNoConverter", err)
+	}
+	if _, err := media.ConvertHEIF(context.Background(), "heif-convert", ftypHeader("heic"), ""); err == nil || errors.Is(err, media.ErrNoConverter) {
+		t.Fatalf("a damaged HEIC: %v, want a conversion error", err)
+	}
+}
+
+// TestWorkerAnalysesHEIC: a HEIC photo is converted and analysed like any
+// other image, not kept waiting.
+func TestWorkerAnalysesHEIC(t *testing.T) {
+	heic := testHEIC(t, 320, 240)
+	st, w, _, objs := setup(t)
+	ctx := context.Background()
+	objs["b/heic"] = heic
+	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{job("heic", "photo")}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := w.Once(ctx); err != nil || n != 1 {
+		t.Fatalf("claimed %d (%v)", n, err)
+	}
+	if a := acks(t, st); a["heic"] != fbv1.ProcessStatus_PROCESS_STATUS_PROCESSED {
+		t.Fatalf("HEIC photo acknowledged %v, want processed", a["heic"])
+	}
+	var n int
+	if err := st.DB.QueryRow(ctx, `SELECT count(*) FROM analysis.media_analyses WHERE media_id = 'heic' AND description <> ''`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("HEIC analysis stored: %d (%v)", n, err)
+	}
+}
