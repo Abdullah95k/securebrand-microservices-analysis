@@ -487,11 +487,12 @@
   - **From fbs** (7e87f6f, live today): page profile pictures and covers on `fb.media.ready.v1` (`MEDIA_KIND_PROFILE_PIC`, `MEDIA_KIND_COVER`, owner the page). Monitored pages only, about 520 on the first day, then changes. Also video captions on `content.post.v1`.
   - **Found:** the fbs protos this service is built with predate `owner_type`. So a page's picture (no post, no comment) was owned by "fb:post:0" and would have waited for that post until 12 hours before its deadline, and carried no role.
   - **The fix:** a picture with no post or comment belongs to its page and doesn't wait. A profile picture takes the role `profile_picture`, a page cover `banner`, so its request carries the D-061 note. Its result stays in Postgres, like all of fbs's own media (decision 17).
-- **13 Nov, 15:45 Iraq time: the image cap is $21 (the owner, directly: option (a)).**
+- **13 Nov, 15:45 Iraq time: the image cap is $21 (the owner, directly: option (a); D-063). Merged, PR #65, `4197d47`.**
   - Image $21 in place of $14, for YouTube's thumbnails (about $7 a day) on top of TikTok's and Facebook's images. Comment $40, post $3 and video $8 stay; the $60 total is unchanged.
   - Text always keeps at least $31, media at least $17. On heavy-media days comments can fall up to $8 behind their about $39 a day.
-- **13 Nov, 16:15 Iraq time: an open circuit no longer costs media a try (in review, PR #66).**
+- **13 Nov, 16:10 Iraq time: an open circuit no longer costs media a try (merged, PR #66, `d212413`; sent to the master to pin, with #65 in the same rollout).**
   - **The reading** (the master's `analysis-stats 24h`, 12:53Z, mostly before today's media fixes rolled): 160 files waiting to retry with "provider unavailable (circuit open)" (TikTok 112, Facebook 48). Image spend $3.50 by mid-afternoon. Whisper: 2 pods Running, 0 restarts.
   - **Found:** the provider's circuit breaker returns its own "unavailable" error, which the media worker didn't recognise as a wait. Each file in it counted a try and an error; an outage of a few doubling cooldowns (up to 30 minutes each) could have failed files for good.
   - **The fix:** such a file goes back for 2 minutes without a try or an error (`sb_analysis_media_total{outcome="provider_unavailable"}`).
   - **What opens the circuit:** at least half of 10 or more of the provider's calls failing within a minute with a retryable error (rate limit 429, overload 529, 5xx, timeouts); it logs `analysis: provider circuit changed`. Asked of the master: those lines and the errors before them in `analysis-media`'s log.
+  - **Next reading** (the master, 13:45Z): `analysis-stats 1h`, the circuit lines over 3 hours, and the counts of media failures with 429 and with 529. 429s would point at the account's rate limit, 529s at the provider's overload, which this fix makes harmless.
