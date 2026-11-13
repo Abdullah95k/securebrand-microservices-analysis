@@ -22,6 +22,7 @@ import (
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/run"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/prompt"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/provider"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/provider/registry"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/store"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/textnorm"
 )
@@ -89,6 +90,10 @@ type Worker struct {
 // errSTTBusy: every speech-to-text slot is taken; the video goes back to
 // the queue for analysis.media.video.stt_retry_after.
 var errSTTBusy = errors.New("media: speech-to-text busy")
+
+// providerRetryAfter is how long a file waits when the provider's circuit
+// is open: about the circuit's first cooldown.
+const providerRetryAfter = 2 * time.Minute
 
 // ownerWait: the file's post (or comment) isn't stored yet; the job waits
 // for it in the queue (analysis.media.owner_wait), at most until Until.
@@ -376,6 +381,18 @@ func (w *Worker) process(ctx context.Context, j core.MediaJob) {
 		if errors.Is(err, errBudget) {
 			// Not a failure: wait for budget (the TTL still applies).
 			if rerr := w.P.Store.ReleaseMedia(context.WithoutCancel(ctx), j.MediaID, 10*time.Minute); rerr != nil {
+				slog.Error("analysis: media job not released", "media", j.MediaID, "err", rerr)
+			}
+			return
+		}
+		if errors.Is(err, registry.ErrUnavailable) {
+			// The provider's circuit is open (its calls have been failing):
+			// not this file's fault. It comes back after the circuit's
+			// cooldown without losing a try; before 13 Nov it counted one,
+			// and an outage longer than a few cooldowns would have failed
+			// files for good (the TTL still applies).
+			ametrics.Media.WithLabelValues(j.Kind, "provider_unavailable").Inc()
+			if rerr := w.P.Store.ReleaseMedia(context.WithoutCancel(ctx), j.MediaID, providerRetryAfter); rerr != nil {
 				slog.Error("analysis: media job not released", "media", j.MediaID, "err", rerr)
 			}
 			return
