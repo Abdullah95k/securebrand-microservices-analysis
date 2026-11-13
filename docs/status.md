@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 13 November 2026, 14:10 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 13 November 2026, 14:20 (Iraq time).*
 
 ## Where it stands
 
@@ -470,9 +470,16 @@
     - The new `AnalysisBatchCollectorStalled` (warning): batches open and none collected for 2 hours, or no poll begun for 90 minutes.
     - `AnalysisTranscriptionsFailing` counts every errored call, including ones whose video then succeeded and last tries analysed without a transcript, so it can fire with no reason left in the stats. Waiting for the whisper pods' state.
   - **Caps proposed for the owner:** comment 40, post 3, image 14, video 8 (sum $65, total still $60). The master's numbers (image 8, video 5) would hold media near 25,000 a day. A separate PR, once the owner agrees.
-- **13 Nov, 14:10 Iraq time: the owner's D-062 caps; video fallback (in review, PR #62).**
+- **13 Nov, 14:10 Iraq time: the owner's D-062 caps; video fallback (merged, PR #62, `c60714f`).**
   - **D-062** (the owner, via the master): comment $40, post $3, image $14, video $8; the $60 total unchanged. Text always keeps $38 and media $17.
   - **A video near its deadline** (within 6 hours) that finds no speech-to-text slot is analysed from its frames alone (`transcript_source` "none"), rather than expire (the master asked). With 2 whisper servers (about 1,000–1,500 videos a day each) against about 7,700 TikTok videos a day, most will be frames-only until there are more servers.
   - **`AnalysisTranscriptionsFailing`:** now at least 3 errors and more than 10% of calls in 30 minutes (the master agreed).
   - **Stats:** each platform's videos announced, and analysed by captions, speech-to-text or frames only, to size the whisper servers.
-- **Next (#63, D-061):** profile pictures and banners of monitored publishers (accounts that are the source of stored items) and YouTube thumbnails (512 px); a prompt line: describe, read text and logos, never identify a person.
+- **13 Nov, 14:20 Iraq time: D-061, profile pictures, banners and YouTube thumbnails (in review, PR #63).**
+  - **The owner** (via the master): profile pictures and banners of every monitored page, account and channel, on all four platforms, on first sight and on change. A description, the text and the logos, never who a person is. YouTube thumbnails on, in place of D-052's "not now".
+  - **Monitored:** the account is the source of a stored item (its posts are collected). A commenter's avatar is skipped (`policy:not_monitored`). yts and igs send only listed accounts' pictures anyway; tks is asked whether it holds commenters' back.
+  - **Thumbnails:** YouTube's only, at 512 px. Other platforms' are still skipped, since their videos are analysed themselves.
+  - **The request** names the picture's role and repeats the rule: no identification, no guesses at personal traits. It sits in the user message, so the cached system prompt is unchanged.
+  - **Cost** (Haiku prices): about $0.21 per 1,000 at 512 px. YouTube's about 34,000 thumbnails a day come to about $7; profile pictures and banners to under $1.
+  - **The image cap:** it needs about $21 with thumbnails; option (a) image 21 or (b) keep 14, put to the owner via the master. 14 stays until then.
+  - **The client's join** (CLIENT-REQ-023) works as published: `analysis.media.v1` carries `media_id`, `owner_id`, `owner_kind`, `account_id` and `role`.

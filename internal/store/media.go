@@ -477,6 +477,18 @@ func (s *Store) HoldMediaForOwner(ctx context.Context, mediaID, ownerID string, 
 	return err
 }
 
+// IsSource reports whether an account (page, channel) is the source of any
+// stored item: its posts are collected, so it is monitored. A commenter's
+// account never is (a comment's source is the post's account).
+func (s *Store) IsSource(ctx context.Context, sourceID string) (bool, error) {
+	if sourceID == "" {
+		return false, nil
+	}
+	var ok bool
+	err := s.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM analysis.content_items WHERE source_id = $1)`, sourceID).Scan(&ok)
+	return ok, err
+}
+
 // WakeCommentMedia makes the comments' files that wait (for their comment,
 // for budget or for speech-to-text) due now, so each is looked at again:
 // since 13 Nov a file whose comment is outside the comment sample no

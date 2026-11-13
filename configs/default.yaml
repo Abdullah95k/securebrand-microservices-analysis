@@ -228,11 +228,18 @@ analysis:
     enabled: true
     consumer: analysis     # fbs's acks (fb.media.processed.v1); the contract's carry "sb-analysis"
     # fbs's media kinds (fb.media.ready.v1) analysed.
-    kinds: [photo, video, reel, comment_photo, comment_video, cover, image]
+    kinds: [photo, video, reel, comment_photo, comment_video, cover, image, profile_pic]
     # The contract's media (content.media.ready.v1) analysed, as type/role.
-    # Others (stickers, GIFs, thumbnails of videos, profile pictures,
-    # banners, audio, documents) are acknowledged as SKIPPED.
-    contract_kinds: [image/content, image/attachment, image/cover, video/content, video/attachment]
+    # Others (stickers, GIFs, other platforms' video thumbnails, audio,
+    # documents) are acknowledged as SKIPPED.
+    # Profile pictures and banners (the owner's D-061, 13 Nov) only of
+    # monitored pages, accounts and channels (monitored_roles); video
+    # thumbnails only for YouTube, whose videos aren't handed over (the
+    # thumbnail is their only picture), at thumbnail_max_side.
+    contract_kinds: [image/content, image/attachment, image/cover, video/content, video/attachment,
+                     image/profile_picture, image/banner, youtube:image/thumbnail]
+    monitored_roles: [profile_picture, banner]
+    thumbnail_max_side: 512
     # Per process; lowered at start to fit the container's memory limit
     # (worker_memory_mib each, after 256 MiB for the rest): 4 fit in 2 GiB.
     workers: 4

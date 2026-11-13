@@ -116,7 +116,7 @@ const ownerRecheck = 6 * time.Hour
 // counted, not stored, so its files don't wait for it: they are analysed
 // without its text.
 func (w *Worker) waitForOwner(j core.MediaJob, owner store.Owner) error {
-	if owner.Stored || j.OwnerContentID == "" || w.Cfg.OwnerWait <= 0 {
+	if owner.Stored || j.OwnerContentID == "" || w.Cfg.OwnerWait <= 0 || !storedKind(j.OwnerContentID) {
 		return nil
 	}
 	if isComment(j.OwnerContentID) && !core.InSample(j.OwnerContentID, w.commentShare()) {
@@ -144,6 +144,28 @@ func (w *Worker) waitForOwner(j core.MediaJob, owner store.Owner) error {
 func (w *Worker) nearDeadline(j core.MediaJob) bool {
 	d := w.Cfg.Video.FramesOnlyWithin
 	return d > 0 && !j.DeleteAfter.IsZero() && time.Until(j.DeleteAfter) < d
+}
+
+// monitoredOnly reports whether a contract file's role is analysed only
+// for monitored accounts (media.monitored_roles).
+func (w *Worker) monitoredOnly(j core.MediaJob) bool {
+	if j.AckFormat != core.AckContract {
+		return false
+	}
+	for _, r := range w.Cfg.MonitoredRoles {
+		if r == j.Role {
+			return true
+		}
+	}
+	return false
+}
+
+// storedKind reports whether items of a content ID's kind are stored here
+// (posts and comments), so a file can wait for its owner; an account's,
+// audio's or playlist's files have no stored owner to wait for.
+func storedKind(id string) bool {
+	_, rest, ok := strings.Cut(id, ":")
+	return ok && (strings.HasPrefix(rest, "post:") || strings.HasPrefix(rest, "comment:"))
 }
 
 // isComment reports whether a content ID names a comment
@@ -200,7 +222,7 @@ func (w *Worker) sttFull() bool {
 func (w *Worker) policySkip(j core.MediaJob) string {
 	if j.AckFormat == core.AckContract {
 		pair := j.Kind + "/" + j.Role
-		if !w.analysed("contract:" + pair) {
+		if !w.analysed("contract:"+pair) && !w.analysed("contract:"+j.Platform+":"+pair) {
 			return "policy:" + pair
 		}
 	} else if !w.analysed(j.Kind) {
@@ -303,6 +325,21 @@ func (w *Worker) process(ctx context.Context, j core.MediaJob) {
 	if skip := w.policySkip(j); skip != "" {
 		w.finish(ctx, store.MediaResult{Job: j, Consumer: consumer, SkipReason: skip}, "skipped")
 		return
+	}
+	// A profile picture or banner only of a monitored account (D-061).
+	if w.monitoredOnly(j) {
+		ok, err := w.P.Store.IsSource(ctx, j.SourceID)
+		if err != nil {
+			slog.Warn("analysis: media account not looked up; trying again later", "media", j.MediaID, "err", err)
+			if rerr := w.P.Store.ReleaseMedia(context.WithoutCancel(ctx), j.MediaID, time.Minute); rerr != nil {
+				slog.Error("analysis: media job not released", "media", j.MediaID, "err", rerr)
+			}
+			return
+		}
+		if !ok {
+			w.finish(ctx, store.MediaResult{Job: j, Consumer: consumer, SkipReason: "policy:not_monitored"}, "skipped")
+			return
+		}
 	}
 	// The same file (SHA-256) analysed before, under another media ID: its
 	// result is reused, without fetching the file or calling a provider.
@@ -487,7 +524,11 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 		}
 		audio = f.Audio
 	} else {
-		img, err := Resize(imageData, w.Cfg.ImageMaxSide, w.Cfg.ImageMaxPixels)
+		side := w.Cfg.ImageMaxSide
+		if j.Role == "thumbnail" && w.Cfg.ThumbnailMaxSide > 0 && (side <= 0 || w.Cfg.ThumbnailMaxSide < side) {
+			side = w.Cfg.ThumbnailMaxSide
+		}
+		img, err := Resize(imageData, side, w.Cfg.ImageMaxPixels)
 		if err != nil {
 			return nil, err
 		}
@@ -583,7 +624,7 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 		ID:         uuid.NewString(),
 		Model:      rc.Model,
 		System:     system,
-		User:       prompt.MediaUser(ownerText, hints, mask(transcript), len(images)),
+		User:       prompt.MediaUser(prompt.MediaAbout(j.Role), ownerText, hints, mask(transcript), len(images)),
 		Images:     images,
 		Schema:     schema,
 		SchemaName: "media",

@@ -156,7 +156,10 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
 - `failed_permanent` acks for videos with "ffmpeg not found" mean the media workers run the default image: use the media image `sb-analysis-media:dev` (`make docker-analysis-media`; Compose: `SB_ANALYSIS_IMAGE=sb-analysis-media:dev`).
 - **What is analysed:**
   - fbs's media: `analysis.media.kinds` lists the kinds analysed;
-  - the contract's media: `analysis.media.contract_kinds` lists the type/role pairs analysed (default: images and videos that are the content or an attachment, and cover images).
+  - the contract's media: `analysis.media.contract_kinds` lists the type/role pairs analysed (default: images and videos that are the content or an attachment, cover images, profile pictures and banners, and YouTube's video thumbnails). A pair can name one platform: `youtube:image/thumbnail`.
+  - **Profile pictures and banners** (the owner's D-061, 13 Nov) of monitored pages, accounts and channels only (`analysis.media.monitored_roles`): an account is monitored here when it is the source of a stored item (its posts are collected; a commenter never is). Others are acknowledged `SKIPPED` with `policy:not_monitored`. Their request says what the picture is, and to describe it, read its text and logos, and never say who a person is or guess personal traits. They feed the client's page labels; a lawyer's review comes before any client sees them (the owner, 13 Nov).
+  - **Thumbnails:** YouTube's only (its videos aren't handed over, so the thumbnail is the video's only picture), at `thumbnail_max_side` (512 px); other platforms' are skipped, as their videos are analysed themselves.
+  - A file whose owner is an account (its picture or banner), audio or playlist doesn't wait for its owner: only posts and comments are stored.
   - Others are acknowledged without analysis: `PROCESSED` on fbs's topic (as before), `SKIPPED` with reason `policy:type/role` on the contract's.
 - **The contract's acknowledgements** (`content.media.processed.v1`):
   - each carries the consumer `sb-analysis`, an `event_id` of its own, and the platform code;

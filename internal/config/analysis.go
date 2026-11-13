@@ -292,10 +292,21 @@ type AnalysisMedia struct {
 	// acknowledged without analysis.
 	Kinds []string `koanf:"kinds"`
 	// ContractKinds: the contract's media (content.media.ready.v1)
-	// analysed, as "type/role" pairs ("image/content", "video/attachment");
-	// other pairs are acknowledged as SKIPPED with reason "policy:type/role".
+	// analysed, as "type/role" pairs ("image/content", "video/attachment"),
+	// or "platform:type/role" for one platform only ("youtube:image/
+	// thumbnail"); other pairs are acknowledged as SKIPPED with reason
+	// "policy:type/role".
 	ContractKinds []string `koanf:"contract_kinds"`
-	Workers       int      `koanf:"workers"`
+	// MonitoredRoles: contract roles analysed only when the file's account
+	// is monitored, known here as the source of stored items (its posts are
+	// collected; a commenter never is): the owner's D-061, profile pictures
+	// and banners of monitored pages, accounts and channels only. Others
+	// are acknowledged SKIPPED with reason "policy:not_monitored".
+	MonitoredRoles []string `koanf:"monitored_roles"`
+	// ThumbnailMaxSide caps a thumbnail's longer side (0 = image_max_side):
+	// a video's thumbnail needs less detail than a post's photo.
+	ThumbnailMaxSide int `koanf:"thumbnail_max_side"`
+	Workers          int `koanf:"workers"`
 	// MaxBytes caps a video (streamed to a temporary file, never held in
 	// memory); ImageMaxBytes and ImageMaxPixels cap an image (read into
 	// memory and decoded). Larger files fail permanently and are acked.
@@ -538,6 +549,12 @@ func (a *Analysis) Validate() error {
 // of the contract's MediaType and MediaRole, in lower case without their
 // prefixes ("image/content").
 func ValidContractKind(k string) bool {
+	if p, rest, ok := strings.Cut(k, ":"); ok {
+		if p == "" || strings.Trim(p, "abcdefghijklmnopqrstuvwxyz") != "" {
+			return false
+		}
+		k = rest
+	}
 	t, r, ok := strings.Cut(k, "/")
 	if !ok || t == "unspecified" || r == "unspecified" {
 		return false
