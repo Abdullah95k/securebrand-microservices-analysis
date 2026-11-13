@@ -331,7 +331,17 @@ type AnalysisMedia struct {
 	// whichever is first. Storing the post wakes it. OwnerWait 0: no wait.
 	OwnerWait   time.Duration `koanf:"owner_wait"`
 	OwnerMargin time.Duration `koanf:"owner_margin"`
-	Video       VideoConfig   `koanf:"video"`
+	// RecentFirst (the owner's D-060, newest items first; the master, 13
+	// Nov): files announced within it are claimed first, newest first, and
+	// the rest after them, nearest deadline first. 0: nearest deadline
+	// first for all, as before. DeadlineShare of the claims (0 to 1) go
+	// first to the files due within DeadlineWithin, nearest deadline first,
+	// so a file in its last hours isn't starved while new files arrive
+	// faster than the workers take them.
+	RecentFirst    time.Duration `koanf:"recent_first"`
+	DeadlineShare  float64       `koanf:"deadline_share"`
+	DeadlineWithin time.Duration `koanf:"deadline_within"`
+	Video          VideoConfig   `koanf:"video"`
 }
 
 // VideoConfig: key frames with ffmpeg, speech-to-text through a provider.
@@ -499,6 +509,12 @@ func (a *Analysis) Validate() error {
 	}
 	if a.Media.Enabled && (a.Media.MaxBytes <= 0 || a.Media.ImageMaxBytes <= 0 || a.Media.ImageMaxPixels <= 0 || a.Media.WorkerMemoryMiB <= 0) {
 		errs = append(errs, errors.New("analysis.media.max_bytes, image_max_bytes, image_max_pixels and worker_memory_mib must be > 0"))
+	}
+	if a.Media.RecentFirst < 0 || a.Media.DeadlineWithin < 0 || a.Media.DeadlineShare < 0 || a.Media.DeadlineShare > 1 {
+		errs = append(errs, errors.New("analysis.media.recent_first and deadline_within must be >= 0, deadline_share from 0 to 1"))
+	}
+	if a.Media.RecentFirst > 0 && a.Media.DeadlineShare > 0 && a.Media.DeadlineWithin == 0 {
+		errs = append(errs, errors.New("analysis.media.deadline_within must be > 0 for deadline_share's claims with recent_first"))
 	}
 	if a.Media.Video.Enabled && a.Media.Video.STTProvider != "" {
 		p, ok := a.Providers[a.Media.Video.STTProvider]

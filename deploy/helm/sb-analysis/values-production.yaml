@@ -144,6 +144,12 @@ config:
     media:
       lease: 45m
       workers: 8   # with components.analysis-media's 3,584 MiB above
+      # Newest files first (the owner's D-060; the master, 13 Nov): files
+      # announced in the last 6 hours, newest first, then the rest by
+      # deadline; a quarter of the claims (deadline_share) go first to the
+      # files in their last 12 hours (deadline_within), so those aren't
+      # starved while new files keep coming.
+      recent_first: 6h
       video:
         stt_provider: whisper
         stt_language: ar

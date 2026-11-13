@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -84,6 +85,36 @@ func TestCommentSampleShare(t *testing.T) {
 	}
 	if c, err := Load(f); err != nil || c.Analysis.Comments.SampleShare != 0.10 {
 		t.Fatalf("quoted 0.10: %v %v", c, err)
+	}
+}
+
+// media.recent_first is off by default; its deadline share is a share,
+// and needs its window while recent_first is on.
+func TestMediaRecentFirst(t *testing.T) {
+	c, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := c.Analysis.Media
+	if m.RecentFirst != 0 || m.DeadlineShare != 0.25 || m.DeadlineWithin != 12*time.Hour {
+		t.Errorf("defaults recent_first %v, deadline_share %v, deadline_within %v; want off, 0.25, 12h", m.RecentFirst, m.DeadlineShare, m.DeadlineWithin)
+	}
+	for _, bad := range []func(*AnalysisMedia){
+		func(m *AnalysisMedia) { m.DeadlineShare = 1.5 },
+		func(m *AnalysisMedia) { m.DeadlineShare = -0.1 },
+		func(m *AnalysisMedia) { m.RecentFirst = -time.Hour },
+		func(m *AnalysisMedia) { m.RecentFirst, m.DeadlineWithin = 6*time.Hour, 0 },
+	} {
+		c.Analysis.Media = m
+		bad(&c.Analysis.Media)
+		if c.Validate() == nil {
+			t.Errorf("media %+v accepted", c.Analysis.Media)
+		}
+	}
+	c.Analysis.Media = m
+	c.Analysis.Media.RecentFirst = 6 * time.Hour
+	if err := c.Validate(); err != nil {
+		t.Errorf("recent_first 6h refused: %v", err)
 	}
 }
 
