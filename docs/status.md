@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 13 November 2026, 16:15 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 13 November 2026, 17:05 (Iraq time).*
 
 ## Where it stands
 
@@ -496,3 +496,9 @@
   - **The fix:** such a file goes back for 2 minutes without a try or an error (`sb_analysis_media_total{outcome="provider_unavailable"}`).
   - **What opens the circuit:** at least half of 10 or more of the provider's calls failing within a minute with a retryable error (rate limit 429, overload 529, 5xx, timeouts); it logs `analysis: provider circuit changed`. Asked of the master: those lines and the errors before them in `analysis-media`'s log.
   - **Next reading** (the master, 13:45Z): `analysis-stats 1h`, the circuit lines over 3 hours, and the counts of media failures with 429 and with 529. 429s would point at the account's rate limit, 529s at the provider's overload, which this fix makes harmless.
+- **13 Nov, 17:05 Iraq time: media at half pace; 8 media workers (in review).**
+  - **The reading** (the master's `analysis-stats 1h`, 12:50–13:50Z): about 1,400 images and 190 videos an hour. Files acknowledged (about 1,980 an hour) barely exceed files announced (about 1,120). About 85,000 files are pending (TikTok 67,000, Facebook 18,000). No retries for an open circuit were pending. Realtime calls: 4,106 ok and 511 errors over 3 hours, 0 errors in the last 20 minutes; 4 media failures from rate limits.
+  - **Found:** a video without captions holds its worker for the whole transcription. TikTok always has such videos waiting, so the 2 whisper servers' slots kept 2 of the 4 workers busy (144 transcriptions an hour, one every 50 s on each server). That left 2 for images, about 5 s each. My earlier 65,000 a day had counted all 4 on images; it is about 34,000.
+  - **The fix** (the master agreed): 8 workers in the one process, 2 for speech-to-text and 6 for images. Memory 3,584 MiB (8 at 384 MiB after 256 MiB), requests 1 CPU and 1 GiB, and `/tmp` 5 GiB (8 videos of up to 500 MiB). A test checks they fit. A second replica would not help: it gets 2 more speech-to-text slots, so two videos would share each whisper server.
+  - **Then the image cap is the limit:** $21 at $0.41 per 1,000 is about 51,000 images a day. Within it about 24,000 a day of the backlog clears, so files due in the next 48 hours beyond that expire. A one-off catch-up (about $35 for all 85,000) is the master's question to the owner.
+  - **Next, agreed:** recent files first for media too, as for text (the owner's D-060), with files in their last 12 hours still taken while the cap has room.
