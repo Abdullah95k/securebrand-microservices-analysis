@@ -37,7 +37,7 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: Batches are open but none has been collected for 2 hours
-          description: The collector is stuck or slow, or the provider hasn't ended any batch. Check `sb-analysis batches --since 4h` (ended at the provider, not collected here?) and the log's "analysis: batch collecting" lines.
+          description: "The collector is stuck or slow, or the provider hasn't ended any batch. Check `sb-analysis batches --since 4h` (ended at the provider, not collected here?) and the log's \"analysis: batch collecting\" lines."
           runbook_url: https://github.com/abdullah95k/securebrand-microservices-analysis/blob/main/docs/runbooks/analysis.md#lanes-real-time-or-batch
       - alert: AnalysisMediaTTLAtRisk
         expr: max(sb_analysis_media_ttl_at_risk) > 0

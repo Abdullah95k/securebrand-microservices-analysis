@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -95,5 +96,39 @@ func TestAlertRunbookAnchors(t *testing.T) {
 		if !anchors[l[1]] {
 			t.Errorf("runbook link #%s has no heading in %s", l[1], runbook)
 		}
+	}
+}
+
+// The rules file parses as YAML, every rule with an alert, an expression
+// and a severity (13 Nov: an unquoted "analysis: batch collecting" in a
+// description broke the chart's PrometheusRule).
+func TestAlertRulesParse(t *testing.T) {
+	b, err := os.ReadFile(alertsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Groups []struct {
+			Rules []struct {
+				Alert  string            `yaml:"alert"`
+				Expr   string            `yaml:"expr"`
+				Labels map[string]string `yaml:"labels"`
+			} `yaml:"rules"`
+		} `yaml:"groups"`
+	}
+	if err := yaml.Unmarshal(b, &f); err != nil {
+		t.Fatalf("alert rules don't parse: %v", err)
+	}
+	n := 0
+	for _, g := range f.Groups {
+		for _, r := range g.Rules {
+			n++
+			if r.Alert == "" || strings.TrimSpace(r.Expr) == "" || r.Labels["severity"] == "" {
+				t.Errorf("rule %+v: want an alert, an expression and a severity", r)
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("no rules")
 	}
 }
