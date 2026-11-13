@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 12 November 2026, 04:30 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 13 November 2026, 13:45 (Iraq time).*
 
 ## Where it stands
 
@@ -434,7 +434,7 @@
   - **The test:** two requests in one batch, one item's row locked by another transaction: the other result is stored, the batch is held, and the next try stores the first and ends the batch. Giving up at the first result (as before) fails it.
   - **Recent items first ships off** (`batch.recent_first: 0`), as the collector fix shares its branch; turning it on, once the owner confirms, is a one-line change.
   - **Asked of the master:** the WARN when the 25-minute limit ended the stuck collection, and any database session of user `analysis` waiting on a lock or idle in a transaction.
-- **12 Nov, 04:30 Iraq time: not stuck but slow; collection made faster.**
+- **12 Nov, 04:05 Iraq time: not stuck but slow; collection made faster.**
   - **The reading** (the master's Loki, 00:56Z): the first collection after `74d06b2` ended at 00:51Z: 1,000 results in 1,333 s (1.3 s each). Rounds meanwhile sent 1–3 batches every 5–12 minutes. At one batch every 22 minutes, the ~20 ended batches would take about 7 hours, with more ending all the time.
   - **Where the time went:** database round trips. A result is a request of about 8 items, and each item took about 11 statements, one round trip each: about 100 a result, at about 13 ms each through PgBouncer.
   - **The fix (building, with the above):**
@@ -443,3 +443,12 @@
     - **Sending waits** while more than 30 batches are open (`batch.max_open`), so answers aren't paid for faster than they're collected.
     - **Expected:** 1,000 results in about 3 minutes instead of 22.
   - **The budget** counts at send time: a request in flight counts at its expected cost, and its actual cost replaces it once collected. So the uncollected answers are already in today's spend.
+- **12 Nov, 04:30 Iraq time: the speed-up live.** `96d994d` (pipelined writes, two results at a time, sending paused above 30 open batches) live at about 04:16 (platform #128). At 04:28: last collection 56 s before, 70 batches open (sending paused).
+- **13 Nov, 13:45 Iraq time: caught up; recent items first on.**
+  - **The reading** (the master, 09:03Z): 2 batches open, last collection 196 s before; comment queue 559,811 (was 1.04M), post queue 106. Results in 24 h: fb 203k, ig 61.5k, tt 355k, yt 125k.
+  - **Recent items first** (CLIENT-REQ-018): the owner confirmed it to the master directly today. `batch.recent_first: 48h` (it shipped off in `96d994d`).
+  - **The owner's decisions today** (via the master): no flags on every comment for now (budget later); a lawyer's review before client screens show who wrote a flagged item, approved (the client's side).
+  - **Two alerts firing:**
+    - **`AnalysisBatchQueueStale`** (the oldest batch item waiting over 30 hours): the backlog's age, not a stall. The 560k comments include items queued over 30 hours ago and backfill, which goes after every live item. With collection keeping up (2 open, last collection 3 minutes before), it fires until the backlog's oldest are claimed. A stalled collector shows in `sb_analysis_batch_last_collect_timestamp_seconds` instead.
+    - **`AnalysisTranscriptionsFailing`** (any speech-to-text error in 30 minutes): Whisper is failing some calls. The reasons are in `sb-analysis stats` (video failure reasons). Asked of the master.
+  - **Media, asked by the owner** ("make sure all platforms media is being analyzed"): what's analysed by kind and what's skipped by policy, per platform, sent to the master. The counts come from the master's `analysis-stats 24h`.
