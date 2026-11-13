@@ -99,6 +99,25 @@ var errSTTBusy = errors.New("media: speech-to-text busy")
 // is open: about the circuit's first cooldown.
 const providerRetryAfter = 2 * time.Minute
 
+// notReadYetRetry and notReadYetMargin: an image in a known format this
+// service can't read yet (ErrNotReadYet: HEIC, AVIF...) goes back for
+// notReadYetRetry without losing a try, while its deadline is more than
+// notReadYetMargin away (or, without one, for two days after it arrived),
+// so it can still be analysed once the format is read; then it fails for
+// good as before, ahead of its deadline (13 Nov: about 67 an hour).
+const (
+	notReadYetRetry  = 6 * time.Hour
+	notReadYetMargin = 18 * time.Hour
+)
+
+// canWait reports whether an image not read yet may go back to wait.
+func canWait(j core.MediaJob) bool {
+	if j.DeleteAfter.IsZero() {
+		return !j.ReceivedAt.IsZero() && time.Since(j.ReceivedAt) < 48*time.Hour
+	}
+	return time.Until(j.DeleteAfter) > notReadYetMargin
+}
+
 // ownerWait: the file's post (or comment) isn't stored yet; the job waits
 // for it in the queue (analysis.media.owner_wait), at most until Until.
 type ownerWait struct{ Until time.Time }
@@ -448,6 +467,15 @@ func (w *Worker) process(ctx context.Context, j core.MediaJob) {
 			}
 			return
 		}
+		if errors.Is(err, ErrNotReadYet) && canWait(j) {
+			ametrics.Media.WithLabelValues(j.Kind, "unknown_format").Inc()
+			slog.Warn("analysis: media in a format not read yet; kept for later", "media", j.MediaID, "platform", j.Platform,
+				"kind", j.Kind, "err", err)
+			if rerr := w.P.Store.ReleaseMedia(context.WithoutCancel(ctx), j.MediaID, notReadYetRetry); rerr != nil {
+				slog.Error("analysis: media job not released", "media", j.MediaID, "err", rerr)
+			}
+			return
+		}
 		permanent := errors.Is(err, ErrUndecodable) || errors.Is(err, ErrGone) || errors.Is(err, ErrTooLarge) ||
 			errors.Is(err, ErrNoFFmpeg)
 		outcome := "failed_retry"
@@ -455,7 +483,7 @@ func (w *Worker) process(ctx context.Context, j core.MediaJob) {
 			outcome = "failed_permanent"
 		}
 		ametrics.Media.WithLabelValues(j.Kind, outcome).Inc()
-		slog.Warn("analysis: media job failed", "media", j.MediaID, "kind", j.Kind, "permanent", permanent, "err", err)
+		slog.Warn("analysis: media job failed", "media", j.MediaID, "platform", j.Platform, "kind", j.Kind, "permanent", permanent, "err", err)
 		if ferr := w.P.Store.FailMedia(context.WithoutCancel(ctx), j, consumer, errCode(err), err.Error(), permanent, w.Cfg.MaxTries); ferr != nil {
 			slog.Error("analysis: media failure not recorded", "media", j.MediaID, "err", ferr)
 		}

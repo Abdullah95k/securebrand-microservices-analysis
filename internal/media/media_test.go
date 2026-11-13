@@ -886,3 +886,80 @@ func TestNewestFilesFirst(t *testing.T) {
 		})
 	}
 }
+
+// ftypHeader is the start of an ISO media file of this brand (HEIC, AVIF,
+// MP4): a 24-byte ftyp box and a little more.
+func ftypHeader(brand string) []byte {
+	b := append([]byte{0, 0, 0, 24}, "ftyp"+brand+"\x00\x00\x00\x00mif1heic"...)
+	return append(b, make([]byte, 64)...)
+}
+
+// TestSniffNamesUnreadFormats: a file no decoder reads is named by its
+// first bytes, and only known still-image formats count as images (13
+// Nov: 134 of 135 permanent failures in two hours were "unknown format").
+func TestSniffNamesUnreadFormats(t *testing.T) {
+	for _, tc := range []struct {
+		data  []byte
+		name  string
+		image bool
+	}{
+		{ftypHeader("heic"), "heif-heic", true},
+		{ftypHeader("mif1"), "heif-mif1", true},
+		{ftypHeader("avif"), "avif", true},
+		{ftypHeader("isom"), "video ftyp isom", false},
+		{append([]byte("BM"), make([]byte, 40)...), "bmp", true},
+		{append([]byte("II*\x00"), make([]byte, 40)...), "tiff", true},
+		{append([]byte{0xFF, 0x0A}, make([]byte, 40)...), "jxl", true},
+		{[]byte("<!DOCTYPE html><html><body>Not found</body></html>"), "text/html; charset=utf-8", false},
+		{[]byte("garbage"), "text/plain; charset=utf-8", false},
+	} {
+		if name, img := media.Sniff(tc.data); name != tc.name || img != tc.image {
+			t.Errorf("%q: %q, image %v; want %q, %v", tc.data[:min(len(tc.data), 12)], name, img, tc.name, tc.image)
+		}
+	}
+	_, err := media.Resize(ftypHeader("heic"), 1024, 0)
+	if !errors.Is(err, media.ErrUndecodable) || !errors.Is(err, media.ErrNotReadYet) || !errors.Is(err, image.ErrFormat) ||
+		!strings.Contains(err.Error(), "image: unknown format (heif-heic)") {
+		t.Fatalf("HEIC: %v; want undecodable, not read yet, named heif-heic", err)
+	}
+	if _, err := media.Resize([]byte("garbage"), 1024, 0); !errors.Is(err, media.ErrUndecodable) || errors.Is(err, media.ErrNotReadYet) {
+		t.Fatalf("garbage: %v; want undecodable, and not an image format to wait for", err)
+	}
+}
+
+// TestUnreadFormatWaits: an image in a known format not read yet goes back
+// for hours without losing a try or being acknowledged, while its deadline
+// is far; near its deadline it fails for good, as before. A file that is
+// no image at all still fails at once (TestWorkerAnalysesSkipsAndFails).
+func TestUnreadFormatWaits(t *testing.T) {
+	st, w, _, objs := setup(t)
+	ctx := context.Background()
+	far, near := job("far", "photo"), job("near", "photo")
+	far.DeleteAfter, near.DeleteAfter = time.Now().Add(40*time.Hour), time.Now().Add(10*time.Hour)
+	objs["b/far"], objs["b/near"] = ftypHeader("heic"), ftypHeader("avif")
+	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{far, near}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if n, err := w.Once(ctx); err != nil || n != 1 {
+			t.Fatalf("claimed %d (%v)", n, err)
+		}
+	}
+	var state string
+	var tries int
+	var wait float64
+	if err := st.DB.QueryRow(ctx, `SELECT state, tries, extract(epoch FROM not_before - now()) FROM analysis.media_jobs WHERE media_id = 'far'`).
+		Scan(&state, &tries, &wait); err != nil {
+		t.Fatal(err)
+	}
+	if state != "pending" || tries != 0 || wait < 5*3600 {
+		t.Fatalf("HEIC due in 40 h: %s, %d tries, back in %.0f s; want pending, no try lost, back in about 6 hours", state, tries, wait)
+	}
+	a := acks(t, st)
+	if _, ok := a["far"]; ok {
+		t.Fatalf("the waiting file was acknowledged: %v", a)
+	}
+	if a["near"] != fbv1.ProcessStatus_PROCESS_STATUS_FAILED_PERMANENT {
+		t.Fatalf("AVIF due in 10 h acknowledged %v, want failed for good", a["near"])
+	}
+}
