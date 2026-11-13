@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 13 November 2026, 15:45 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 13 November 2026, 16:15 (Iraq time).*
 
 ## Where it stands
 
@@ -490,3 +490,8 @@
 - **13 Nov, 15:45 Iraq time: the image cap is $21 (the owner, directly: option (a)).**
   - Image $21 in place of $14, for YouTube's thumbnails (about $7 a day) on top of TikTok's and Facebook's images. Comment $40, post $3 and video $8 stay; the $60 total is unchanged.
   - Text always keeps at least $31, media at least $17. On heavy-media days comments can fall up to $8 behind their about $39 a day.
+- **13 Nov, 16:15 Iraq time: an open circuit no longer costs media a try (in review, PR #66).**
+  - **The reading** (the master's `analysis-stats 24h`, 12:53Z, mostly before today's media fixes rolled): 160 files waiting to retry with "provider unavailable (circuit open)" (TikTok 112, Facebook 48). Image spend $3.50 by mid-afternoon. Whisper: 2 pods Running, 0 restarts.
+  - **Found:** the provider's circuit breaker returns its own "unavailable" error, which the media worker didn't recognise as a wait. Each file in it counted a try and an error; an outage of a few doubling cooldowns (up to 30 minutes each) could have failed files for good.
+  - **The fix:** such a file goes back for 2 minutes without a try or an error (`sb_analysis_media_total{outcome="provider_unavailable"}`).
+  - **What opens the circuit:** at least half of 10 or more of the provider's calls failing within a minute with a retryable error (rate limit 429, overload 529, 5xx, timeouts); it logs `analysis: provider circuit changed`. Asked of the master: those lines and the errors before them in `analysis-media`'s log.

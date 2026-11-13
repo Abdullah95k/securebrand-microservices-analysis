@@ -789,3 +789,31 @@ func TestVideoNearItsDeadlineGoesFramesOnly(t *testing.T) {
 		t.Fatalf("%d transcriptions, want v1's only", transcribed)
 	}
 }
+
+// TestOpenCircuitCostsNoTry: when the provider's circuit is open, a file
+// goes back to the queue for a while without losing a try or recording a
+// failure (on 13 Nov such files counted a try each time, and a long outage
+// would have failed them for good).
+func TestOpenCircuitCostsNoTry(t *testing.T) {
+	st, w, fp, objs := setup(t)
+	ctx := context.Background()
+	objs["b/p1"] = pngBytes(t, 100, 100)
+	fp.Fail = func(provider.Request) error { return registry.ErrUnavailable }
+	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{job("p1", "photo")}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var state, lastErr string
+	var tries int
+	var later bool
+	if err := st.DB.QueryRow(ctx, `SELECT state, tries, coalesce(last_error, ''), not_before > now() + interval '1 minute'
+		FROM analysis.media_jobs WHERE media_id = 'p1'`).Scan(&state, &tries, &lastErr, &later); err != nil {
+		t.Fatal(err)
+	}
+	if state != "pending" || tries != 0 || lastErr != "" || !later {
+		t.Fatalf("after an open circuit: %s, %d tries, error %q, put back for later %v; want pending, no try, no error, later",
+			state, tries, lastErr, later)
+	}
+}

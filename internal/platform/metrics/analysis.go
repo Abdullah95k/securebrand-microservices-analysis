@@ -56,7 +56,7 @@ var (
 	AnalysisBatchLastCollect = analysisGauge("batch_last_collect_timestamp_seconds", "When a finished provider batch was last collected (Unix seconds).")
 
 	// Media.
-	AnalysisMedia          = analysisCounter("media_total", "Media jobs by kind and outcome (analyzed, reused, skipped, failed_retry, failed_permanent; waiting_for_post: put back until its post is stored; no_location: an announcement without a bucket or key, not queued).", "kind", "outcome")
+	AnalysisMedia          = analysisCounter("media_total", "Media jobs by kind and outcome (analyzed, reused, skipped, failed_retry, failed_permanent; waiting_for_post: put back until its post is stored; provider_unavailable: the provider's circuit was open, put back without a try; no_location: an announcement without a bucket or key, not queued).", "kind", "outcome")
 	AnalysisMediaAtRisk    = analysisGauge("media_ttl_at_risk", "Pending media jobs within 6h of deletion.")
 	AnalysisMediaPending   = analysisGaugeVec("media_pending", "Media jobs waiting to be analysed, by type (image, video).", "type")
 	AnalysisTranscriptions = analysisCounter("transcriptions_total", "Speech-to-text calls by provider and outcome (ok, error; unavailable: no server reachable, the video comes back later without losing a try; frames_only: no slot or server near the video's deadline, analysed from its frames alone).", "provider", "outcome")
