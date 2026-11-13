@@ -254,9 +254,33 @@ func TextUser(c Context, items []ItemInput) string {
 	return b.String()
 }
 
-// MediaUser renders the text part of an image or video request.
-func MediaUser(postText string, hints []Hint, transcript string, frames int) string {
+// MediaAbout is what an image's role says about it, for its request (""
+// for a post's own picture or video): a profile picture or banner is the
+// picture of a monitored page, account or channel (the owner's D-061, 13
+// Nov), described without saying who anyone in it is; a thumbnail stands
+// for a video. It goes in the user message, so the system prompt stays
+// identical across requests (and cached).
+func MediaAbout(role string) string {
+	const noPerson = " Describe what it shows and read its text and logos. Never say who a person in it is, and don't guess anyone's age, gender, ethnicity, religion or other personal traits."
+	switch role {
+	case "profile_picture":
+		return "This is the profile picture of a monitored page, account or channel." + noPerson
+	case "banner":
+		return "This is the banner (cover image) of a monitored page, account or channel." + noPerson
+	case "thumbnail":
+		return "This is the thumbnail of a video: it stands for the video."
+	}
+	return ""
+}
+
+// MediaUser renders the text part of an image or video request; about is
+// what the image is (MediaAbout), "" for a post's own media.
+func MediaUser(about, postText string, hints []Hint, transcript string, frames int) string {
 	var b strings.Builder
+	if about != "" {
+		b.WriteString(about)
+		b.WriteByte('\n')
+	}
 	if postText != "" {
 		b.WriteString("post: ")
 		b.WriteString(postText)

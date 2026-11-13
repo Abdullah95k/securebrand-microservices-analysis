@@ -7,6 +7,7 @@ func TestContractKinds(t *testing.T) {
 		"image/content": true, "video/attachment": true, "image/profile_picture": true, "audio/audio_cover": true,
 		"image": false, "image/": false, "/content": false, "Image/content": false, "image/unspecified": false,
 		"unspecified/content": false, "photo/content": false, "image/content/x": false,
+		"youtube:image/thumbnail": true, "YouTube:image/thumbnail": false, ":image/thumbnail": false, "youtube:image": false,
 	} {
 		if got := ValidContractKind(k); got != want {
 			t.Errorf("%q: %v, want %v", k, got, want)

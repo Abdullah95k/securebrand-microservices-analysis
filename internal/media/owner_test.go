@@ -1,9 +1,13 @@
 package media_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"image"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +22,7 @@ import (
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/core"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/ingest"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/platform/kafka"
+	"github.com/abdullah95k/securebrand-microservices-analysis/internal/provider"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/store"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/topics"
 )
@@ -278,5 +283,103 @@ func TestCommentOutsideSampleDoesNotWait(t *testing.T) {
 	}
 	if _, _, in := due(t, st, "in"); in > 0 {
 		t.Fatalf("still due in %v after the wake", in)
+	}
+}
+
+// TestProfilePicturesOfMonitoredAccountsOnly (D-061): a profile picture or
+// banner is analysed when its account is the source of a stored item (a
+// monitored publisher), with the role's note in the request and without
+// waiting for an owner that is never stored; a commenter's is acknowledged
+// SKIPPED, policy:not_monitored.
+func TestProfilePicturesOfMonitoredAccountsOnly(t *testing.T) {
+	st, w, fp, objs := setupWith(t, waitForPosts)
+	ctx := context.Background()
+	ingestPost(t, st, w.P.Plan, "tt:post:1", "") // tt:account:1's post
+	var mu sync.Mutex
+	users := map[string]string{}
+	fp.Fail = func(req provider.Request) error {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, id := range []string{"mon", "ban"} {
+			if strings.Contains(req.User, "profile picture") && id == "mon" || strings.Contains(req.User, "banner") && id == "ban" {
+				users[id] = req.User
+			}
+		}
+		return nil
+	}
+	mon, ban, other := contractJob("mon", "profile_picture", "", 72*time.Hour), contractJob("ban", "banner", "", 72*time.Hour),
+		contractJob("other", "profile_picture", "", 72*time.Hour)
+	mon.OwnerContentID, ban.OwnerContentID = "tt:account:1", "tt:account:1"
+	other.OwnerContentID, other.SourceID = "tt:account:2", "tt:account:2"
+	for _, id := range []string{"mon", "ban", "other"} {
+		objs["b/"+id] = pngBytes(t, 200, 200)
+	}
+	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{mon, ban, other}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if _, err := w.Once(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for id, want := range map[string]string{"mon": "done", "ban": "done", "other": "skipped"} {
+		var state, reason string
+		if err := st.DB.QueryRow(ctx, `SELECT state, coalesce(last_error, '') FROM analysis.media_jobs WHERE media_id = $1`, id).Scan(&state, &reason); err != nil {
+			t.Fatal(err)
+		}
+		if state != want || (want == "skipped" && reason != "policy:not_monitored") {
+			t.Errorf("%s: %s (%q), want %s", id, state, reason, want)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for id, want := range map[string]string{"mon": "profile picture of a monitored", "ban": "banner (cover image) of a monitored"} {
+		if u := users[id]; !strings.Contains(u, want) || !strings.Contains(u, "Never say who a person in it is") {
+			t.Errorf("%s's request lacks its note: %q", id, u)
+		}
+	}
+}
+
+// TestThumbnailsOnlyForYouTube (D-061): a YouTube video's thumbnail is
+// analysed, at media.thumbnail_max_side; another platform's is skipped (its
+// video is analysed itself).
+func TestThumbnailsOnlyForYouTube(t *testing.T) {
+	st, w, fp, objs := setupWith(t, nil)
+	ctx := context.Background()
+	var mu sync.Mutex
+	var side int
+	fp.Fail = func(req provider.Request) error {
+		if len(req.Images) == 1 {
+			if c, _, err := image.DecodeConfig(bytes.NewReader(req.Images[0].Data)); err == nil {
+				mu.Lock()
+				side = max(c.Width, c.Height)
+				mu.Unlock()
+			}
+		}
+		return nil
+	}
+	yt, tt := contractJob("yt", "thumbnail", "", 72*time.Hour), contractJob("ttt", "thumbnail", "", 72*time.Hour)
+	yt.Platform, yt.OwnerContentID, yt.SourceID = "youtube", "yt:post:1", "yt:account:1"
+	objs["b/yt"], objs["b/ttt"] = pngBytes(t, 1280, 720), pngBytes(t, 1280, 720)
+	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{yt, tt}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := w.Once(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var state, reason string
+	if err := st.DB.QueryRow(ctx, `SELECT state FROM analysis.media_jobs WHERE media_id = 'yt'`).Scan(&state); err != nil || state != "done" {
+		t.Fatalf("YouTube's thumbnail: %s %v, want analysed", state, err)
+	}
+	if err := st.DB.QueryRow(ctx, `SELECT state, coalesce(last_error, '') FROM analysis.media_jobs WHERE media_id = 'ttt'`).Scan(&state, &reason); err != nil ||
+		state != "skipped" || reason != "policy:image/thumbnail" {
+		t.Fatalf("TikTok's thumbnail: %s %q %v, want skipped by policy", state, reason, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if side != 512 {
+		t.Fatalf("thumbnail sent at %d px, want 512", side)
 	}
 }

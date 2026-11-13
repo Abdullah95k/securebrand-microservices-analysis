@@ -284,7 +284,7 @@ func (r *Runner) runImages(ctx context.Context, items []Item, cfg RunConfig) err
 		if err != nil {
 			return fmt.Errorf("%s: %w", it.ID, err)
 		}
-		req := provider.Request{ID: it.ID, Model: cfg.Model, System: sys, User: prompt.MediaUser(it.Post, nil, "", 1),
+		req := provider.Request{ID: it.ID, Model: cfg.Model, System: sys, User: prompt.MediaUser("", it.Post, nil, "", 1),
 			Images: []provider.Image{{MediaType: "image/jpeg", Data: img}}, Schema: schema, SchemaName: "media",
 			MaxTokens: 1500, Effort: cfg.Effort, Thinking: cfg.Thinking}
 		start := time.Now()
