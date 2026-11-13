@@ -64,27 +64,56 @@ func (s *Store) InsertMediaJobs(ctx context.Context, jobs []*core.MediaJob, cons
 	return n, err
 }
 
-// ClaimMediaJobs leases pending jobs, nearest deadline first.
+// MediaOrder is which pending files a media claim takes, and in what
+// order. The zero value: all of them, nearest deadline first.
+type MediaOrder struct {
+	// Newest > 0: only the files announced within it, newest first
+	// (analysis.media.recent_first).
+	Newest time.Duration
+	// DueWithin > 0 (and no Newest): only the files due within it, nearest
+	// deadline first (analysis.media.deadline_within).
+	DueWithin time.Duration
+}
+
+// ClaimMediaJobs leases pending jobs in order o (nearest deadline first,
+// unless o.Newest).
 //
 // With imagesOnly, videos are left out (core.MediaJob.IsVideo's kinds)
-// unless their deadline is within dueWithin: the worker asks for that while
+// unless their deadline is within framesDue: the worker asks for that while
 // every speech-to-text slot is busy, so it takes images instead of claiming
 // a video only to put it back, and a video near its deadline is analysed
 // from its frames rather than lost.
-func (s *Store) ClaimMediaJobs(ctx context.Context, limit int, lease time.Duration, imagesOnly bool, dueWithin time.Duration) ([]core.MediaJob, error) {
+func (s *Store) ClaimMediaJobs(ctx context.Context, limit int, lease time.Duration, imagesOnly bool, framesDue time.Duration, o MediaOrder) ([]core.MediaJob, error) {
+	// Each order has its own partial index on the pending files:
+	// media_jobs_recent_idx (received_at) and media_jobs_due_idx
+	// (delete_after). A window is in the statement only when set, as a
+	// plain range on the indexed column, so even a reused (generic) plan
+	// stops at the window's end rather than reading every pending file
+	// when none is in it.
+	args := []any{limit, lease.Seconds(), imagesOnly, framesDue.Seconds()}
+	order, window := "delete_after NULLS LAST, received_at", ""
+	switch {
+	case o.Newest > 0:
+		order, window = "received_at DESC", "AND received_at >= now() - make_interval(secs => $5)"
+		args = append(args, o.Newest.Seconds())
+	case o.DueWithin > 0:
+		window = "AND delete_after < now() + make_interval(secs => $5)"
+		args = append(args, o.DueWithin.Seconds())
+	}
 	rows, err := s.DB.Query(ctx, `
 		WITH c AS (
 			SELECT media_id FROM analysis.media_jobs
 			WHERE state = 'pending' AND not_before <= now() AND (lease_until IS NULL OR lease_until < now())
 			  AND NOT ($3 AND kind IN ('video', 'reel', 'comment_video')
 			           AND (delete_after IS NULL OR delete_after >= now() + make_interval(secs => $4)))
-			ORDER BY delete_after NULLS LAST, received_at LIMIT $1 FOR UPDATE SKIP LOCKED)
+			  `+window+`
+			ORDER BY `+order+` LIMIT $1 FOR UPDATE SKIP LOCKED)
 		UPDATE analysis.media_jobs m SET lease_until = now() + make_interval(secs => $2), tries = m.tries + 1
 		FROM c WHERE m.media_id = c.media_id
 		RETURNING m.media_id, coalesce(m.owner_content_id, ''), m.platform, coalesce(m.source_id, ''), m.kind, m.bucket, m.key,
 		          coalesce(m.size_bytes, 0), coalesce(m.content_type, ''), coalesce(m.duration_ms, 0), coalesce(m.alt_text, ''),
 		          m.delete_after, m.ack_format, m.tries, coalesce(m.role, ''), coalesce(m.sha256, ''),
-		          m.attempt, m.received_at`, limit, lease.Seconds(), imagesOnly, dueWithin.Seconds())
+		          m.attempt, m.received_at`, args...)
 	if err != nil {
 		return nil, err
 	}

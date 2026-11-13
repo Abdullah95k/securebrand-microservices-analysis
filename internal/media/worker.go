@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -85,6 +87,8 @@ type Worker struct {
 	// (analysis.media.video.stt_concurrency).
 	stt     chan struct{}
 	sttOnce sync.Once
+	// claims counts this process's claims, for deadline_share's turns.
+	claims atomic.Uint64
 }
 
 // errSTTBusy: every speech-to-text slot is taken; the video goes back to
@@ -315,7 +319,7 @@ func (w *Worker) Run(ctx context.Context) error {
 
 // Once claims and processes one job; it returns how many it processed.
 func (w *Worker) Once(ctx context.Context) (int, error) {
-	jobs, err := w.P.Store.ClaimMediaJobs(ctx, 1, w.Cfg.Lease, w.sttFull(), w.Cfg.Video.FramesOnlyWithin)
+	jobs, err := w.claim(ctx)
 	if err != nil || len(jobs) == 0 {
 		return 0, err
 	}
@@ -323,6 +327,43 @@ func (w *Worker) Once(ctx context.Context) (int, error) {
 		w.process(ctx, j)
 	}
 	return len(jobs), nil
+}
+
+// claim leases the next job. Nearest deadline first, unless
+// media.recent_first: then the newest of the files announced within it,
+// and after them the rest by deadline; deadline_share of the claims go
+// first to the files due within deadline_within (the owner's D-060 with
+// the master's rule, 13 Nov: a file in its last hours isn't starved by new
+// ones while the budget has room).
+func (w *Worker) claim(ctx context.Context) ([]core.MediaJob, error) {
+	imagesOnly, framesDue := w.sttFull(), w.Cfg.Video.FramesOnlyWithin
+	get := func(o store.MediaOrder) ([]core.MediaJob, error) {
+		return w.P.Store.ClaimMediaJobs(ctx, 1, w.Cfg.Lease, imagesOnly, framesDue, o)
+	}
+	if w.Cfg.RecentFirst <= 0 {
+		return get(store.MediaOrder{})
+	}
+	if w.deadlineTurn() {
+		if jobs, err := get(store.MediaOrder{DueWithin: w.Cfg.DeadlineWithin}); err != nil || len(jobs) > 0 {
+			return jobs, err
+		}
+	}
+	if jobs, err := get(store.MediaOrder{Newest: w.Cfg.RecentFirst}); err != nil || len(jobs) > 0 {
+		return jobs, err
+	}
+	return get(store.MediaOrder{})
+}
+
+// deadlineTurn reports whether this claim is one of deadline_share's, as
+// close to that share of the claims as whole claims allow (a quarter: the
+// 1st, 5th, 9th...).
+func (w *Worker) deadlineTurn() bool {
+	share := w.Cfg.DeadlineShare
+	if share <= 0 || w.Cfg.DeadlineWithin <= 0 {
+		return false
+	}
+	n := float64(w.claims.Add(1) - 1)
+	return math.Ceil((n+1)*share) > math.Ceil(n*share)
 }
 
 func (w *Worker) process(ctx context.Context, j core.MediaJob) {

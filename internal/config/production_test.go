@@ -130,6 +130,12 @@ func TestProductionConfig(t *testing.T) {
 	if a.Batch.CollectWorkers < 1 || int32(a.Batch.CollectWorkers) >= a.Postgres.MaxConns {
 		t.Errorf("%d collect workers with a pool of %d, want 1 to %d", a.Batch.CollectWorkers, a.Postgres.MaxConns, a.Postgres.MaxConns-1)
 	}
+	// Media: the newest files first (the owner's D-060), with a share of
+	// the claims for the files in their last hours.
+	if m := a.Media; m.RecentFirst <= 0 || m.DeadlineShare <= 0 || m.DeadlineWithin < m.Video.FramesOnlyWithin {
+		t.Errorf("media recent_first %v, deadline_share %v within %v: want newest first, with a share for files due within at least %v",
+			m.RecentFirst, m.DeadlineShare, m.DeadlineWithin, m.Video.FramesOnlyWithin)
+	}
 	// Sending waits for collection when it falls behind.
 	if a.Batch.MaxOpen <= 0 {
 		t.Errorf("batch.max_open %d: want a limit, so answers aren't paid for faster than they are collected", a.Batch.MaxOpen)

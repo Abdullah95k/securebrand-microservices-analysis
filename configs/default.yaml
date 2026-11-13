@@ -260,6 +260,15 @@ analysis:
     # Storing the post wakes it. 0 = no wait.
     owner_wait: 168h
     owner_margin: 12h
+    # Newest first (the owner's D-060): files announced within recent_first
+    # are claimed first, newest first, and the rest after them, nearest
+    # deadline first. 0 = nearest deadline first for all. While it is on,
+    # deadline_share of the claims go first to the files due within
+    # deadline_within, nearest deadline first, so those aren't starved while
+    # new files keep arriving.
+    recent_first: 0
+    deadline_share: 0.25
+    deadline_within: 12h
     video:
       enabled: true
       ffmpeg: ffmpeg       # needs the image built with --target analysis-media

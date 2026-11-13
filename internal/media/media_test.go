@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -815,5 +816,73 @@ func TestOpenCircuitCostsNoTry(t *testing.T) {
 	if state != "pending" || tries != 0 || lastErr != "" || !later {
 		t.Fatalf("after an open circuit: %s, %d tries, error %q, put back for later %v; want pending, no try, no error, later",
 			state, tries, lastErr, later)
+	}
+}
+
+// TestNewestFilesFirst: with media.recent_first (the owner's D-060), the
+// newest files announced within it are analysed first; deadline_share of
+// the claims go first to the files in their last deadline_within hours, so
+// those aren't starved by new ones; and the rest come after, nearest
+// deadline first. Off, every file goes nearest deadline first.
+func TestNewestFilesFirst(t *testing.T) {
+	// id: announced this long ago, due this long from now.
+	files := []struct {
+		id       string
+		ago, due time.Duration
+	}{
+		{"near", 30 * time.Hour, 2 * time.Hour},                   // in its last 12 hours
+		{"old", 20 * time.Hour, 28 * time.Hour},                   // neither near nor new
+		{"new1", 2 * time.Hour, 46 * time.Hour},                   // new
+		{"new2", time.Hour, 47 * time.Hour},                       // newer
+		{"new3", 10 * time.Minute, 47*time.Hour + 50*time.Minute}, // newest
+	}
+	for _, tc := range []struct {
+		name   string
+		recent time.Duration
+		want   []string
+	}{
+		// The 1st claim is the deadline's (near); then the newest; the 5th
+		// is the deadline's again, finds no file in its last 12 hours nor a
+		// new one left, and takes the rest by deadline.
+		{"on", 6 * time.Hour, []string{"near", "new3", "new2", "new1", "old"}},
+		{"off", 0, []string{"near", "old", "new1", "new2", "new3"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, w, _, objs := setupWith(t, func(c *config.Analysis) {
+				c.Media.RecentFirst, c.Media.DeadlineShare, c.Media.DeadlineWithin = tc.recent, 0.25, 12*time.Hour
+			})
+			ctx := context.Background()
+			var jobs []*core.MediaJob
+			for _, f := range files {
+				objs["b/"+f.id] = pngBytes(t, 100, 100)
+				j := job(f.id, "photo")
+				j.DeleteAfter = time.Now().Add(f.due)
+				jobs = append(jobs, j)
+			}
+			if _, err := st.InsertMediaJobs(ctx, jobs, "analysis"); err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range files {
+				if _, err := st.DB.Exec(ctx, `UPDATE analysis.media_jobs SET received_at = now() - make_interval(secs => $2) WHERE media_id = $1`,
+					f.id, f.ago.Seconds()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := []string{}
+			for range files {
+				if n, err := w.Once(ctx); err != nil || n != 1 {
+					t.Fatalf("claim %d: %d jobs (%v)", len(got)+1, n, err)
+				}
+				var id string
+				if err := st.DB.QueryRow(ctx, `SELECT media_id FROM analysis.media_jobs WHERE state = 'done'
+					AND NOT (media_id = ANY($1)) ORDER BY done_at DESC LIMIT 1`, got).Scan(&id); err != nil {
+					t.Fatalf("claim %d: %v", len(got)+1, err)
+				}
+				got = append(got, id)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("analysed in the order %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
