@@ -99,6 +99,16 @@ var errSTTBusy = errors.New("media: speech-to-text busy")
 // is open: about the circuit's first cooldown.
 const providerRetryAfter = 2 * time.Minute
 
+// notReadyWithin: a file not found this soon after its announcement isn't
+// gone, its upload just can't be read yet; it is tried again after
+// notReadyRetry without losing a try. Later, not found means deleted (its
+// TTL passed) and the file fails for good. Since 13 Nov, with newest files
+// first, files are claimed seconds after they are announced.
+const (
+	notReadyWithin = 15 * time.Minute
+	notReadyRetry  = 2 * time.Minute
+)
+
 // ownerWait: the file's post (or comment) isn't stored yet; the job waits
 // for it in the queue (analysis.media.owner_wait), at most until Until.
 type ownerWait struct{ Until time.Time }
@@ -434,6 +444,14 @@ func (w *Worker) process(ctx context.Context, j core.MediaJob) {
 			// files for good (the TTL still applies).
 			ametrics.Media.WithLabelValues(j.Kind, "provider_unavailable").Inc()
 			if rerr := w.P.Store.ReleaseMedia(context.WithoutCancel(ctx), j.MediaID, providerRetryAfter); rerr != nil {
+				slog.Error("analysis: media job not released", "media", j.MediaID, "err", rerr)
+			}
+			return
+		}
+		if errors.Is(err, ErrGone) && !j.ReceivedAt.IsZero() && time.Since(j.ReceivedAt) < notReadyWithin {
+			// Announced moments ago and not readable yet: not gone.
+			ametrics.Media.WithLabelValues(j.Kind, "not_ready").Inc()
+			if rerr := w.P.Store.ReleaseMedia(context.WithoutCancel(ctx), j.MediaID, notReadyRetry); rerr != nil {
 				slog.Error("analysis: media job not released", "media", j.MediaID, "err", rerr)
 			}
 			return

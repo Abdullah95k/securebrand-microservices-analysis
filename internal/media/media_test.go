@@ -216,6 +216,11 @@ func TestWorkerAnalysesSkipsAndFails(t *testing.T) {
 	if _, err := st.InsertMediaJobs(ctx, jobs, "analysis"); err != nil {
 		t.Fatal(err)
 	}
+	// Announced an hour ago: not found now means deleted, not a file whose
+	// upload can't be read yet (TestNewFileNotFoundIsNotGone).
+	if _, err := st.DB.Exec(ctx, `UPDATE analysis.media_jobs SET received_at = now() - interval '1 hour' WHERE media_id = 'gone'`); err != nil {
+		t.Fatal(err)
+	}
 	var seen []int
 	fp.Fail = nil
 	for i := 0; i < 5; i++ {
@@ -884,5 +889,45 @@ func TestNewestFilesFirst(t *testing.T) {
 				t.Fatalf("analysed in the order %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestNewFileNotFoundIsNotGone: a file not found within minutes of its
+// announcement goes back to the queue without losing a try, and is
+// analysed once it can be read (13 Nov: with newest files first, files are
+// claimed seconds after they are announced). Announced long ago, not found
+// fails for good (TestWorkerAnalysesSkipsAndFails).
+func TestNewFileNotFoundIsNotGone(t *testing.T) {
+	st, w, _, objs := setup(t)
+	ctx := context.Background()
+	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{job("fresh", "photo")}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := w.Once(ctx); err != nil || n != 1 {
+		t.Fatalf("claimed %d (%v)", n, err)
+	}
+	var state string
+	var tries int
+	var wait float64
+	if err := st.DB.QueryRow(ctx, `SELECT state, tries, extract(epoch FROM not_before - now()) FROM analysis.media_jobs WHERE media_id = 'fresh'`).
+		Scan(&state, &tries, &wait); err != nil {
+		t.Fatal(err)
+	}
+	if state != "pending" || tries != 0 || wait < 60 {
+		t.Fatalf("a new file not found yet: %s, %d tries, due in %.0f s; want pending, no try lost, back in about 2 minutes", state, tries, wait)
+	}
+	if a := acks(t, st); len(a) != 0 {
+		t.Fatalf("acknowledged %v before it was analysed", a)
+	}
+	// Its upload is readable now, and it is due again.
+	objs["b/fresh"] = pngBytes(t, 100, 100)
+	if _, err := st.DB.Exec(ctx, `UPDATE analysis.media_jobs SET not_before = now() WHERE media_id = 'fresh'`); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := w.Once(ctx); err != nil || n != 1 {
+		t.Fatalf("claimed %d (%v)", n, err)
+	}
+	if a := acks(t, st); a["fresh"] != fbv1.ProcessStatus_PROCESS_STATUS_PROCESSED {
+		t.Fatalf("acknowledged %v, want the file processed", a)
 	}
 }
