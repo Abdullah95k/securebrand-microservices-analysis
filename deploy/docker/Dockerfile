@@ -15,7 +15,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 
 FROM debian:12-slim AS analysis-media
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg ca-certificates tini \
+ && apt-get install -y --no-install-recommends ffmpeg libheif-examples ca-certificates tini \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 65532 --create-home --home-dir /home/nonroot nonroot
 COPY --from=build /out/ /usr/local/bin/

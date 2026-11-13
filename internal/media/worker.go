@@ -615,6 +615,19 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 			side = w.Cfg.ThumbnailMaxSide
 		}
 		img, err := Resize(imageData, side, w.Cfg.ImageMaxPixels)
+		if errors.Is(err, ErrNotReadYet) && w.Cfg.HEIFConvert != "" {
+			// HEIC or AVIF (TikTok's photos): converted to JPEG first. If
+			// that fails the image waits as before (ErrNotReadYet).
+			if name, _ := Sniff(imageData); Convertible(name) {
+				jpg, cerr := ConvertHEIF(ctx, w.Cfg.HEIFConvert, imageData, w.Cfg.Video.TempDir)
+				if cerr == nil {
+					slog.Info("analysis: image converted to JPEG", "platform", j.Platform, "format", name)
+					img, err = Resize(jpg, side, w.Cfg.ImageMaxPixels)
+				} else if !errors.Is(cerr, ErrNoConverter) {
+					slog.Warn("analysis: image not converted", "media", j.MediaID, "platform", j.Platform, "format", name, "err", cerr)
+				}
+			}
+		}
 		if err != nil {
 			return nil, err
 		}

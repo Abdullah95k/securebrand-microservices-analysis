@@ -90,6 +90,13 @@ jobs:
           ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc=duration=1:size=64x64:rate=5 \
             -c:v libx264 -pix_fmt yuv420p -y /tmp/ffmpeg-check.mp4
           test -s /tmp/ffmpeg-check.mp4
+      - name: Install libheif's tools (HEIC conversion tests)
+        # Optional: without them the HEIC tests skip; the images job checks
+        # the media image's own heif-convert.
+        timeout-minutes: 5
+        run: |
+          sudo timeout 150 apt-get install -y -q --no-install-recommends libheif-examples libheif-plugin-libde265 libheif-plugin-x265 \
+            || echo "libheif's tools unavailable; the HEIC tests skip"
       - name: Start Redpanda
         run: |
           docker run -d --name redpanda -p 19092:19092 redpandadata/redpanda:v24.2.7 \
@@ -139,6 +146,11 @@ jobs:
           docker build -f deploy/docker/Dockerfile --target analysis-media -t sb-analysis-media:ci .
           docker run --rm sb-analysis:ci help >/dev/null
           docker run --rm --entrypoint ffmpeg sb-analysis-media:ci -version >/dev/null
+          # libheif turns TikTok's HEIC photos into JPEG: a picture made
+          # here goes to HEIC and back inside the media image.
+          docker run --rm --entrypoint sh sb-analysis-media:ci -c \
+            'ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc=size=64x64 -frames:v 1 /tmp/t.png &&
+             heif-enc /tmp/t.png -o /tmp/t.heic && heif-convert /tmp/t.heic /tmp/t.jpg && test -s /tmp/t.jpg'
       - uses: azure/setup-helm@v4
       - name: Helm chart (lint, render, Kubernetes schemas)
         run: |
