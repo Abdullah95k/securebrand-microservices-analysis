@@ -86,6 +86,16 @@ func TestFromFBMediaReadyAndErasure(t *testing.T) {
 	if !(&core.MediaJob{Kind: "reel"}).IsVideo() {
 		t.Fatal("reel is a video")
 	}
+	// A page's own pictures (owner_type page, no post or comment): the page
+	// owns them, with their roles (D-061).
+	pic := FromFBMediaReady(&fbv1.MediaReady{MediaId: "p", Kind: fbv1.MediaKind_MEDIA_KIND_PROFILE_PIC, PageId: 9})
+	cover := FromFBMediaReady(&fbv1.MediaReady{MediaId: "c", Kind: fbv1.MediaKind_MEDIA_KIND_COVER, PageId: 9})
+	postCover := FromFBMediaReady(&fbv1.MediaReady{MediaId: "v", Kind: fbv1.MediaKind_MEDIA_KIND_COVER, PostId: 3, PageId: 9})
+	if pic.OwnerContentID != "fb:page:9" || pic.Kind != "profile_pic" || pic.Role != "profile_picture" ||
+		cover.OwnerContentID != "fb:page:9" || cover.Role != "banner" ||
+		postCover.OwnerContentID != "fb:post:3" || postCover.Role != "" {
+		t.Fatalf("page pictures: %+v, %+v; a post's cover: %+v", pic, cover, postCover)
+	}
 	e := FromFBErasure(&fbv1.ErasureEvent{EventId: "e", SubjectType: fbv1.SubjectType_SUBJECT_TYPE_PAGE, PageId: 9})
 	if e == nil || e.Subject != "source" || e.SourceID != "fb:page:9" || e.RequestID != "e" {
 		t.Fatalf("page erasure %+v", e)

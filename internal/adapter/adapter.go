@@ -294,10 +294,26 @@ func FBTagSpans(text string, ranges []*fbv1.TextRange) []textnorm.Span {
 
 // FromFBMediaReady maps a media announcement; acks go to
 // fb.media.processed.v1.
+//
+// A page's own picture (fbs's page profile picture and cover, since 13 Nov:
+// owner_type page, no post or comment) belongs to its page: it doesn't wait
+// for a post, and it takes the role of a profile picture or banner, so its
+// request says what it is and that no one in it is to be identified
+// (D-061). fbs sends monitored pages' pictures only.
 func FromFBMediaReady(m *fbv1.MediaReady) *core.MediaJob {
 	owner := FBPostID(m.PostId)
-	if m.CommentId != nil {
+	role := ""
+	switch {
+	case m.CommentId != nil:
 		owner = FBCommentID(*m.CommentId)
+	case m.PostId == 0:
+		owner = FBPageID(m.PageId)
+		if m.Kind == fbv1.MediaKind_MEDIA_KIND_COVER {
+			role = "banner"
+		}
+	}
+	if m.Kind == fbv1.MediaKind_MEDIA_KIND_PROFILE_PIC {
+		role = "profile_picture"
 	}
 	j := &core.MediaJob{
 		MediaID:        m.MediaId,
@@ -305,6 +321,7 @@ func FromFBMediaReady(m *fbv1.MediaReady) *core.MediaJob {
 		Platform:       "facebook",
 		SourceID:       FBPageID(m.PageId),
 		Kind:           strings.ToLower(strings.TrimPrefix(m.Kind.String(), "MEDIA_KIND_")),
+		Role:           role,
 		DurationMS:     m.DurationMs,
 		AltText:        m.AltText,
 		DeleteAfter:    ts(m.DeleteAfter),

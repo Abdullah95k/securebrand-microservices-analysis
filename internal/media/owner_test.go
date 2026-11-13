@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	contentv1 "github.com/abdullah95k/securebrand-contracts/gen/go/securebrand/content/v1"
+	fbv1 "github.com/abdullah95k/securebrand-microservices/gen/go/securebrand/fb/v1"
 
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/adapter"
 	"github.com/abdullah95k/securebrand-microservices-analysis/internal/config"
@@ -381,5 +382,38 @@ func TestThumbnailsOnlyForYouTube(t *testing.T) {
 	defer mu.Unlock()
 	if side != 512 {
 		t.Fatalf("thumbnail sent at %d px, want 512", side)
+	}
+}
+
+// TestFacebookPagePictureDoesNotWait (D-061): fbs's page profile picture
+// (owned by the page, no post) is analysed at once, with the profile
+// picture's note; it doesn't wait for a post that doesn't exist.
+func TestFacebookPagePictureDoesNotWait(t *testing.T) {
+	st, w, fp, objs := setupWith(t, waitForPosts)
+	ctx := context.Background()
+	var mu sync.Mutex
+	var user string
+	fp.Fail = func(req provider.Request) error {
+		mu.Lock()
+		user = req.User
+		mu.Unlock()
+		return nil
+	}
+	j := adapter.FromFBMediaReady(&fbv1.MediaReady{MediaId: "pagepic", Kind: fbv1.MediaKind_MEDIA_KIND_PROFILE_PIC, PageId: 9,
+		Object: &fbv1.S3Object{Bucket: "b", Key: "pagepic"}, DeleteAfter: timestamppb.New(time.Now().Add(72 * time.Hour))})
+	objs["b/pagepic"] = pngBytes(t, 200, 200)
+	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{j}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if state, _, _ := due(t, st, "pagepic"); state != "done" {
+		t.Fatalf("the page's profile picture is %s, want analysed at once", state)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(user, "profile picture of a monitored") {
+		t.Fatalf("its request lacks the note: %q", user)
 	}
 }
