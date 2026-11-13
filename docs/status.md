@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 13 November 2026, 18:45 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 13 November 2026, 21:20 (Iraq time).*
 
 ## Where it stands
 
@@ -508,7 +508,7 @@
   - **How:** with `media.recent_first` (production 6h), files announced within it are claimed first, newest first, then the rest by deadline. A quarter of the claims (`deadline_share`) go first to the files in their last 12 hours (`deadline_within`), so those aren't starved by new files. Off by default, and nearest deadline first then, as before.
   - **Why 6 hours, not the text's 48:** almost every file's deadline is within 48 hours of its announcement, so 48 hours would put everything newest first, and files near their deadline would get only their quarter. With 6 hours, the files of the last 6 hours come first and every other claim goes by deadline.
   - **The database:** one new index on the pending files' arrival time (`media_jobs_recent_idx`), built concurrently. Each claim reads one index and stops at its window's end.
-- **13 Nov, 17:20 Iraq time: "waiting for their post" was a wrong count (merged, PR #70, `67d842e`; the master pins it with the catch-up tonight).**
+- **13 Nov, 17:20 Iraq time: "waiting for their post" was a wrong count (merged, PR #70, `67d842e`; pinned with #72 in platform #147).**
   - **The master's reading:** ingest isn't paused (`sb_analysis_ingest_paused` 0 on every pod), so the pause didn't explain TikTok's 8,975 and Facebook's 5,205 files "waiting for their post".
   - **Found:** the stats line counted every pending file whose owner isn't stored. That included files that never wait: those of the 90% of comments outside the sample, which are never stored and have gone ahead without them since #61, and pages' and accounts' pictures. Most of those files were simply in the backlog.
   - **The fix** (the master agreed): the line counts the files that wait as the worker decides it (a post or comment not stored, a comment in the sample, still within its wait), and shows the rest as "going ahead without it". Only the stats change; nothing in the worker.
@@ -519,7 +519,9 @@
   - 3,799 files analysed in the hour (1,596 before), 0 failed retries; real holds for a post 600 an hour (image 413, video 187), so the old stats line was the bug. The media pod used 0.44 cores and 189 MB.
   - **The owner's D-065:** a media catch-up of about $35 over two days. For 14 and 15 Nov (Iraq days), image $39 and the total $78, set by the master just after 21:00Z tonight and removed just after 21:00Z on 15 Nov. 8 workers are enough (above 3,500 an hour).
   - **TikTok covers:** no use for analysis (each video is analysed from its own frames). Whether the client's screens show covers is the owner's question to the client, before tks stops downloading them.
-- **13 Nov, 18:45 Iraq time: images in a format not read yet (in review).**
+- **13 Nov, 18:45 Iraq time: images in a format not read yet (merged, PR #72, `e29e30a`; pinned in platform #147, 19:04 Iraq time, with #70).**
   - **Found:** 130 permanent failures an hour appeared with newest first. My guess was files claimed before their upload was readable (draft PR #71, closed unmerged): the master's count showed 134 of 135 were `image: unknown format`, and none not found. Newest first just reached those files sooner.
   - **The change:** the error names the format from the file's first bytes, the failure log line carries the platform, and a known image format not read yet (HEIC/HEIF, AVIF, JPEG XL, BMP, TIFF) waits 6 hours at a time without losing a try until 18 hours before its deadline, so it isn't lost before a converter ships. Anything else still fails at once.
   - **Next:** from the master's count by format and platform, a converter (libheif reads HEIC and AVIF; the image's ffmpeg 5.1 doesn't read HEIC) or a JPEG from the collector.
+  - **Waiting for:** the master's count of the files kept for later, by format and platform, and of the permanent failures by platform. They pick between a converter in the media image and JPEG from the collector.
+  - **Tonight:** the D-065 catch-up caps (image $39, total $78) go in as a settings-only change just after 21:00Z (midnight Iraq time), for 14 and 15 Nov, and come out just after 21:00Z on 15 Nov.
