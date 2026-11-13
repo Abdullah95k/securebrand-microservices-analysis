@@ -141,7 +141,7 @@ func TestPlatformCountsWaitingSplit(t *testing.T) {
 	if _, err := s.DB.Exec(ctx, `UPDATE analysis.analysis_queue SET request_id = gen_random_uuid() WHERE content_id = 'ig:comment:0'`); err != nil {
 		t.Fatal(err)
 	}
-	r, err := s.PlatformCounts(ctx, time.Now().Add(-24*time.Hour), 0, nil)
+	r, err := s.PlatformCounts(ctx, time.Now().Add(-24*time.Hour), 0, MediaWait{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

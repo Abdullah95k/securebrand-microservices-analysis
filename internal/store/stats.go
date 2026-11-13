@@ -48,8 +48,19 @@ type PlatformStats struct {
 	MediaFailReasons map[string]int64
 	// The files pending now, by time to their deadline (the collector
 	// deletes the file then): past it, under 12 h, 12-24 h, 24-48 h, later
-	// or none; and how many wait for their post (not stored yet).
-	PendingPast, Pending12h, Pending24h, Pending48h, PendingLater, PendingForPost int64
+	// or none. Of them, PendingForPost wait for their post or comment, not
+	// stored yet (analysis.media.owner_wait); PendingWithoutPost have none
+	// stored either but go ahead without it: comments outside the comment
+	// sample (never stored), files of pages and accounts (their owner is no
+	// post), and files past their wait.
+	PendingPast, Pending12h, Pending24h, Pending48h, PendingLater, PendingForPost, PendingWithoutPost int64
+}
+
+// MediaWait is analysis.media.owner_wait and owner_margin: a file waits
+// for its post or comment until Wait after it arrived or Margin before its
+// deadline, whichever is first (0 Wait: no file waits).
+type MediaWait struct {
+	Wait, Margin time.Duration
 }
 
 // PlatformReport is the per-platform counts and the outbox's state; the
@@ -94,7 +105,12 @@ type PlatformReport struct {
 // grouped by the ID's platform code, which name turns into the stored
 // platform name ("yt" -> "youtube"). The waiting items published within
 // recent are counted too (0: not counted). Read-only.
-func (s *Store) PlatformCounts(ctx context.Context, since time.Time, recent time.Duration, name func(code string) string) (PlatformReport, error) {
+//
+// A pending file counts as waiting for its post as the media worker
+// decides it (waitForOwner): its owner is a post or comment not stored,
+// a comment is in the sample (s.CommentShare, as core.InSample), and it is
+// still within wait.
+func (s *Store) PlatformCounts(ctx context.Context, since time.Time, recent time.Duration, wait MediaWait, name func(code string) string) (PlatformReport, error) {
 	recentSQL := "0"
 	if recent > 0 {
 		recentSQL = `count(*) FILTER (WHERE request_id IS NULL AND created_at >= now() - make_interval(secs => ` +
@@ -244,29 +260,50 @@ func (s *Store) PlatformCounts(ctx context.Context, since time.Time, recent time
 		return PlatformReport{}, err
 	}
 
-	// The files pending now, by time to their deadline, and those whose
-	// post isn't stored (they wait for it: analysis.media.owner_wait).
-	rows, err = s.DB.Query(ctx, `SELECT m.platform,
-			count(*) FILTER (WHERE m.delete_after < now()),
-			count(*) FILTER (WHERE m.delete_after >= now() AND m.delete_after < now() + interval '12 hours'),
-			count(*) FILTER (WHERE m.delete_after >= now() + interval '12 hours' AND m.delete_after < now() + interval '24 hours'),
-			count(*) FILTER (WHERE m.delete_after >= now() + interval '24 hours' AND m.delete_after < now() + interval '48 hours'),
-			count(*) FILTER (WHERE m.delete_after IS NULL OR m.delete_after >= now() + interval '48 hours'),
-			count(*) FILTER (WHERE m.owner_content_id IS NOT NULL AND i.content_id IS NULL)
-		FROM analysis.media_jobs m LEFT JOIN analysis.content_index i ON i.content_id = m.owner_content_id
-		WHERE m.state = 'pending' AND $1::timestamptz IS NOT NULL GROUP BY 1`, since)
+	// The files pending now, by time to their deadline; and those whose
+	// post or comment isn't stored, split into the ones that wait for it
+	// and the ones that go ahead without it. The sample test is
+	// core.InSample's: the first 8 bytes of SHA-256("sb-analysis sample:"
+	// + ID), top 53 bits as a fraction, below the share.
+	share := s.CommentShare
+	if share <= 0 {
+		share = 1
+	}
+	rows, err = s.DB.Query(ctx, `WITH p AS (
+			SELECT m.platform, m.delete_after,
+			       m.owner_content_id IS NOT NULL AND i.content_id IS NULL AS unstored,
+			       m.owner_content_id IS NOT NULL AND i.content_id IS NULL
+			       AND split_part(m.owner_content_id, ':', 2) IN ('post', 'comment')
+			       AND (split_part(m.owner_content_id, ':', 2) <> 'comment' OR $2::float8 >= 1
+			            OR ((('x' || encode(substring(sha256(convert_to('sb-analysis sample:' || m.owner_content_id, 'UTF8')) FROM 1 FOR 8), 'hex'))::bit(64)
+			                 >> 11)::bigint)::float8 / 9007199254740992.0::float8 < $2::float8)
+			       AND $3::float8 > 0
+			       AND now() < least(m.received_at + make_interval(secs => $3::float8),
+			                         coalesce(m.delete_after - make_interval(secs => $4::float8), 'infinity'::timestamptz)) AS waits
+			FROM analysis.media_jobs m LEFT JOIN analysis.content_index i ON i.content_id = m.owner_content_id
+			WHERE m.state = 'pending' AND $1::timestamptz IS NOT NULL)
+		SELECT platform,
+			count(*) FILTER (WHERE delete_after < now()),
+			count(*) FILTER (WHERE delete_after >= now() AND delete_after < now() + interval '12 hours'),
+			count(*) FILTER (WHERE delete_after >= now() + interval '12 hours' AND delete_after < now() + interval '24 hours'),
+			count(*) FILTER (WHERE delete_after >= now() + interval '24 hours' AND delete_after < now() + interval '48 hours'),
+			count(*) FILTER (WHERE delete_after IS NULL OR delete_after >= now() + interval '48 hours'),
+			count(*) FILTER (WHERE waits),
+			count(*) FILTER (WHERE unstored AND NOT waits)
+		FROM p GROUP BY 1`, since, share, wait.Wait.Seconds(), wait.Margin.Seconds())
 	if err != nil {
 		return PlatformReport{}, err
 	}
 	for rows.Next() {
 		var p string
-		var n [6]int64
-		if err := rows.Scan(&p, &n[0], &n[1], &n[2], &n[3], &n[4], &n[5]); err != nil {
+		var n [7]int64
+		if err := rows.Scan(&p, &n[0], &n[1], &n[2], &n[3], &n[4], &n[5], &n[6]); err != nil {
 			rows.Close()
 			return PlatformReport{}, err
 		}
 		m := get(p)
-		m.PendingPast, m.Pending12h, m.Pending24h, m.Pending48h, m.PendingLater, m.PendingForPost = n[0], n[1], n[2], n[3], n[4], n[5]
+		m.PendingPast, m.Pending12h, m.Pending24h, m.Pending48h, m.PendingLater = n[0], n[1], n[2], n[3], n[4]
+		m.PendingForPost, m.PendingWithoutPost = n[5], n[6]
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {

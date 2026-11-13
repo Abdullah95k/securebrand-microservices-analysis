@@ -28,7 +28,9 @@ func statsCmd(args []string) error {
 	since := fs.Duration("since", 24*time.Hour, "count what happened this long ago or later")
 	return withApp("stats", args, fs, func(ctx context.Context, a *app.App) error {
 		from := time.Now().Add(-*since)
-		r, err := a.Store.PlatformCounts(ctx, from, a.Cfg.Analysis.Batch.RecentFirst, adapter.PlatformName)
+		m := a.Cfg.Analysis.Media
+		r, err := a.Store.PlatformCounts(ctx, from, a.Cfg.Analysis.Batch.RecentFirst,
+			store.MediaWait{Wait: m.OwnerWait, Margin: m.OwnerMargin}, adapter.PlatformName)
 		if err != nil {
 			return err
 		}
@@ -108,8 +110,9 @@ func printStats(w io.Writer, r store.PlatformReport, since time.Duration) error 
 			fmt.Fprintf(&b, "  skipped because: %s\n", strings.Join(parts, ", "))
 		}
 		if pending := p.PendingPast + p.Pending12h + p.Pending24h + p.Pending48h + p.PendingLater; pending > 0 {
-			fmt.Fprintf(&b, "  pending now by deadline: %d past it, %d within 12 h, %d in 12-24 h, %d in 24-48 h, %d later or none; %d waiting for their post\n",
-				p.PendingPast, p.Pending12h, p.Pending24h, p.Pending48h, p.PendingLater, p.PendingForPost)
+			fmt.Fprintf(&b, "  pending now by deadline: %d past it, %d within 12 h, %d in 12-24 h, %d in 24-48 h, %d later or none; "+
+				"%d waiting for their post or comment, %d going ahead without it (comments outside the sample, pages' and accounts' files, waits ended)\n",
+				p.PendingPast, p.Pending12h, p.Pending24h, p.Pending48h, p.PendingLater, p.PendingForPost, p.PendingWithoutPost)
 		}
 		if len(p.MediaFailReasons) > 0 {
 			fmt.Fprintf(&b, "  %d waiting to be tried again after a failure; failed or retrying because: %s\n",
