@@ -14,6 +14,14 @@ components:
     replicas: 1
   analysis-media:
     replicas: 1
+    # 8 media workers (the master, 13 November 2026): a video without
+    # captions holds its worker for the whole transcription, so the 2
+    # whisper servers' slots kept 2 of 4 busy and images had 2 (about
+    # 34,000 a day). Now 2 for speech-to-text and 6 for images. 8 at
+    # worker_memory_mib (384) after 256 MiB fit 3,584 MiB; /tmp holds 8
+    # videos at media.max_bytes (500 MiB) and their frames.
+    resources: {requests: {cpu: "1", memory: 1Gi}, limits: {memory: 3584Mi}}
+    tmpSizeLimit: 5Gi
 
 # Speech in videos (the owner, 7 November 2026), transcribed inside the
 # cluster: Speaches with Whisper large-v3-turbo on CPU (no GPU nodes). The
@@ -135,6 +143,7 @@ config:
       whisper: {timeout: 20m, max_retries: 0}
     media:
       lease: 45m
+      workers: 8   # with components.analysis-media's 3,584 MiB above
       video:
         stt_provider: whisper
         stt_language: ar

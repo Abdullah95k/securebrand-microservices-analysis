@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -151,42 +153,114 @@ func TestContainerMemoryLimit(t *testing.T) {
 	}
 }
 
-// The chart gives the media workers a memory limit the default number of
-// workers fits.
-func TestChartMediaLimitFitsWorkers(t *testing.T) {
-	b, err := os.ReadFile("../../deploy/helm/sb-analysis/values.yaml")
+// chartMedia returns analysis-media's memory limit and /tmp size, in bytes,
+// from the chart's values files merged in order (a later file's value wins,
+// as with helm -f).
+func chartMedia(t *testing.T, files ...string) (limit, tmp int64) {
+	t.Helper()
+	var lim, tmpSize string
+	for _, f := range files {
+		b, err := os.ReadFile(filepath.Join("..", "..", "deploy", "helm", "sb-analysis", f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var v struct {
+			Components map[string]struct {
+				Resources struct {
+					Limits struct {
+						Memory string `yaml:"memory"`
+					} `yaml:"limits"`
+				} `yaml:"resources"`
+				TmpSizeLimit string `yaml:"tmpSizeLimit"`
+			} `yaml:"components"`
+		}
+		if err := yaml.Unmarshal(b, &v); err != nil {
+			t.Fatal(err)
+		}
+		c := v.Components["analysis-media"]
+		if c.Resources.Limits.Memory != "" {
+			lim = c.Resources.Limits.Memory
+		}
+		if c.TmpSizeLimit != "" {
+			tmpSize = c.TmpSizeLimit
+		}
+	}
+	return quantity(t, lim), quantity(t, tmpSize)
+}
+
+// quantity reads a Kubernetes size in Mi or Gi ("3584Mi", "2Gi").
+func quantity(t *testing.T, q string) int64 {
+	t.Helper()
+	for u, f := range map[string]int64{"Mi": 1 << 20, "Gi": 1 << 30} {
+		if n, ok := strings.CutSuffix(q, u); ok {
+			if x, err := strconv.ParseInt(n, 10, 64); err == nil && x > 0 {
+				return x * f
+			}
+		}
+	}
+	t.Fatalf("size %q not understood", q)
+	return 0
+}
+
+// chartConfig writes the "config" section of a chart values file to a file
+// of its own, as the chart's ConfigMap renders it.
+func chartConfig(t *testing.T, values string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "deploy", "helm", "sb-analysis", values))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var v struct {
-		Components map[string]struct {
-			Resources struct {
-				Limits struct {
-					Memory string `yaml:"memory"`
-				} `yaml:"limits"`
-			} `yaml:"resources"`
-		} `yaml:"components"`
+		Config map[string]any `yaml:"config"`
 	}
 	if err := yaml.Unmarshal(b, &v); err != nil {
 		t.Fatal(err)
 	}
-	lim := v.Components["analysis-media"].Resources.Limits.Memory
-	units := map[string]int64{"Mi": 1 << 20, "Gi": 1 << 30}
-	var n int64
-	for u, f := range units {
-		if len(lim) > 2 && lim[len(lim)-2:] == u {
-			var x int64
-			for _, c := range lim[:len(lim)-2] {
-				x = x*10 + int64(c-'0')
-			}
-			n = x * f
-		}
+	out, err := yaml.Marshal(v.Config)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if n == 0 {
-		t.Fatalf("analysis-media memory limit %q not understood", lim)
+	path := filepath.Join(t.TempDir(), values)
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
 	}
+	return path
+}
+
+// The chart gives the media workers a memory limit the default number of
+// workers fits.
+func TestChartMediaLimitFitsWorkers(t *testing.T) {
+	lim, _ := chartMedia(t, "values.yaml")
 	cfg := defaults(t)
-	if got := FitWorkers(cfg.Workers, n, int64(cfg.WorkerMemoryMiB)<<20); got != cfg.Workers {
-		t.Fatalf("the chart's %s fits %d of the %d default media workers", lim, got, cfg.Workers)
+	if got := FitWorkers(cfg.Workers, lim, int64(cfg.WorkerMemoryMiB)<<20); got != cfg.Workers {
+		t.Fatalf("the chart's %d MiB fits %d of the %d default media workers", lim>>20, got, cfg.Workers)
+	}
+}
+
+// whisperServers is production's number of speech-to-text servers
+// (whisper.replicas, set by the platform; D-052): each holds one media
+// worker for the whole of a transcription.
+const whisperServers = 2
+
+// Production's media workers (the master, 13 November 2026: 8) all start,
+// none lowered to fit the memory limit; at least 4 are left for images
+// while every speech-to-text slot is busy; and /tmp holds a video of the
+// largest size for each.
+func TestProductionMediaLimitFitsWorkers(t *testing.T) {
+	c, err := config.Load(chartConfig(t, "values.yaml") + "," + chartConfig(t, "values-production.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := c.Analysis.Media
+	lim, tmp := chartMedia(t, "values.yaml", "values-production.yaml")
+	if got := FitWorkers(m.Workers, lim, int64(m.WorkerMemoryMiB)<<20); got != m.Workers {
+		t.Errorf("production's %d MiB fits %d of its %d media workers", lim>>20, got, m.Workers)
+	}
+	if images := m.Workers - max(m.Video.STTConcurrency, whisperServers); images < 4 {
+		t.Errorf("%d media workers leave %d for images while speech-to-text is busy, want at least 4", m.Workers, images)
+	}
+	if need := int64(m.Workers) * m.MaxBytes; tmp < need {
+		t.Errorf("/tmp of %d MiB for %d workers' videos of up to %d MiB, want at least %d MiB",
+			tmp>>20, m.Workers, m.MaxBytes>>20, need>>20)
 	}
 }
