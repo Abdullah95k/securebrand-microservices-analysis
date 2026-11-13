@@ -138,6 +138,14 @@ func (w *Worker) waitForOwner(j core.MediaJob, owner store.Owner) error {
 	return &ownerWait{Until: until}
 }
 
+// nearDeadline reports whether a video's deadline is within
+// media.video.frames_only_within, so it goes ahead without speech-to-text
+// rather than wait for a slot and expire.
+func (w *Worker) nearDeadline(j core.MediaJob) bool {
+	d := w.Cfg.Video.FramesOnlyWithin
+	return d > 0 && !j.DeleteAfter.IsZero() && time.Until(j.DeleteAfter) < d
+}
+
 // isComment reports whether a content ID names a comment
 // ("tt:comment:123").
 func isComment(id string) bool {
@@ -280,7 +288,7 @@ func (w *Worker) Run(ctx context.Context) error {
 
 // Once claims and processes one job; it returns how many it processed.
 func (w *Worker) Once(ctx context.Context) (int, error) {
-	jobs, err := w.P.Store.ClaimMediaJobs(ctx, 1, w.Cfg.Lease, w.sttFull())
+	jobs, err := w.P.Store.ClaimMediaJobs(ctx, 1, w.Cfg.Lease, w.sttFull(), w.Cfg.Video.FramesOnlyWithin)
 	if err != nil || len(jobs) == 0 {
 		return 0, err
 	}
@@ -431,12 +439,18 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	// A video without the platform's captions needs speech-to-text: it
 	// takes a slot before the file is fetched, so a busy server sends it
 	// back to the queue before any work is done.
+	// Near its deadline with no slot, it goes ahead from its frames alone.
+	framesOnly := false
 	if j.IsVideo() && owner.Captions == "" && w.Cfg.Video.STTProvider != "" {
 		release, err := w.sttSlot(ctx)
-		if err != nil {
+		switch {
+		case err == nil:
+			defer release()
+		case errors.Is(err, errSTTBusy) && w.nearDeadline(j):
+			framesOnly = true
+		default:
 			return nil, err
 		}
-		defer release()
 	}
 	// The file: a video streams to a temporary file for ffmpeg, an image
 	// to a buffer bounded by image_max_bytes.
@@ -488,8 +502,15 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 	minutes := AudioMinutes(audio)
 	if j.IsVideo() && owner.Captions != "" {
 		transcript, transcriptLang, transcriptSource = textnorm.Truncate(owner.Captions, 20000), owner.CaptionsLang, "platform_captions"
-	} else {
+	} else if !framesOnly {
 		stt, sttModel = w.transcriber(audio)
+	}
+	noSpeech := false
+	if framesOnly {
+		ametrics.Transcribed.WithLabelValues(w.Cfg.Video.STTProvider, "frames_only").Inc()
+		slog.Info("analysis: video near its deadline without a speech-to-text slot; analysing its frames only",
+			"media", j.MediaID, "deadline_in", time.Until(j.DeleteAfter).Round(time.Minute))
+		noSpeech = true
 	}
 	speechCost := 0.0
 	if stt != nil {
@@ -507,7 +528,6 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 		}
 		return nil, err
 	}
-	noSpeech := false
 	if stt != nil {
 		start := time.Now()
 		text, err := stt.Transcribe(ctx, audio, "audio.mp3", w.Cfg.Video.STTLanguage)
@@ -521,6 +541,12 @@ func (w *Worker) analyse(ctx context.Context, j core.MediaJob) (*store.MediaResu
 			w.P.Budget.Add(route, speechCost)
 			w.record(ctx, uuid.NewString(), route, w.Cfg.Video.STTProvider, sttModel, false, j.MediaID,
 				&provider.Response{Latency: time.Since(start)}, speechCost)
+		case errors.Is(err, provider.ErrUnavailable) && w.nearDeadline(j):
+			// No server reachable, and the deadline near: its frames alone.
+			ametrics.Transcribed.WithLabelValues(w.Cfg.Video.STTProvider, "frames_only").Inc()
+			slog.Warn("analysis: no speech-to-text server reachable near the video's deadline; analysing its frames only",
+				"media", j.MediaID, "err", err)
+			noSpeech, speechCost = true, 0
 		case errors.Is(err, provider.ErrUnavailable):
 			ametrics.Transcribed.WithLabelValues(w.Cfg.Video.STTProvider, "unavailable").Inc()
 			return nil, fmt.Errorf("transcribe: %w", err)

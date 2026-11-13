@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 13 November 2026, 13:55 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 13 November 2026, 14:10 (Iraq time).*
 
 ## Where it stands
 
@@ -459,7 +459,7 @@
     - Instagram: 4 announced. YouTube: none.
     - Image and video spend $4 of their $30.
   - **The cause:** workers, not money. One media process has 4 workers; videos come first by deadline. While one held the speech-to-text slot, the others kept claiming videos only to put them back. And files of comments outside the 10% sample waited up to 7 days for comments that are never stored.
-  - **The fix (in review):**
+  - **The fix (merged, PR #61, `fecf158`):**
     - while speech-to-text is busy, the workers claim images;
     - a file of a comment outside the sample doesn't wait (analysed without its text);
     - held comment files are woken at start.
@@ -470,3 +470,9 @@
     - The new `AnalysisBatchCollectorStalled` (warning): batches open and none collected for 2 hours, or no poll begun for 90 minutes.
     - `AnalysisTranscriptionsFailing` counts every errored call, including ones whose video then succeeded and last tries analysed without a transcript, so it can fire with no reason left in the stats. Waiting for the whisper pods' state.
   - **Caps proposed for the owner:** comment 40, post 3, image 14, video 8 (sum $65, total still $60). The master's numbers (image 8, video 5) would hold media near 25,000 a day. A separate PR, once the owner agrees.
+- **13 Nov, 14:10 Iraq time: the owner's D-062 caps; video fallback (in review, PR #62).**
+  - **D-062** (the owner, via the master): comment $40, post $3, image $14, video $8; the $60 total unchanged. Text always keeps $38 and media $17.
+  - **A video near its deadline** (within 6 hours) that finds no speech-to-text slot is analysed from its frames alone (`transcript_source` "none"), rather than expire (the master asked). With 2 whisper servers (about 1,000–1,500 videos a day each) against about 7,700 TikTok videos a day, most will be frames-only until there are more servers.
+  - **`AnalysisTranscriptionsFailing`:** now at least 3 errors and more than 10% of calls in 30 minutes (the master agreed).
+  - **Stats:** each platform's videos announced, and analysed by captions, speech-to-text or frames only, to size the whisper servers.
+- **Next (#63, D-061):** profile pictures and banners of monitored publishers (accounts that are the source of stored items) and YouTube thumbnails (512 px); a prompt line: describe, read text and logos, never identify a person.

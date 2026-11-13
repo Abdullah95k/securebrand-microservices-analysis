@@ -55,8 +55,13 @@ groups:
           summary: Videos waiting for analysis have kept growing for over an hour
           description: Speech-to-text (the whisper server, one video at a time) or ffmpeg can't keep up. Options for the owner, each a cost choice - a smaller Whisper model, CPU-optimized nodes, or a speech-to-text API.
           runbook_url: https://github.com/abdullah95k/securebrand-microservices-analysis/blob/main/docs/runbooks/analysis.md#speech-to-text
+      # A share of the calls (13 Nov): a single error, often of a video that
+      # then succeeds on its next try, fired it with nothing left to see.
       - alert: AnalysisTranscriptionsFailing
-        expr: sum by (provider) (increase(sb_analysis_transcriptions_total{outcome="error"}[30m])) > 0
+        expr: |
+          sum by (provider) (increase(sb_analysis_transcriptions_total{outcome="error"}[30m])) >= 3
+          and sum by (provider) (increase(sb_analysis_transcriptions_total{outcome="error"}[30m]))
+            / sum by (provider) (increase(sb_analysis_transcriptions_total{outcome=~"ok|error"}[30m])) > 0.1
         for: 15m
         labels: {severity: warning}
         annotations:

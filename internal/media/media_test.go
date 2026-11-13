@@ -605,8 +605,9 @@ func TestWorkerSpeechToTextOneAtATime(t *testing.T) {
 	ctx := context.Background()
 	objs["b/v1"], objs["b/v2"], objs["b/i1"] = b, b, pngBytes(t, 100, 100)
 	v1, v2, i1 := job("v1", "video"), job("v2", "video"), job("i1", "photo")
-	// v1 is claimed first, then v2, then the image.
-	v1.DeleteAfter, v2.DeleteAfter, i1.DeleteAfter = time.Now().Add(time.Hour), time.Now().Add(2*time.Hour), time.Now().Add(3*time.Hour)
+	// v1 is claimed first, then v2, then the image; none near its
+	// deadline (media.video.frames_only_within).
+	v1.DeleteAfter, v2.DeleteAfter, i1.DeleteAfter = time.Now().Add(24*time.Hour), time.Now().Add(25*time.Hour), time.Now().Add(26*time.Hour)
 	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{v1, v2, i1}, "analysis"); err != nil {
 		t.Fatal(err)
 	}
@@ -713,5 +714,78 @@ func TestWorkerBudgetSpentFetchesNothing(t *testing.T) {
 	}
 	if state != "pending" || tries != 0 || !later {
 		t.Fatalf("job %s, %d tries, later %v: want pending, no try, back later", state, tries, later)
+	}
+}
+
+// TestVideoNearItsDeadlineGoesFramesOnly: while the speech-to-text slot is
+// busy, a video whose deadline is within media.video.frames_only_within is
+// still claimed and analysed from its frames alone (transcript_source
+// "none"), rather than wait and expire; one with time left isn't claimed.
+func TestVideoNearItsDeadlineGoesFramesOnly(t *testing.T) {
+	video := testVideo(t)
+	b, err := os.ReadFile(video)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, w, fp, objs := setupWith(t, func(c *config.Analysis) {
+		c.Media.Video.STTConcurrency, c.Media.Video.STTWait, c.Media.Video.STTRetryAfter = 1, 20*time.Millisecond, time.Hour
+		c.Media.Video.FramesOnlyWithin = 6 * time.Hour
+	})
+	ctx := context.Background()
+	objs["b/v1"], objs["b/near"], objs["b/later"] = b, b, b
+	v1, near, later := job("v1", "video"), job("near", "video"), job("later", "video")
+	v1.DeleteAfter, near.DeleteAfter, later.DeleteAfter = time.Now().Add(time.Hour), time.Now().Add(2*time.Hour), time.Now().Add(48*time.Hour)
+	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{v1, near, later}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	inside, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	var mu sync.Mutex
+	transcribed := 0
+	fp.Transcribing = func(ctx context.Context) error {
+		mu.Lock()
+		transcribed++
+		mu.Unlock()
+		once.Do(func() { close(inside) })
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	done := make(chan error, 1)
+	go func() { _, err := w.Once(ctx); done <- err }() // v1, held in speech-to-text
+	select {
+	case <-inside:
+	case <-time.After(30 * time.Second):
+		t.Fatal("v1 never reached speech-to-text")
+	}
+	for range 2 { // near, frames only; then nothing (later isn't claimed)
+		if _, err := w.Once(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var state, source string
+	if err := st.DB.QueryRow(ctx, `SELECT j.state, coalesce(a.result->>'transcript_source', '') FROM analysis.media_jobs j
+		LEFT JOIN analysis.media_analyses a USING (media_id) WHERE j.media_id = 'near'`).Scan(&state, &source); err != nil {
+		t.Fatal(err)
+	}
+	if state != "done" || source != "none" {
+		t.Fatalf("the video near its deadline: %s, transcript source %q; want analysed from its frames (none)", state, source)
+	}
+	var tries int
+	if err := st.DB.QueryRow(ctx, `SELECT state, tries FROM analysis.media_jobs WHERE media_id = 'later'`).Scan(&state, &tries); err != nil ||
+		state != "pending" || tries != 0 {
+		t.Fatalf("the video with time left: %s, %d tries (%v); want left for a slot", state, tries, err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if transcribed != 1 {
+		t.Fatalf("%d transcriptions, want v1's only", transcribed)
 	}
 }

@@ -87,6 +87,10 @@ func printStats(w io.Writer, r store.PlatformReport, since time.Duration) error 
 		acked := p.MediaDone + p.MediaSkipped + p.MediaFailed
 		fmt.Fprintf(&b, "  media: %d announced, %d analysed; now %d pending, %d done, %d skipped, %d failed, %d gone; %d acknowledged\n",
 			p.MediaAnnounced, p.MediaAnalysed, p.MediaPending, p.MediaDone, p.MediaSkipped, p.MediaFailed, p.MediaGone, acked)
+		if v := p.VideosCaptions + p.VideosSpeech + p.VideosFramesOnly; v > 0 || p.VideosAnnounced > 0 {
+			fmt.Fprintf(&b, "  videos: %d announced; %d analysed: %d with the platform's captions, %d by speech-to-text, %d from their frames only\n",
+				p.VideosAnnounced, v, p.VideosCaptions, p.VideosSpeech, p.VideosFramesOnly)
+		}
 		if n := p.AckedDone + p.AckedSkipped + p.AckedFailed; n > 0 || acked > 0 {
 			fmt.Fprintf(&b, "  acknowledged in the window, whenever announced: %d (%d done, %d skipped, %d failed)\n",
 				n, p.AckedDone, p.AckedSkipped, p.AckedFailed)

@@ -105,12 +105,12 @@ config:
     # routes already use it; the stronger second opinion (escalation) and
     # the quality sample (audit, Claude Opus) are off; the topic and entity
     # curation use Haiku.
-    # Caps per route within the $60 (11 November 2026, with D-052), so
-    # neither side starves the other: images and video together stop at
-    # $30, so comments and posts always keep at least $30 (about 230k
-    # items a day); comments and posts together stop at $42, so media
-    # always keeps at least $18. Room one side leaves goes to the other, up
-    # to its caps.
+    # Caps per route within the $60 (the owner's D-062, 13 November 2026,
+    # in place of D-052's 30/12/18/12): comment 40, post 3, image 14, video
+    # 8. Images and video together stop at $22, so comments and posts always
+    # keep at least $38 (the 10% comment sample is about $39 a day);
+    # comments and posts together stop at $43, so media always keeps at
+    # least $17. Room one side leaves goes to the other, up to its caps.
     # 10% of comments, on every platform (the owner, 11 November 2026;
     # D-053): the same comments always (by content ID), the backlog
     # included. The rest are counted, not stored or analysed; their raw text
@@ -119,10 +119,10 @@ config:
     routes:
       escalation: {enabled: false, model: claude-haiku-5-5}
       audit: {enabled: false, model: claude-haiku-5-5}
-      comment: {daily_usd: 30}
-      post: {daily_usd: 12}
-      image: {daily_usd: 18}
-      video: {daily_usd: 12}
+      comment: {daily_usd: 40}
+      post: {daily_usd: 3}
+      image: {daily_usd: 14}
+      video: {daily_usd: 8}
     topics:
       curation: {model: claude-haiku-5-5}
     # Speech-to-text on the whisper server above (its address is set by

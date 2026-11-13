@@ -172,6 +172,7 @@ Credentials come from the platform's secrets (`platform-credentials`, `ai-provid
   - An identical file analysed before is reused only once its own post is stored, so the copy is dated by its own post.
   - **A comment outside the comment sample** (`analysis.comments.sample_share`) is counted, never stored, so its files don't wait for it (since 13 Nov): they are analysed at once, without its text. At start the media process makes the comments' waiting files due again (`analysis: comments' media woken`).
 - **Videos and speech-to-text** (since 13 Nov): while every speech-to-text slot is busy (`stt_concurrency`, the number of whisper servers), the workers claim images only, and videos are claimed again once a slot is free. Before, with videos first by deadline, the other workers kept claiming videos, waiting 5 s for the slot and putting them back, and images barely got through (about 23,000 files a day analysed on 12–13 Nov).
+- **A video near its deadline** (`media.video.frames_only_within`, 6 h; since 13 Nov): while the slots are busy it is still claimed, and if no slot (or no whisper server) is free it is analysed from its frames alone, with `transcript_source` "none", rather than expire. `sb_analysis_transcriptions_total{outcome="frames_only"}` counts them; `sb-analysis stats` shows each platform's videos by captions, speech-to-text and frames only.
 - **Throughput:** about 5 s an image per worker; a video without captions takes about its own length on a whisper server. One `analysis-media` process has 4 workers in 2 GiB. For more, run a second replica (4 more database connections) or give the one more memory (`workers`, `worker_memory_mib`).
 - **In `sb-analysis stats`:** the media line's "now" counts are of the files announced in the window (which may wait behind older files with nearer deadlines); "acknowledged in the window, whenever announced" counts the acknowledgements sent in it. A video's speech-to-text is logged as a request of its own (done, no tokens), and isn't counted as a re-send.
 - **Where media comes from:** only files a collector downloaded and announced on `content.media.ready.v1` (or fbs's `fb.media.ready.v1`). The media metadata on `content.media.v1` (URLs, sizes) is not a hand-off and isn't read.
@@ -221,7 +222,7 @@ Videos are transcribed by a speech-to-text server inside the cluster: **Speaches
   - `sb_analysis_stt_deferred_total`: videos put back while the slot was busy.
 - **Alerts:**
   - `AnalysisVideoBacklogGrowing`: the video backlog has grown for an hour;
-  - `AnalysisTranscriptionsFailing`: speech-to-text calls are failing.
+  - `AnalysisTranscriptionsFailing`: at least 3 speech-to-text calls failed in 30 minutes, more than 10% of them (since 13 Nov; any single error fired it before, often of a video that then succeeded).
 - **If it can't keep up:** the options are a smaller Whisper model, CPU-optimized nodes, or a speech-to-text API. Each is a cost choice for the owner.
 - **If it fails:**
   - look at the `…-whisper` pod: the init container's log shows the model download, the server's log the calls;

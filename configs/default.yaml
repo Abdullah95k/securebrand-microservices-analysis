@@ -262,6 +262,10 @@ analysis:
       stt_provider: ""     # e.g. openai or whisper; "" = no transcript
       stt_language: ar
       stt_concurrency: 1   # transcriptions at once (per media process)
+      # A video that finds no speech-to-text slot this near its deadline is
+      # analysed from its frames alone (transcript_source "none") instead of
+      # expiring (0 = it always waits for a slot).
+      frames_only_within: 6h
       stt_wait: 5s         # then the video goes back to the queue...
       stt_retry_after: 2m  # ...for this long, without counting a try
       timeout: 5m

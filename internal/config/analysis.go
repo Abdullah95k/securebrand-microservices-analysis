@@ -336,11 +336,17 @@ type VideoConfig struct {
 	// that needs one while all are busy waits up to STTWait, then goes
 	// back to the queue for STTRetryAfter (without counting a try), so
 	// images keep flowing and a slow speech-to-text server isn't flooded.
-	STTConcurrency int           `koanf:"stt_concurrency"`
-	STTWait        time.Duration `koanf:"stt_wait"`
-	STTRetryAfter  time.Duration `koanf:"stt_retry_after"`
-	Timeout        time.Duration `koanf:"timeout"`
-	TempDir        string        `koanf:"temp_dir"`
+	STTConcurrency int `koanf:"stt_concurrency"`
+	// FramesOnlyWithin: a video that can't get a speech-to-text slot (all
+	// busy, or no server reachable) when its deadline is this near is
+	// analysed from its frames alone (transcript_source "none") rather than
+	// expire (the master, 13 Nov: a video without sound is better than a
+	// video lost). 0 = it waits for a slot whatever its deadline.
+	FramesOnlyWithin time.Duration `koanf:"frames_only_within"`
+	STTWait          time.Duration `koanf:"stt_wait"`
+	STTRetryAfter    time.Duration `koanf:"stt_retry_after"`
+	Timeout          time.Duration `koanf:"timeout"`
+	TempDir          string        `koanf:"temp_dir"`
 }
 
 // AnalysisPrivacy controls what leaves the service and what is stored.
