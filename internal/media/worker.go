@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -110,8 +111,15 @@ const ownerRecheck = 6 * time.Hour
 // waitForOwner returns the wait when the job's owner item isn't stored and
 // the job may still wait for it: until owner_wait after it arrived or
 // owner_margin before its deadline, whichever is first. Nil: it goes ahead.
+//
+// A comment outside the comment sample (analysis.comments.sample_share) is
+// counted, not stored, so its files don't wait for it: they are analysed
+// without its text.
 func (w *Worker) waitForOwner(j core.MediaJob, owner store.Owner) error {
 	if owner.Stored || j.OwnerContentID == "" || w.Cfg.OwnerWait <= 0 {
+		return nil
+	}
+	if isComment(j.OwnerContentID) && !core.InSample(j.OwnerContentID, w.commentShare()) {
 		return nil
 	}
 	arrived := j.ReceivedAt
@@ -130,10 +138,26 @@ func (w *Worker) waitForOwner(j core.MediaJob, owner store.Owner) error {
 	return &ownerWait{Until: until}
 }
 
+// isComment reports whether a content ID names a comment
+// ("tt:comment:123").
+func isComment(id string) bool {
+	_, rest, ok := strings.Cut(id, ":")
+	return ok && strings.HasPrefix(rest, "comment:")
+}
+
+// commentShare is the comment sample's share (1 when unset: every comment
+// stored).
+func (w *Worker) commentShare() float64 {
+	if s := w.P.Store.CommentShare; s > 0 {
+		return s
+	}
+	return 1
+}
+
 // sttSlot takes a transcription slot, waiting at most stt_wait. The
 // returned func gives it back.
 func (w *Worker) sttSlot(ctx context.Context) (func(), error) {
-	w.sttOnce.Do(func() { w.stt = make(chan struct{}, max(w.Cfg.Video.STTConcurrency, 1)) })
+	w.sttInit()
 	t := time.NewTimer(w.Cfg.Video.STTWait)
 	defer t.Stop()
 	select {
@@ -144,6 +168,22 @@ func (w *Worker) sttSlot(ctx context.Context) (func(), error) {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+func (w *Worker) sttInit() {
+	w.sttOnce.Do(func() { w.stt = make(chan struct{}, max(w.Cfg.Video.STTConcurrency, 1)) })
+}
+
+// sttFull reports whether every speech-to-text slot is taken: the next
+// claim then takes images only (on 12-13 Nov, with videos first by
+// deadline, the other workers kept claiming videos, waiting for the slot
+// and putting them back, and images barely got through).
+func (w *Worker) sttFull() bool {
+	if !w.Cfg.Video.Enabled || w.Cfg.Video.STTProvider == "" {
+		return false
+	}
+	w.sttInit()
+	return len(w.stt) >= cap(w.stt)
 }
 
 // policySkip is the reason a job is acknowledged without analysis, or ""
@@ -200,6 +240,11 @@ func (w *Worker) analysed(kind string) bool {
 
 // Run processes jobs with analysis.media.workers goroutines until ctx ends.
 func (w *Worker) Run(ctx context.Context) error {
+	if n, err := w.P.Store.WakeCommentMedia(ctx); err != nil {
+		slog.Warn("analysis: comments' media not woken", "err", err)
+	} else if n > 0 {
+		slog.Info("analysis: comments' media woken, to look at again", "files", n)
+	}
 	var wg sync.WaitGroup
 	n := FitWorkers(w.Cfg.Workers, ContainerMemoryLimit(cgroupRoot), int64(w.Cfg.WorkerMemoryMiB)<<20)
 	if n < w.Cfg.Workers {
@@ -235,7 +280,7 @@ func (w *Worker) Run(ctx context.Context) error {
 
 // Once claims and processes one job; it returns how many it processed.
 func (w *Worker) Once(ctx context.Context) (int, error) {
-	jobs, err := w.P.Store.ClaimMediaJobs(ctx, 1, w.Cfg.Lease)
+	jobs, err := w.P.Store.ClaimMediaJobs(ctx, 1, w.Cfg.Lease, w.sttFull())
 	if err != nil || len(jobs) == 0 {
 		return 0, err
 	}

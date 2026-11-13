@@ -603,10 +603,11 @@ func TestWorkerSpeechToTextOneAtATime(t *testing.T) {
 		c.Media.Video.STTConcurrency, c.Media.Video.STTWait, c.Media.Video.STTRetryAfter = 1, 20*time.Millisecond, time.Hour
 	})
 	ctx := context.Background()
-	objs["b/v1"], objs["b/v2"] = b, b
-	v1, v2 := job("v1", "video"), job("v2", "video")
-	v1.DeleteAfter, v2.DeleteAfter = time.Now().Add(time.Hour), time.Now().Add(2*time.Hour) // v1 is claimed first
-	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{v1, v2}, "analysis"); err != nil {
+	objs["b/v1"], objs["b/v2"], objs["b/i1"] = b, b, pngBytes(t, 100, 100)
+	v1, v2, i1 := job("v1", "video"), job("v2", "video"), job("i1", "photo")
+	// v1 is claimed first, then v2, then the image.
+	v1.DeleteAfter, v2.DeleteAfter, i1.DeleteAfter = time.Now().Add(time.Hour), time.Now().Add(2*time.Hour), time.Now().Add(3*time.Hour)
+	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{v1, v2, i1}, "analysis"); err != nil {
 		t.Fatal(err)
 	}
 	inside, release := make(chan struct{}), make(chan struct{})
@@ -627,18 +628,23 @@ func TestWorkerSpeechToTextOneAtATime(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("v1 never reached speech-to-text")
 	}
-	if _, err := w.Once(ctx); err != nil { // v2: the slot is taken
+	// The slot is taken: the next claim takes the image, not v2 (on 12-13
+	// Nov the workers kept claiming videos only to put them back).
+	if _, err := w.Once(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var state string
 	var tries int
-	var later bool
-	if err := st.DB.QueryRow(ctx, `SELECT state, tries, not_before > now() + interval '50 minutes' FROM analysis.media_jobs
-		WHERE media_id = 'v2'`).Scan(&state, &tries, &later); err != nil {
+	var claimed bool
+	if err := st.DB.QueryRow(ctx, `SELECT state, tries, lease_until IS NOT NULL OR not_before > now() FROM analysis.media_jobs
+		WHERE media_id = 'v2'`).Scan(&state, &tries, &claimed); err != nil {
 		t.Fatal(err)
 	}
-	if state != "pending" || tries != 0 || !later {
-		t.Fatalf("v2 while speech-to-text was busy: state %s, tries %d, put back for later %v", state, tries, later)
+	if state != "pending" || tries != 0 || claimed {
+		t.Fatalf("v2 while speech-to-text was busy: state %s, tries %d, claimed %v; want left alone", state, tries, claimed)
+	}
+	if err := st.DB.QueryRow(ctx, `SELECT state FROM analysis.media_jobs WHERE media_id = 'i1'`).Scan(&state); err != nil || state != "done" {
+		t.Fatalf("the image while speech-to-text was busy: %s %v, want analysed", state, err)
 	}
 	if _, ok := acks(t, st)["v2"]; ok {
 		t.Fatal("a deferred video was acknowledged")

@@ -2,6 +2,7 @@ package media_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -231,5 +232,51 @@ func TestReuseWaitsForItsPost(t *testing.T) {
 	}
 	if from != "first" || fp.Calls() != 1 {
 		t.Fatalf("reused from %q with %d calls, want a copy of first and one call", from, fp.Calls())
+	}
+}
+
+// TestCommentOutsideSampleDoesNotWait: a file whose comment is outside the
+// comment sample (counted, never stored) is analysed at once, without the
+// comment's text; one whose comment is in the sample waits for it. Waking
+// the comments' files makes a held one due again (on 13 Nov such files
+// waited up to 7 days for comments that would never come).
+func TestCommentOutsideSampleDoesNotWait(t *testing.T) {
+	st, w, fp, objs := setupWith(t, waitForPosts)
+	st.CommentShare = 0.10
+	ctx := context.Background()
+	var in, out string
+	for i := 0; in == "" || out == ""; i++ {
+		id := fmt.Sprintf("tt:comment:%d", i)
+		if core.InSample(id, 0.10) {
+			in = id
+		} else {
+			out = id
+		}
+	}
+	objs["b/in"], objs["b/out"] = pngBytes(t, 100, 100), pngBytes(t, 100, 100)
+	a, b := contractJob("in", "attachment", "", 72*time.Hour), contractJob("out", "attachment", "", 72*time.Hour)
+	a.OwnerContentID, b.OwnerContentID = in, out
+	if _, err := st.InsertMediaJobs(ctx, []*core.MediaJob{a, b}, "analysis"); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := w.Once(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if state, _, _ := due(t, st, "out"); state != "done" {
+		t.Fatalf("the file of a comment outside the sample is %s, want analysed at once", state)
+	}
+	if state, tries, in := due(t, st, "in"); state != "pending" || tries != 0 || in <= 0 {
+		t.Fatalf("the file of a sampled comment: %s, %d tries, due in %v; want waiting for it", state, tries, in)
+	}
+	if fp.Calls() != 1 {
+		t.Fatalf("%d calls, want 1", fp.Calls())
+	}
+	if n, err := st.WakeCommentMedia(ctx); err != nil || n != 1 {
+		t.Fatalf("woke %d (%v), want the held one", n, err)
+	}
+	if _, _, in := due(t, st, "in"); in > 0 {
+		t.Fatalf("still due in %v after the wake", in)
 	}
 }

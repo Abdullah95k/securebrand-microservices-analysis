@@ -29,6 +29,10 @@ type PlatformStats struct {
 	// collector (gone ones are not: their file was deleted first).
 	MediaAnnounced, MediaPending, MediaDone, MediaSkipped, MediaFailed, MediaGone int64
 	MediaAnalysed                                                                 int64
+	// Files acknowledged to their collector since (done, skipped or failed
+	// since, whenever they were announced): the "now" counts above are of
+	// the files announced since only.
+	AckedDone, AckedSkipped, AckedFailed int64
 	// Why files were skipped (their reason code), with counts.
 	MediaReasons map[string]int64
 	// Files waiting to be tried again after a failure (now, whenever they
@@ -130,6 +134,13 @@ func (s *Store) PlatformCounts(ctx context.Context, since time.Time, recent time
 			}, false, 6},
 		{`SELECT platform, count(*) FROM analysis.media_analyses WHERE analyzed_at >= $1 GROUP BY 1`,
 			func(p string, n []int64) { get(p).MediaAnalysed = n[0] }, false, 1},
+		{`SELECT platform, count(*) FILTER (WHERE state = 'done'), count(*) FILTER (WHERE state = 'skipped'),
+				count(*) FILTER (WHERE state = 'failed')
+			FROM analysis.media_jobs WHERE done_at >= $1 AND state IN ('done', 'skipped', 'failed') GROUP BY 1`,
+			func(p string, n []int64) {
+				m := get(p)
+				m.AckedDone, m.AckedSkipped, m.AckedFailed = n[0], n[1], n[2]
+			}, false, 3},
 	}
 	for _, qq := range queries {
 		rows, err := s.DB.Query(ctx, qq.sql, since)
