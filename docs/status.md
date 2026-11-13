@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 13 November 2026, 23:20 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 14 November 2026, 00:40 (Iraq time).*
 
 ## Where it stands
 
@@ -533,3 +533,6 @@
   - **CI:** the image job built the Debian 12 media image with `libheif-examples` and sent a picture to HEIC and back inside it; the test job ran the HEIC tests with libheif installed.
   - **Waiting for:** the master's counts after an hour on it: `image converted to JPEG` (expected about 12 to 15 an hour, plus the files kept earlier as their waits end), `format not read yet` (expected about 0) and `image not converted` (a file libheif can't read).
   - **Two restarts tonight:** d47c6ab at about 21:50 Iraq time, and the D-065 caps (settings only) just after midnight.
+- **14 Nov, 00:40 Iraq time: the converter works; the catch-up caps are in.**
+  - **The master's counts on d47c6ab** (2 hours to 00:37 Iraq time, counts only): 43 to 45 `image converted to JPEG`, 0 `format not read yet`, 0 `image not converted`. About 20 an hour: TikTok's HEIC photos as they arrive, plus the files kept earlier as their waits ended.
+  - **D-065:** image $39 and total $78, live since 00:02 Iraq time (platform #151, settings only) for 14 and 15 Nov; the master removes both just after midnight at the end of 15 Nov. The master reads the budget meter and the media pace with the morning's `analysis-stats`.
