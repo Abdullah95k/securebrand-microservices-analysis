@@ -106,11 +106,12 @@ config:
     # the quality sample (audit, Claude Opus) are off; the topic and entity
     # curation use Haiku.
     # Caps per route within the $60 (the owner's D-062, 13 November 2026,
-    # in place of D-052's 30/12/18/12): comment 40, post 3, image 14, video
-    # 8. Images and video together stop at $22, so comments and posts always
-    # keep at least $38 (the 10% comment sample is about $39 a day);
-    # comments and posts together stop at $43, so media always keeps at
-    # least $17. Room one side leaves goes to the other, up to its caps.
+    # in place of D-052's 30/12/18/12; image 21 in place of 14, the owner's
+    # option (a) the same day, for YouTube thumbnails): comment 40, post 3,
+    # image 21, video 8. Images and video together stop at $29, so comments
+    # and posts always keep at least $31; comments and posts together stop
+    # at $43, so media always keeps at least $17. Room one side leaves goes
+    # to the other, up to its caps.
     # 10% of comments, on every platform (the owner, 11 November 2026;
     # D-053): the same comments always (by content ID), the backlog
     # included. The rest are counted, not stored or analysed; their raw text
@@ -121,7 +122,7 @@ config:
       audit: {enabled: false, model: claude-haiku-5-5}
       comment: {daily_usd: 40}
       post: {daily_usd: 3}
-      image: {daily_usd: 14}
+      image: {daily_usd: 21}
       video: {daily_usd: 8}
     topics:
       curation: {model: claude-haiku-5-5}

@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 13 November 2026, 15:35 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 13 November 2026, 15:45 (Iraq time).*
 
 ## Where it stands
 
@@ -483,7 +483,10 @@
   - **Cost** (Haiku prices): about $0.21 per 1,000 at 512 px. YouTube's about 34,000 thumbnails a day come to about $7; profile pictures and banners to under $1.
   - **The image cap:** it needs about $21 with thumbnails; option (a) image 21 or (b) keep 14, put to the owner via the master. 14 stays until then.
   - **The client's join** (CLIENT-REQ-023) works as published: `analysis.media.v1` carries `media_id`, `owner_id`, `owner_kind`, `account_id` and `role`.
-- **13 Nov, 15:35 Iraq time: Facebook's page pictures (in review, PR #64).**
+- **13 Nov, 15:35 Iraq time: Facebook's page pictures (merged, PR #64, `597da4f`; pinned in platform #140).**
   - **From fbs** (7e87f6f, live today): page profile pictures and covers on `fb.media.ready.v1` (`MEDIA_KIND_PROFILE_PIC`, `MEDIA_KIND_COVER`, owner the page). Monitored pages only, about 520 on the first day, then changes. Also video captions on `content.post.v1`.
   - **Found:** the fbs protos this service is built with predate `owner_type`. So a page's picture (no post, no comment) was owned by "fb:post:0" and would have waited for that post until 12 hours before its deadline, and carried no role.
   - **The fix:** a picture with no post or comment belongs to its page and doesn't wait. A profile picture takes the role `profile_picture`, a page cover `banner`, so its request carries the D-061 note. Its result stays in Postgres, like all of fbs's own media (decision 17).
+- **13 Nov, 15:45 Iraq time: the image cap is $21 (the owner, directly: option (a)).**
+  - Image $21 in place of $14, for YouTube's thumbnails (about $7 a day) on top of TikTok's and Facebook's images. Comment $40, post $3 and video $8 stay; the $60 total is unchanged.
+  - Text always keeps at least $31, media at least $17. On heavy-media days comments can fall up to $8 behind their about $39 a day.
