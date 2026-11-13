@@ -1,6 +1,6 @@
 # sb-analysis: status
 
-*Kept current for the master session and the owner. Last updated 13 November 2026, 14:20 (Iraq time).*
+*Kept current for the master session and the owner. Last updated 13 November 2026, 15:35 (Iraq time).*
 
 ## Where it stands
 
@@ -475,7 +475,7 @@
   - **A video near its deadline** (within 6 hours) that finds no speech-to-text slot is analysed from its frames alone (`transcript_source` "none"), rather than expire (the master asked). With 2 whisper servers (about 1,000–1,500 videos a day each) against about 7,700 TikTok videos a day, most will be frames-only until there are more servers.
   - **`AnalysisTranscriptionsFailing`:** now at least 3 errors and more than 10% of calls in 30 minutes (the master agreed).
   - **Stats:** each platform's videos announced, and analysed by captions, speech-to-text or frames only, to size the whisper servers.
-- **13 Nov, 14:20 Iraq time: D-061, profile pictures, banners and YouTube thumbnails (in review, PR #63).**
+- **13 Nov, 14:20 Iraq time: D-061, profile pictures, banners and YouTube thumbnails (merged, PR #63, `57dd5a3`; pinned with #62 in platform #138).**
   - **The owner** (via the master): profile pictures and banners of every monitored page, account and channel, on all four platforms, on first sight and on change. A description, the text and the logos, never who a person is. YouTube thumbnails on, in place of D-052's "not now".
   - **Monitored:** the account is the source of a stored item (its posts are collected). A commenter's avatar is skipped (`policy:not_monitored`). yts and igs send only listed accounts' pictures anyway; tks is asked whether it holds commenters' back.
   - **Thumbnails:** YouTube's only, at 512 px. Other platforms' are still skipped, since their videos are analysed themselves.
@@ -483,3 +483,7 @@
   - **Cost** (Haiku prices): about $0.21 per 1,000 at 512 px. YouTube's about 34,000 thumbnails a day come to about $7; profile pictures and banners to under $1.
   - **The image cap:** it needs about $21 with thumbnails; option (a) image 21 or (b) keep 14, put to the owner via the master. 14 stays until then.
   - **The client's join** (CLIENT-REQ-023) works as published: `analysis.media.v1` carries `media_id`, `owner_id`, `owner_kind`, `account_id` and `role`.
+- **13 Nov, 15:35 Iraq time: Facebook's page pictures (in review, PR #64).**
+  - **From fbs** (7e87f6f, live today): page profile pictures and covers on `fb.media.ready.v1` (`MEDIA_KIND_PROFILE_PIC`, `MEDIA_KIND_COVER`, owner the page). Monitored pages only, about 520 on the first day, then changes. Also video captions on `content.post.v1`.
+  - **Found:** the fbs protos this service is built with predate `owner_type`. So a page's picture (no post, no comment) was owned by "fb:post:0" and would have waited for that post until 12 hours before its deadline, and carried no role.
+  - **The fix:** a picture with no post or comment belongs to its page and doesn't wait. A profile picture takes the role `profile_picture`, a page cover `banner`, so its request carries the D-061 note. Its result stays in Postgres, like all of fbs's own media (decision 17).
